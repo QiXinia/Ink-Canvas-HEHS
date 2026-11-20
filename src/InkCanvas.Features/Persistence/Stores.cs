@@ -87,7 +87,7 @@ public static class InkFileStore
         public bool Shape { get; set; }
         public ShapeSource ShapeSource { get; set; }
         public float[] ObjectFrame { get; set; }
-        /// <summary>Rows of [x, y, pressure, width, timeMs].</summary>
+        /// <summary>Rows of [x, y, pressure, width, timeMs, tiltX, tiltY, hasPressure]. Older short rows remain valid.</summary>
         public List<float[]> Points { get; set; } = new();
     }
 
@@ -111,7 +111,9 @@ public static class InkFileStore
                 ObjectFrame = s.ExportObjectFrame(),
             };
             foreach (var p in s.Points)
-                sm.Points.Add(new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs });
+                sm.Points.Add(p.HasPressure || p.TiltX != 0 || p.TiltY != 0
+                    ? new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs, p.TiltX, p.TiltY, p.HasPressure ? 1f : 0f }
+                    : new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs });
             model.Strokes.Add(sm);
         }
 
@@ -143,7 +145,8 @@ public static class InkFileStore
             // Restore stored widths verbatim: re-running the taper here would change history.
             stroke.RestorePoints(sm.Points
                 .Where(r => r.Length >= 4)
-                .Select(r => new InkPoint(r[0], r[1], r[2], r[3], r.Length > 4 ? r[4] : 0f)));
+                .Select(r => new InkPoint(r[0], r[1], r[2], r[3], r.Length > 4 ? r[4] : 0f,
+                    r.Length > 7 && r[7] > 0, r.Length > 5 ? r[5] : 0, r.Length > 6 ? r[6] : 0)));
             stroke.Complete();
             stroke.ImportObjectFrame(sm.ObjectFrame);
             result.Add(stroke);

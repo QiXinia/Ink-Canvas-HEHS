@@ -15,15 +15,16 @@ public sealed class InkStroke
     private readonly List<InkPoint> _points = new();
     private TaperProfile _taper;
     private OneEuroFilter _filter;
+    private HardwarePressureProfile _hardwarePressure;
     private bool _boundsDirty = true;
     private Rect _bounds;
+    private float _hardwareRadius;
     private Matrix3x2 _boundsNib;
     private SelectionFrame? _objectFrame;
 
     public InkStroke(StrokeAttributes attributes)
     {
         Attributes = attributes ?? throw new ArgumentNullException(nameof(attributes));
-        _taper = TaperProfile.Create(attributes.EffectiveTaper);
         if (attributes.EffectiveTaper is >= TaperKind.SmoothPen and <= TaperKind.InkWash) _filter = new OneEuroFilter();
     }
 
@@ -38,10 +39,12 @@ public sealed class InkStroke
     public int Count => _points.Count;
 
     public bool IsCompleted { get; private set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UsesHardwarePressure => _hardwarePressure is not null;
 
     /// <summary>Prefix whose widths can no longer change when another sample arrives.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
-    public int StablePointCount => IsCompleted ? Count : _taper.StablePointCount(Count);
+    public int StablePointCount => IsCompleted || _hardwarePressure is not null ? Count : _taper?.StablePointCount(Count) ?? Count;
 
     public void RestorePrefix(IReadOnlyList<InkPoint> points, int count)
     {
@@ -79,11 +82,12 @@ public sealed class InkStroke
 
     public TaperKind TaperKind
     {
-        get => _taper.Kind;
+        get => _taper?.Kind ?? Attributes.EffectiveTaper;
         set
         {
-            if (_taper.Kind == value) { Attributes.TaperKind = value; return; }
-            _taper = TaperProfile.Create(value);
+            if (TaperKind == value) { Attributes.TaperKind = value; return; }
+            _taper = null;
+            _hardwarePressure = null;
             Attributes.TaperKind = value;
             _filter = value is >= TaperKind.SmoothPen and <= TaperKind.InkWash ? new OneEuroFilter() : null;
             // Re-evaluate from scratch only for an already-finished stroke (e.g. a settings
@@ -92,7 +96,8 @@ public sealed class InkStroke
         }
     }
 
-    public void AddPoint(float x, float y, float pressure = 0.5f, float timeMs = 0f)
+    public void AddPoint(float x, float y, float pressure = 0.5f, float timeMs = 0f,
+        bool hasPressure = false, float tiltX = 0, float tiltY = 0)
     {
         if (_filter is not null)
         {
@@ -101,8 +106,12 @@ public sealed class InkStroke
             y = filtered.Y;
         }
         // Width starts at 0 so the profile's monotonic "settle" rule can raise it.
-        _points.Add(new InkPoint(x, y, pressure, 0f, timeMs));
-        _taper.Apply(CollectionsMarshal.AsSpan(_points), _points.Count - 1, Attributes.BaseWidth);
+        bool validPressure = hasPressure && float.IsFinite(pressure);
+        pressure = float.IsFinite(pressure) ? Math.Clamp(pressure, 0, 1) : .5f;
+        _points.Add(new InkPoint(x, y, pressure, 0f, timeMs, validPressure,
+            float.IsFinite(tiltX) ? Math.Clamp(tiltX, -89, 89) : 0,
+            float.IsFinite(tiltY) ? Math.Clamp(tiltY, -89, 89) : 0));
+        ApplyWidth(CollectionsMarshal.AsSpan(_points), _points.Count - 1);
         _boundsDirty = true;
         GeometryVersion++;
         _objectFrame = null;
@@ -113,11 +122,19 @@ public sealed class InkStroke
     /// </summary>
     public void Complete() => IsCompleted = true;
 
+    private void ApplyWidth(Span<InkPoint> points, int index)
+    {
+        if (points[index].HasPressure)
+            _hardwarePressure ??= new HardwarePressureProfile(Attributes.EffectiveTaper, Attributes.IsHighlighter);
+        if (_hardwarePressure is not null) _hardwarePressure.Apply(points, index, Attributes.BaseWidth);
+        else (_taper ??= TaperProfile.Create(Attributes.EffectiveTaper)).Apply(points, index, Attributes.BaseWidth);
+    }
+
     private void RebuildWidths()
     {
         var span = CollectionsMarshal.AsSpan(_points);
         for (int i = 0; i < span.Length; i++) span[i].Width = 0f;
-        for (int i = 0; i < span.Length; i++) _taper.Apply(span, i, Attributes.BaseWidth);
+        for (int i = 0; i < span.Length; i++) ApplyWidth(span, i);
         _boundsDirty = true;
         GeometryVersion++;
     }
@@ -136,25 +153,43 @@ public sealed class InkStroke
         }
     }
 
-    private Rect ComputeBounds()
+    /// <summary>Includes wide hardware-pressure strokes in object selection.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public float HitRadius
     {
-        if (_points.Count == 0) return Rect.Empty;
+        get { _ = Bounds; return MathF.Max(Attributes.BaseWidth * .5f, _hardwareRadius); }
+    }
+
+    /// <summary>Damage bounds including the segment joining the stable prefix to the changing tail.</summary>
+    public Rect BoundsFrom(int firstPoint) => ComputeBounds(Math.Max(0, firstPoint));
+
+    private Rect ComputeBounds(int firstPoint = 0)
+    {
+        if (firstPoint >= _points.Count) return Rect.Empty;
         float minX = float.MaxValue, minY = float.MaxValue;
         float maxX = float.MinValue, maxY = float.MinValue;
         float maxHalf = 0f;
-        foreach (var p in _points)
+        bool tilted = false;
+        bool hardware = false;
+        for (int index = firstPoint; index < _points.Count; index++)
         {
+            var p = _points[index];
             if (p.X < minX) minX = p.X;
             if (p.Y < minY) minY = p.Y;
             if (p.X > maxX) maxX = p.X;
             if (p.Y > maxY) maxY = p.Y;
             if (p.Width > maxHalf) maxHalf = p.Width;
+            tilted |= p.TiltX != 0 || p.TiltY != 0;
+            hardware |= p.HasPressure;
         }
         maxHalf = MathF.Max(maxHalf, .5f) * 0.5f;
         var nib = Attributes.NibTransform;
         float rx = maxHalf * MathF.Sqrt(nib.M11 * nib.M11 + nib.M21 * nib.M21);
         float ry = maxHalf * MathF.Sqrt(nib.M12 * nib.M12 + nib.M22 * nib.M22);
-        return Rect.FromLTRB(minX - rx, minY - ry, maxX + rx, maxY + ry);
+        // Tilt spreads the brush and offsets its dark core. Include both vector layers.
+        float spread = tilted ? 1.8f : 1;
+        if (firstPoint == 0) _hardwareRadius = hardware ? maxHalf * spread : 0;
+        return Rect.FromLTRB(minX - rx * spread, minY - ry * spread, maxX + rx * spread, maxY + ry * spread);
     }
 
     /// <summary>Total centreline length, used by replay and by the recogniser.</summary>
@@ -182,6 +217,11 @@ public sealed class InkStroke
             span[i].X = v.X;
             span[i].Y = v.Y;
             span[i].Width *= widthScale;
+            var tilt = Vector2.TransformNormal(new Vector2(span[i].TiltX, span[i].TiltY), m);
+            float tiltLength = new Vector2(span[i].TiltX, span[i].TiltY).Length();
+            if (tilt.LengthSquared() > .0001f) tilt = Vector2.Normalize(tilt) * tiltLength;
+            span[i].TiltX = tilt.X;
+            span[i].TiltY = tilt.Y;
         }
         Attributes.BaseWidth *= widthScale;
         if (Attributes.Nib == PenNib.Ellipse45)

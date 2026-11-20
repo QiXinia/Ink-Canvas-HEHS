@@ -45,12 +45,16 @@ internal static class ToolbarAnimationRegression
                 var collapse = await Animate();
                 Check($"collapse has intermediate widths {mode} {scale}", collapse.Any(frame => frame.Progress is > 0 and < 1)
                     && collapse.Select(frame => frame.Width).Distinct().Count() > 2, collapse);
+                Check($"collapse keeps a stable swap chain {mode} {scale}", collapse.Where(frame => frame.Progress is > 0 and < 1)
+                    .Select(frame => frame.ClientWidth).Distinct().Count() == 1);
                 Check($"collapse preserves control size and origin {mode} {scale}", Stable(collapse, smile, pen, origin));
                 Check($"collapse widths decrease {mode} {scale}", collapse.Zip(collapse.Skip(1)).All(pair => pair.Second.Width <= pair.First.Width + 1));
                 Check($"collapsed native region matches painted cards {mode} {scale}", SelfTest.CheckWindowRegion(window, window.Bar.ChromeSurfaces));
                 var expand = await Animate();
                 Check($"expand has intermediate widths {mode} {scale}", expand.Any(frame => frame.Progress is > 0 and < 1)
                     && expand.Select(frame => frame.Width).Distinct().Count() > 2, expand);
+                Check($"expand keeps a stable swap chain {mode} {scale}", expand.Where(frame => frame.Progress is > 0 and < 1)
+                    .Select(frame => frame.ClientWidth).Distinct().Count() == 1);
                 Check($"expand preserves control size and origin {mode} {scale}", Stable(expand, smile, pen, origin));
                 Check($"expand widths increase {mode} {scale}", expand.Zip(expand.Skip(1)).All(pair => pair.Second.Width + 1 >= pair.First.Width));
                 Check($"expanded geometry restored {mode} {scale}", !window.Bar.IsMainCollapsed
@@ -119,7 +123,10 @@ internal static class ToolbarAnimationRegression
                 await Task.Delay(25);
                 var smile = WindowChrome.GetScreenBounds(window, window.Bar.ChromeSurfaces.First());
                 var pen = WindowChrome.GetScreenBounds(window, window.Bar.GetToolButton(InkTool.Pen));
-                frames.Add(new(window.Bar.MainExpansion, window.AppWindow.ClientSize.Width, smile, pen));
+                var surfaces = window.Bar.ChromeSurfaces.Where(surface => surface.Visibility == Visibility.Visible && surface.ActualWidth > 0)
+                    .Select(surface => WindowChrome.GetScreenBounds(window, surface)).ToArray();
+                int visibleWidth = surfaces.Max(rect => rect.X + rect.Width) - smile.X;
+                frames.Add(new(window.Bar.MainExpansion, visibleWidth, window.AppWindow.ClientSize.Width, smile, pen));
             }
             await Task.Delay(50);
             return frames;
@@ -132,7 +139,7 @@ internal static class ToolbarAnimationRegression
         void Check(string name, bool passed, object detail = null) => checks.Add(new { check = name, passed, detail });
     }
 
-    private sealed record Frame(double Progress, int Width, RectInt32 Smile, RectInt32 Pen);
+    private sealed record Frame(double Progress, int Width, int ClientWidth, RectInt32 Smile, RectInt32 Pen);
     [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]
     private static extern bool GetSystemParameter(uint action, uint parameter, out int value, uint flags);
     [DllImport("user32.dll", EntryPoint = "SystemParametersInfoW")]

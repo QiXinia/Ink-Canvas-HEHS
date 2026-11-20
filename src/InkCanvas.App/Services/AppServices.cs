@@ -122,7 +122,13 @@ public sealed class AppServices : IDisposable
         else if (Settings.Canvas.EraserType == 2) controller.EraserMode = InkEraserMode.WholeStroke;
         else if (Settings.Canvas.EraserType == 3) controller.EraserMode = InkEraserMode.Lasso;
         controller.RecognizeShapes = Settings.InkToShape.IsInkToShapeEnabled;
+        controller.RecognitionOptions = Settings.InkToShape;
+        controller.UseHardwarePressure = Settings.Canvas.UseHardwarePressure;
+        controller.UsePenTilt = Settings.Canvas.UsePenTilt;
+        controller.Palm.PenHasPriority = Settings.Gesture.PenHasPriority;
+        controller.PalmErases = Settings.Gesture.PalmErases;
         controller.MultiTouchEnabled = Settings.Gesture.IsEnableMultiTouchMode;
+        controller.PanZoomEnabled = Settings.Gesture.IsEnableTwoFingerGesture;
         controller.ConfigureGestures(
             Settings.Gesture.IsEnableTwoFingerZoom,
             Settings.Gesture.IsEnableTwoFingerTranslate,

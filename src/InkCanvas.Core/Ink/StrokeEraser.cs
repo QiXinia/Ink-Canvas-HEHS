@@ -104,7 +104,10 @@ public static class StrokeEraser
         a.Y + (b.Y - a.Y) * t,
         a.Pressure + (b.Pressure - a.Pressure) * t,
         a.Width + (b.Width - a.Width) * t,
-        a.TimeMs + (b.TimeMs - a.TimeMs) * t);
+        a.TimeMs + (b.TimeMs - a.TimeMs) * t,
+        a.HasPressure || b.HasPressure,
+        a.TiltX + (b.TiltX - a.TiltX) * t,
+        a.TiltY + (b.TiltY - a.TiltY) * t);
 
     private static void AppendDistinct(List<InkPoint> points, InkPoint point)
     {

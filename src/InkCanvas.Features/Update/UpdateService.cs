@@ -31,12 +31,43 @@ public sealed class UpdateService : IDisposable
 
     public async Task<IReadOnlyList<ReleaseInfo>> GetReleasesAsync(CancellationToken cancellation = default)
     {
-        string json = await _transport.GetTextAsync($"https://api.github.com/repos/{Repository}/releases?per_page=100", text =>
+        string json;
+        try
         {
-            try { using var document = JsonDocument.Parse(text); return document.RootElement.ValueKind == JsonValueKind.Array; }
-            catch (JsonException) { return false; }
-        }, cancellation).ConfigureAwait(false);
+            json = await _transport.GetTextAsync($"https://api.github.com/repos/{Repository}/releases?per_page=100", text =>
+            {
+                try { using var document = JsonDocument.Parse(text); return document.RootElement.ValueKind == JsonValueKind.Array; }
+                catch (JsonException) { return false; }
+            }, cancellation).ConfigureAwait(false);
+        }
+        catch (HttpRequestException) when (!cancellation.IsCancellationRequested)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile("Update: 版本 API 不可用，尝试公开发布页。");
+            try { return await GetWebReleasesAsync(cancellation).ConfigureAwait(false); }
+            catch (HttpRequestException) when (!cancellation.IsCancellationRequested)
+            {
+                Core.Diagnostics.FileLog.WriteLogToFile("Update: 发布页不可用，尝试最新稳定版的校验清单。");
+                string sums = await _transport.GetTextAsync($"https://github.com/{Repository}/releases/latest/download/SHA256SUMS.txt",
+                    text => ReleaseFeed.ParseLatestChecksums(text, Repository) is not null, cancellation).ConfigureAwait(false);
+                return new[] { ReleaseFeed.ParseLatestChecksums(sums, Repository) };
+            }
+        }
         return ReleaseFeed.ParseStableList(json).Where(release => release.IsPortable && TrustedAsset(release.InstallerUrl)).ToArray();
+    }
+
+    private async Task<IReadOnlyList<ReleaseInfo>> GetWebReleasesAsync(CancellationToken token)
+    {
+        string page = await _transport.GetTextAsync($"https://github.com/{Repository}/releases",
+            text => ReleaseWebFeed.ReadEntries(text, Repository).Count > 0, token).ConfigureAwait(false);
+        var releases = new List<ReleaseInfo>();
+        foreach (var entry in ReleaseWebFeed.ReadEntries(page, Repository))
+        {
+            string assets = await _transport.GetTextAsync($"https://github.com/{Repository}/releases/expanded_assets/{Uri.EscapeDataString(entry.Tag)}",
+                text => ReleaseWebFeed.IsAssetsPage(text, Repository, entry), token).ConfigureAwait(false);
+            var release = ReleaseWebFeed.ReadAssets(assets, Repository, entry);
+            if (release?.IsPortable == true && TrustedAsset(release.InstallerUrl)) releases.Add(release);
+        }
+        return releases;
     }
 
     public async Task<ReleaseInfo> CheckAsync(CancellationToken cancellation = default)
@@ -88,7 +119,8 @@ public sealed class UpdateService : IDisposable
 
     private bool TrustedAsset(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri)
         && uri.Scheme == "https" && uri.Host == "github.com" && string.IsNullOrEmpty(uri.UserInfo)
-        && uri.AbsolutePath.StartsWith("/" + Repository + "/releases/download/", StringComparison.OrdinalIgnoreCase);
+        && (uri.AbsolutePath.StartsWith("/" + Repository + "/releases/download/", StringComparison.OrdinalIgnoreCase)
+            || uri.AbsolutePath.StartsWith("/" + Repository + "/releases/latest/download/", StringComparison.OrdinalIgnoreCase));
 
     private static string Checksum(string text, string asset)
     {

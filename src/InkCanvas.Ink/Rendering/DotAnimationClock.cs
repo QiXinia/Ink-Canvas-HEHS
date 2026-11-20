@@ -23,25 +23,33 @@ public sealed class DotAnimationClock : IDisposable
             float elapsed = (float)Stopwatch.GetElapsedTime(_lastTick, tick).TotalMilliseconds;
             _lastTick = tick;
             _controller.AdvanceDotAnimations(elapsed);
+            _controller.AdvanceShapeHold(elapsed);
         };
         _controller.DotAnimationChanged += OnChanged;
+        _controller.ShapeHoldChanged += UpdateTimer;
     }
 
     private void OnChanged()
     {
-        if (_controller.DotAnimations.Count == 0) _timer.Stop();
+        UpdateTimer();
+        _render();
+    }
+
+    private void UpdateTimer()
+    {
+        if (_controller.DotAnimations.Count == 0 && !_controller.HasPendingShapeHold) _timer.Stop();
         else if (!_timer.IsRunning)
         {
             _lastTick = Stopwatch.GetTimestamp();
             _timer.Start();
         }
-        _render();
     }
 
     public void Dispose()
     {
         _timer.Stop();
         _controller.DotAnimationChanged -= OnChanged;
+        _controller.ShapeHoldChanged -= UpdateTimer;
         _controller.FinishDotAnimations();
     }
 }

@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var updateSourceCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updatesourcecheck=", StringComparison.OrdinalIgnoreCase));
+        if (updateSourceCheck is not null) { _ = Diagnostics.UpdateSourceRegression.Run(updateSourceCheck["--updatesourcecheck=".Length..]); return; }
         var toolbarAnimationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--toolbaranimationcheck=", StringComparison.OrdinalIgnoreCase));
         if (toolbarAnimationCheck is not null) { _ = Diagnostics.ToolbarAnimationRegression.Run(toolbarAnimationCheck["--toolbaranimationcheck=".Length..]); return; }
         var lotteryCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--lotterycheck=", StringComparison.OrdinalIgnoreCase));
@@ -293,7 +295,12 @@ public partial class App : Application
         {
             var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
             timer.Interval = TimeSpan.FromSeconds(1); timer.IsRepeating = false;
-            timer.Tick += (_, _) => { timer.Stop(); Diagnostics.WritingPerformance.Run(writingCheck.Substring("--writingcheck=".Length)); };
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                try { await Diagnostics.WritingPerformance.Run(writingCheck.Substring("--writingcheck=".Length)); }
+                finally { _shell.Dispose(); Application.Current.Exit(); }
+            };
             timer.Start();
         }
 

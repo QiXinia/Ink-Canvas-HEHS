@@ -44,7 +44,9 @@ public sealed class InkDotAnimation
                 initial.Y + (target.Y - initial.Y) * eased,
                 initial.Pressure,
                 initial.Width + (target.Width - initial.Width) * eased,
-                initial.TimeMs);
+                initial.TimeMs, initial.HasPressure,
+                initial.TiltX + (target.TiltX - initial.TiltX) * eased,
+                initial.TiltY + (target.TiltY - initial.TiltY) * eased);
         }
         Preview.RestorePoints(_points);
     }

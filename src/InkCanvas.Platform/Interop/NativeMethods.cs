@@ -140,6 +140,10 @@ public static class NativeMethods
 
     [DllImport("user32.dll")] public static extern bool GetPointerInfo(uint id, out POINTER_INFO info);
     [DllImport("user32.dll")] public static extern bool GetPointerPenInfo(uint id, out POINTER_PEN_INFO info);
+    [DllImport("user32.dll")] public static extern bool GetPointerPenInfoHistory(uint id, ref uint count,
+        [Out] POINTER_PEN_INFO[] info);
+    [DllImport("user32.dll")] public static extern bool GetPointerTouchInfoHistory(uint id, ref uint count,
+        [Out] POINTER_TOUCH_INFO[] info);
     [DllImport("user32.dll")] public static extern bool GetPointerTouchInfo(uint id, out POINTER_TOUCH_INFO info);
     [DllImport("user32.dll")] public static extern bool EnableMouseInPointer(bool enable);
     [DllImport("user32.dll")] public static extern bool IsMouseInPointerEnabled();

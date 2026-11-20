@@ -129,6 +129,11 @@ public sealed class AppSettings
         Gesture.IsEnableMultiTouchMode = true; // upstream constructor default
 
         InkToShape.IsInkToShapeEnabled = true;
+        InkToShape = new();
+        Canvas.UseHardwarePressure = true;
+        Canvas.UsePenTilt = true;
+        Gesture.PenHasPriority = true;
+        Gesture.PalmErases = true;
 
         Startup.IsEnableNibMode = false;
         Startup.IsAutoUpdate = true;
@@ -164,6 +169,8 @@ public enum OptionalOperation { Yes, No, Ask }
 
 public sealed class CanvasSettings
 {
+    public bool UseHardwarePressure { get; set; } = true;
+    public bool UsePenTilt { get; set; } = true;
     [JsonPropertyName("inkWidth")] public double InkWidth { get; set; } = 2.5;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("highlighterWidth")] public double? HighlighterWidth { get; set; }
@@ -199,6 +206,8 @@ public enum MatrixTransformCenterPointOptions
 
 public sealed class GestureSettings
 {
+    public bool PenHasPriority { get; set; } = true;
+    public bool PalmErases { get; set; } = true;
     [JsonPropertyName("isEnableMultiTouchMode")] public bool IsEnableMultiTouchMode { get; set; } = true;
     [JsonPropertyName("isEnableTwoFingerZoom")] public bool IsEnableTwoFingerZoom { get; set; } = true;
     [JsonPropertyName("isEnableTwoFingerTranslate")] public bool IsEnableTwoFingerTranslate { get; set; } = true;
@@ -320,6 +329,13 @@ public sealed class AdvancedSettings
 public sealed class InkToShapeSettings
 {
     [JsonPropertyName("isInkToShapeEnabled")] public bool IsInkToShapeEnabled { get; set; } = true;
+    public int HoldMilliseconds { get; set; } = 450;
+    public bool AutoAlign { get; set; } = true;
+    public double AlignmentAngle { get; set; } = 5;
+    public bool RecognizePolygons { get; set; } = true;
+    public bool RecognizeRoundShapes { get; set; } = true;
+    public bool RecognizeCube { get; set; } = true;
+    public bool RecognizeAxes { get; set; } = true;
 }
 
 public sealed class RandSettings

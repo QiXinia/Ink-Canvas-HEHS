@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -20,11 +21,20 @@ public sealed class UpdateTransport : IDisposable
         _http = new(handler ?? new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(5), AutomaticDecompression = DecompressionMethods.All });
         _http.Timeout = Timeout.InfiniteTimeSpan;
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("InkCanvas-Updater/3.5");
-        _mirrors = (mirrors ?? new[] { "https://gh-proxy.com/", "https://gh-proxy.org/", "https://ghfast.top/" }).ToArray();
+        _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en-US");
+        _mirrors = (mirrors ?? new[]
+        {
+            "https://ghfile.geekertao.top/",
+            "https://github.dpik.top/",
+            "https://gh-proxy.com/",
+            "https://fastgit.cc/",
+            "https://gh.acmsz.top/",
+        }).ToArray();
     }
 
     public async Task<string> GetTextAsync(string url, Func<string, bool> validate, CancellationToken token)
     {
+        LastSource = LastError = null;
         foreach (var candidate in Candidates(url))
         {
             try
@@ -46,6 +56,7 @@ public sealed class UpdateTransport : IDisposable
 
     public async Task DownloadAsync(string url, string path, long size, string sha256, IProgress<double> progress, CancellationToken token)
     {
+        LastSource = LastError = null;
         foreach (var candidate in Candidates(url))
         {
             string partial = path + ".partial";
@@ -81,7 +92,10 @@ public sealed class UpdateTransport : IDisposable
         token.ThrowIfCancellationRequested();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(HeaderTimeout);
-        var response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false);
+        HttpResponseMessage response;
+        try { response = await _http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException exception) when (!token.IsCancellationRequested)
+        { throw new TimeoutException($"连接超时（{HeaderTimeout.TotalSeconds:0.##} 秒）。", exception); }
         if (!response.IsSuccessStatusCode) { var code = response.StatusCode; response.Dispose(); throw new HttpRequestException("HTTP " + (int)code); }
         return response;
     }
@@ -90,11 +104,25 @@ public sealed class UpdateTransport : IDisposable
     {
         var buffer = new byte[81920]; long total = 0;
         long checkpoint = 0;
+        long checkpointTime = Stopwatch.GetTimestamp();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(ReadTimeout);
         while (true)
         {
-            int read = await source.ReadAsync(buffer, timeout.Token).ConfigureAwait(false);
+            int read;
+            try
+            {
+                var remaining = ReadTimeout - Stopwatch.GetElapsedTime(checkpointTime);
+                if (remaining <= TimeSpan.Zero) throw new TimeoutException("下载进度超时。");
+                read = await source.ReadAsync(buffer, timeout.Token).AsTask().WaitAsync(remaining, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException exception) when (!token.IsCancellationRequested)
+            { throw new TimeoutException($"读取超时（{ReadTimeout.TotalSeconds:0.##} 秒未取得足够进度）。", exception); }
+            catch (TimeoutException exception)
+            {
+                timeout.Cancel();
+                throw new TimeoutException($"读取超时（{ReadTimeout.TotalSeconds:0.##} 秒未取得足够进度）。", exception);
+            }
             if (read == 0) return total;
             total += read;
             if (total > limit) throw new InvalidDataException("更新内容超过声明大小。");
@@ -102,7 +130,7 @@ public sealed class UpdateTransport : IDisposable
             progress?.Invoke(total);
             // A trickling response must not postpone failover indefinitely.
             if (total - checkpoint >= 64 * 1024)
-            { checkpoint = total; timeout.CancelAfter(ReadTimeout); }
+            { checkpoint = total; checkpointTime = Stopwatch.GetTimestamp(); timeout.CancelAfter(ReadTimeout); }
         }
     }
 
@@ -121,7 +149,7 @@ public sealed class UpdateTransport : IDisposable
     }
 
     private static bool Retryable(Exception exception, CancellationToken token)
-        => !token.IsCancellationRequested && exception is HttpRequestException or IOException or InvalidDataException or OperationCanceledException;
+        => !token.IsCancellationRequested && exception is HttpRequestException or IOException or InvalidDataException or OperationCanceledException or TimeoutException;
     private void Failed(string source, Exception exception)
     {
         LastError = source + " · " + exception.Message;

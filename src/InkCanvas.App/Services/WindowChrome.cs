@@ -304,6 +304,7 @@ public static class WindowChrome
     /// </summary>
     public static void ClipToSurfaces(Window window, Func<IEnumerable<Border>> getSurfaces)
     {
+        (window.SystemBackdrop as ChromeBackdrop)?.TrackSurfaces(getSurfaces);
         var clippedFrame = ClippedFrames.GetValue(window, static current => new ClippedWindowFrame(current));
         clippedFrame.StopSurfaceTracking?.Invoke();
         var root = (FrameworkElement)window.Content;
@@ -311,6 +312,7 @@ public static class WindowChrome
         bool closed = false, pending = false;
         void Update(object sender, object args)
         {
+            (window.SystemBackdrop as ChromeBackdrop)?.TrackSurfaces(getSurfaces);
             if (root.XamlRoot is null) return;
             var hwnd = GetHwnd(window);
             if (!GetWindowRect(hwnd, out var frame)) return;

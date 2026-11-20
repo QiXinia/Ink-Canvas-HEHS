@@ -144,7 +144,10 @@ public sealed class InkReplaySession
                 from.Y + (to.Y - from.Y) * blend,
                 from.Pressure + (to.Pressure - from.Pressure) * blend,
                 from.Width + (to.Width - from.Width) * blend,
-                from.TimeMs + (to.TimeMs - from.TimeMs) * blend));
+                from.TimeMs + (to.TimeMs - from.TimeMs) * blend,
+                from.HasPressure || to.HasPressure,
+                from.TiltX + (to.TiltX - from.TiltX) * blend,
+                from.TiltY + (to.TiltY - from.TiltY) * blend));
         }
         partial.RestorePoints(_partialPoints);
     }

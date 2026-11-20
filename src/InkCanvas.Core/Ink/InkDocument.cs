@@ -15,12 +15,41 @@ public sealed class InkDocument
     public int Count => _strokes.Count;
 
     public event Action Changed;
+    private int _updateDepth;
+    private bool _changedDuringUpdate;
+
+    /// <summary>Observers see the final stroke set when a recognition replaces several source strokes.</summary>
+    public IDisposable DeferNotifications()
+    {
+        _updateDepth++;
+        return new UpdateScope(this);
+    }
+
+    private void NotifyChanged()
+    {
+        if (_updateDepth > 0) { _changedDuringUpdate = true; return; }
+        Changed?.Invoke();
+    }
+
+    private sealed class UpdateScope(InkDocument owner) : IDisposable
+    {
+        private InkDocument _owner = owner;
+        public void Dispose()
+        {
+            var document = _owner;
+            if (document is null) return;
+            _owner = null;
+            if (--document._updateDepth != 0 || !document._changedDuringUpdate) return;
+            document._changedDuringUpdate = false;
+            document.Changed?.Invoke();
+        }
+    }
 
     public void Add(InkStroke stroke)
     {
         if (stroke is null) return;
         _strokes.Add(stroke);
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     public void AddRange(IEnumerable<InkStroke> strokes)
@@ -32,13 +61,13 @@ public sealed class InkDocument
             _strokes.Add(s);
             any = true;
         }
-        if (any) Changed?.Invoke();
+        if (any) NotifyChanged();
     }
 
     public bool Remove(InkStroke stroke)
     {
         bool removed = _strokes.Remove(stroke);
-        if (removed) Changed?.Invoke();
+        if (removed) NotifyChanged();
         return removed;
     }
 
@@ -46,14 +75,14 @@ public sealed class InkDocument
     {
         var set = new HashSet<InkStroke>(strokes);
         int n = _strokes.RemoveAll(set.Contains);
-        if (n > 0) Changed?.Invoke();
+        if (n > 0) NotifyChanged();
         return n;
     }
 
     public void Insert(int index, InkStroke stroke)
     {
         _strokes.Insert(Math.Clamp(index, 0, _strokes.Count), stroke);
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     /// <summary>Restore removed strokes in ascending original-index order, notifying once.</summary>
@@ -65,7 +94,7 @@ public sealed class InkDocument
             _strokes.Insert(Math.Clamp(index, 0, _strokes.Count), stroke);
             any = true;
         }
-        if (any) Changed?.Invoke();
+        if (any) NotifyChanged();
     }
 
     /// <summary>Replace one stroke by its surviving fragments without reordering other ink.</summary>
@@ -76,7 +105,7 @@ public sealed class InkDocument
         _strokes.RemoveAt(index);
         _strokes.InsertRange(index, replacement);
         // Notify once, so renderers never observe a temporarily empty document mid-erase.
-        Changed?.Invoke();
+        NotifyChanged();
         return true;
     }
 
@@ -84,7 +113,7 @@ public sealed class InkDocument
     {
         if (_strokes.Count == 0) return;
         _strokes.Clear();
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     /// <summary>Exchange a screen page atomically while retaining stroke identity for undo.</summary>
@@ -93,11 +122,11 @@ public sealed class InkDocument
         var incoming = strokes.Where(stroke => stroke is not null).ToArray();
         _strokes.Clear();
         _strokes.AddRange(incoming);
-        Changed?.Invoke();
+        NotifyChanged();
     }
 
     /// <summary>Notify that stroke geometry mutated in place (e.g. a transform).</summary>
-    public void Touch() => Changed?.Invoke();
+    public void Touch() => NotifyChanged();
 
     public Rect Bounds
     {
@@ -116,7 +145,7 @@ public sealed class InkDocument
         foreach (var s in _strokes)
         {
             if (!s.Bounds.Inflate(radius).Contains(point)) continue;
-            if (s.DistanceTo(point) <= radius + s.Attributes.BaseWidth * 0.5f) hits.Add(s);
+            if (s.DistanceTo(point) <= radius + s.HitRadius) hits.Add(s);
         }
         return hits;
     }

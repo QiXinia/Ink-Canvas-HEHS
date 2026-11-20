@@ -52,6 +52,9 @@ public abstract class TaperProfile
         if (candidate > slot) slot = candidate;
     }
 
+    protected static float PressureWidth(in InkPoint point, float width)
+        => point.HasPressure ? width * (.25f + 1.5f * Math.Clamp(point.Pressure, 0, 1)) : width;
+
     public static TaperProfile Create(TaperKind kind) => kind switch
     {
         TaperKind.None => new NoneTaper(),
@@ -66,7 +69,7 @@ public sealed class NoneTaper : TaperProfile
     public override TaperKind Kind => TaperKind.None;
 
     public override void Apply(Span<InkPoint> points, int tipIndex, float baseWidth)
-        => Settle(ref points[tipIndex].Width, baseWidth);
+        => Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth));
 }
 
 /// <summary>
@@ -98,14 +101,14 @@ public sealed class TailTaper : TaperProfile
             float distance = tipIndex - j;                       // 0 at the tip
             float t = distance / (float)(n - 1);                  // 0 at tip -> 1 at window edge
             float ratio = TipRatio + (1f - TipRatio) * t;         // thin at tip, full behind it
-            Settle(ref points[j].Width, baseWidth * ratio);
+            Settle(ref points[j].Width, PressureWidth(points[j], baseWidth) * ratio);
         }
 
         if (tipIndex < HeadPoints)
         {
             float t = (tipIndex + 1) / (float)(HeadPoints + 1);
             float ratio = TipRatio + (1f - TipRatio) * t;
-            Settle(ref points[tipIndex].Width, baseWidth * ratio);
+            Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth) * ratio);
         }
     }
 }
@@ -138,7 +141,7 @@ public sealed class VelocityTaper : TaperProfile
 
         // Original pressure baseline is 0.5, so 0.5 maps to the full base width.
         float ratio = Math.Clamp(pressure / 0.5f, 0.15f, 1.8f);
-        Settle(ref points[tipIndex].Width, baseWidth * ratio);
+        Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth) * ratio);
     }
 
     private static float Dist(in InkPoint a, in InkPoint b)

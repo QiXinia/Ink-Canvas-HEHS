@@ -26,6 +26,8 @@ public sealed class PalmRejector
     private readonly HashSet<uint> _palms = new();
 
     public bool IsPenActive => _activePens.Count > 0;
+    public bool SuppressesTouch(in OverlayPointer p)
+        => p.Kind == OverlayPointerKind.Touch && PenHasPriority && _activePens.Values.Contains(p.InputSurface);
 
     public IReadOnlyCollection<uint> ActivePalms => _palms;
 
@@ -39,6 +41,11 @@ public sealed class PalmRejector
     {
         _activePens.Remove(p.Id);
         _palms.Remove(p.Id);
+    }
+
+    public void OnMove(in OverlayPointer p)
+    {
+        if (p.Kind == OverlayPointerKind.Touch && IsPalmContact(p)) _palms.Add(p.Id);
     }
 
     public bool IsPalmContact(in OverlayPointer p)
@@ -81,7 +88,7 @@ public sealed class PalmRejector
     {
         if (p.Kind == OverlayPointerKind.Pen) return true;
         if (_palms.Contains(p.Id)) return false;
-        if (PenHasPriority && _activePens.Values.Contains(p.InputSurface)) return false;
+        if (SuppressesTouch(p)) return false;
         return true;
     }
 

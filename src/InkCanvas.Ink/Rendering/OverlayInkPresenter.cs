@@ -42,6 +42,7 @@ public sealed class OverlayInkPresenter : IDisposable
     private Matrix3x2 _lastPreviewTransform;
     private bool _lastViewManipulation;
     private long _lastDotAnimationVersion;
+    private long _lastRecognitionVersion;
     private DotAnimationClock _dotClock;
 
     private CanvasRenderTarget _liveTarget;
@@ -54,6 +55,8 @@ public sealed class OverlayInkPresenter : IDisposable
     private int _liveX, _liveY, _liveW, _liveH;
     private bool _frameIsHidden;
     private bool _frameDirty;                 // DIB written but not yet pushed to the screen
+    private Dictionary<InkStroke, (int Stable, Rect Bounds)> _liveDamage = new();
+    private Dictionary<InkStroke, (int Stable, Rect Bounds)> _nextLiveDamage = new();
 
     private bool _rendering;
     private bool _pending;
@@ -113,7 +116,7 @@ public sealed class OverlayInkPresenter : IDisposable
         RequestRender();
     }
     private long _lastPresentTick;
-    private bool MoveFrameDue => Stopwatch.GetElapsedTime(_lastPresentTick).TotalMilliseconds >= 1000d / 60;
+    private bool MoveFrameDue => Stopwatch.GetElapsedTime(_lastPresentTick).TotalMilliseconds >= 1000d / 240;
 
     // Latency diagnostics: pointer dwTime (GetTickCount epoch, carried by OverlayPointer.TimeMs)
     // versus the tick at which UpdateLayeredWindow returned.
@@ -247,7 +250,14 @@ public sealed class OverlayInkPresenter : IDisposable
         FinishScreenTrackingTransition();
         NoteInput(p); _controller.OnPointerDown(p);
     }
-    private void OnMove(OverlayPointer p) { if (_excludedPointers.Contains(p.Id)) return; NoteInput(p); _moveInput = true; try { _controller.OnPointerMove(p); } finally { _moveInput = false; } }
+    private void OnMove(OverlayPointer p)
+    {
+        if (_excludedPointers.Contains(p.Id)) return;
+        NoteInput(p); _moveInput = true; _intermediateInput = p.IsIntermediate;
+        try { _controller.OnPointerMove(p); }
+        finally { _moveInput = false; _intermediateInput = false; }
+    }
+    private bool _intermediateInput;
     private void OnUp(OverlayPointer p) { if (_excludedPointers.Remove(p.Id)) return; NoteInput(p); _controller.OnPointerUp(p); }
     private void OnCanceled(OverlayPointer p) { if (_excludedPointers.Remove(p.Id)) return; NoteInput(p); _controller.OnPointerCanceled(p); }
     private void OnHover(OverlayPointer p)
@@ -308,6 +318,7 @@ public sealed class OverlayInkPresenter : IDisposable
     private void RequestRender()
     {
         if (!_attached) return;
+        if (_intermediateInput) return;
         if (_sceneUpdateDepth > 0) { _pending = true; return; }
         // Preserve every sample but skip GPU work for intermediate packets already superseded in the queue.
         // Down/up and document changes always flush synchronously.
@@ -366,22 +377,32 @@ public sealed class OverlayInkPresenter : IDisposable
             _committedPixels.AsSpan().CopyTo(Frame);
             _liveW = 0; _liveH = 0;
             _committedChanged = false;
+            _liveDamage.Clear();
         }
         else if (_liveW > 0 && _liveH > 0)
         {
             RestoreLiveRegion();
         }
 
-        var region = LiveRegion();
+        bool incremental = _controller.Playback is null && _controller.PreviewStrokes is null
+            && !_controller.ShapePreview.Any() && _controller.RecognitionPreview.Count == 0
+            && _controller.ExtensionPreview.Count == 0 && _controller.DotAnimations.Count == 0
+            && !_controller.HasSelection && !_controller.IsMarqueeSelecting && !_controller.IsLassoErasing
+            && !_controller.IsEraserPreviewVisible && !_controller.IsPenCursorVisible;
+        var region = LiveRegion(incremental);
         if (region.Width > 0 && region.Height > 0)
+        {
+            RestoreRegion(region.X, region.Y, region.Width, region.Height);
             CompositeLiveRegion(region);
+        }
         else ReleaseLiveBuffer();
 
         // Both restoring the previous live region and blending the current one change the
         // DIB in place; only the final UpdateLayeredWindow upload remains.
         _frameDirty |= fullRefresh || (_liveW > 0 && _liveH > 0) || (region.Width > 0 && region.Height > 0);
 
-        _liveX = region.X; _liveY = region.Y; _liveW = region.Width; _liveH = region.Height;
+        _liveX = region.X; _liveY = region.Y;
+        _liveW = incremental ? 0 : region.Width; _liveH = incremental ? 0 : region.Height;
     }
 
     private void PresentFrame()
@@ -421,7 +442,8 @@ public sealed class OverlayInkPresenter : IDisposable
         // redrawn only inside LiveRegion, including the frozen and current object positions.
         bool previewChanged = !ReferenceEquals(_lastPreviewStrokes, _controller.PreviewStrokes);
         if (_committedValid && !viewChanged && !previewChanged && _lastViewManipulation == _controller.IsViewManipulating
-            && _lastDotAnimationVersion == _controller.DotAnimationVersion) return;
+            && _lastDotAnimationVersion == _controller.DotAnimationVersion
+            && _lastRecognitionVersion == _controller.RecognitionSourcesVersion) return;
 
         _committedTarget ??= CreateTarget(_window.Width, _window.Height);
         if (_committedPixels is null)
@@ -451,14 +473,28 @@ public sealed class OverlayInkPresenter : IDisposable
         _lastPreviewTransform = _controller.SelectionPreviewTransform;
         _lastViewManipulation = _controller.IsViewManipulating;
         _lastDotAnimationVersion = _controller.DotAnimationVersion;
+        _lastRecognitionVersion = _controller.RecognitionSourcesVersion;
     }
 
     /// <summary>Screen-space bounding box of everything still being drawn.</summary>
-    private (int X, int Y, int Width, int Height) LiveRegion()
+    private (int X, int Y, int Width, int Height) LiveRegion(bool incremental)
     {
         var world = Rect.Empty;
-        foreach (var s in _controller.LiveStrokes) world = world.Union(s.Bounds);
+        _nextLiveDamage.Clear();
+        foreach (var stroke in _controller.LiveStrokes)
+        {
+            bool previous = _liveDamage.TryGetValue(stroke, out var saved);
+            var damage = incremental && previous ? stroke.BoundsFrom(Math.Max(0, saved.Stable - 1)) : stroke.Bounds;
+            var bounds = previous ? saved.Bounds.Union(damage) : damage;
+            _nextLiveDamage[stroke] = (stroke.StablePointCount, bounds);
+            world = world.Union(damage);
+        }
+        // Touch-to-gesture or pen-priority cancellation must also erase its last visible pixels.
+        foreach (var pair in _liveDamage)
+            if (!_nextLiveDamage.ContainsKey(pair.Key)) world = world.Union(pair.Value.Bounds);
+        (_liveDamage, _nextLiveDamage) = (_nextLiveDamage, _liveDamage);
         foreach (var s in _controller.ShapePreview) world = world.Union(s.Bounds);
+        foreach (var s in _controller.RecognitionPreview) world = world.Union(s.Bounds);
         foreach (var s in _controller.ExtensionPreview) world = world.Union(s.Bounds);
         foreach (var animation in _controller.DotAnimations) world = world.Union(animation.Source.Bounds).Union(animation.Preview.Bounds);
         if (_controller.PreviewStrokes is not null)
@@ -499,17 +535,20 @@ public sealed class OverlayInkPresenter : IDisposable
 
     /// <summary>Copies the previous live box back from the committed cache into the frame.</summary>
     private void RestoreLiveRegion()
+        => RestoreRegion(_liveX, _liveY, _liveW, _liveH);
+
+    private void RestoreRegion(int left, int top, int width, int height)
     {
         int stride = _window.Width * 4;
-        if (_liveX == 0 && _liveW == _window.Width)
+        if (left == 0 && width == _window.Width)
         {
-            _committedPixels.AsSpan(_liveY * stride, _liveH * stride).CopyTo(Frame.Slice(_liveY * stride));
+            _committedPixels.AsSpan(top * stride, height * stride).CopyTo(Frame.Slice(top * stride));
             return;
         }
-        int rowBytes = _liveW * 4;
-        for (int y = 0; y < _liveH; y++)
+        int rowBytes = width * 4;
+        for (int y = 0; y < height; y++)
         {
-            int off = (_liveY + y) * stride + _liveX * 4;
+            int off = (top + y) * stride + left * 4;
             _committedPixels.AsSpan(off, rowBytes).CopyTo(Frame.Slice(off));
         }
     }
@@ -593,6 +632,7 @@ public sealed class OverlayInkPresenter : IDisposable
 
     public void ReleaseRenderBuffers()
     {
+        _liveDamage.Clear(); _nextLiveDamage.Clear();
         _historyTiles.Dispose();
         Scene.Strokes.RetainLive(Array.Empty<InkStroke>());
         _committedTarget?.Dispose();

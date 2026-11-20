@@ -414,11 +414,18 @@ public static class SelfTest
                 && (int)((controlBlue >> 16) & 255) - (int)((controlRed >> 16) & 255) > 80;
             bool visible = available && Math.Abs((int)(red & 255) - (int)(blue & 255)) > 10
                 && Math.Abs((int)((red >> 16) & 255) - (int)((blue >> 16) & 255)) > 10;
+            bool fallback = (bar.SystemBackdrop as ChromeBackdrop)?.State != "Active";
+            var brush = bar.Bar.ChromeSurfaces.First().Background as SolidColorBrush;
+            uint expected = brush is null ? uint.MaxValue
+                : (uint)(brush.Color.R | brush.Color.G << 8 | brush.Color.B << 16);
+            bool opaqueTheme = available && brush?.Color.A == 255 && red == expected && blue == expected;
             checks.Add(new { check = "toolbar background transmits desktop colors while inactive",
                 available, visible, red, blue, controlRed, controlBlue, backdrop = (bar.SystemBackdrop as ChromeBackdrop)?.State });
+            checks.Add(new { check = "desktop toolbar matches its active material or opaque theme fallback",
+                available, fallback, passed = available ? (bool?)(fallback ? opaqueTheme : visible) : null, expected });
             bool clean = belowRed == controlRed && belowBlue == controlBlue;
             checks.Add(new { check = "floating toolbar leaves no rectangular shadow fringe", available, passed = available ? (bool?)clean : null, belowRed, belowBlue });
-            return available ? visible && clean : null;
+            return available ? (fallback ? opaqueTheme : visible) && clean : null;
         }
         finally { window.Close(); }
     }

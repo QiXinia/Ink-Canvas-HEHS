@@ -54,7 +54,7 @@ public sealed partial class InkController
             var item = DrawingObjects[i];
             if (item.Element is not null && item.Element.Frame.Contains(world, Matrix3x2.Identity)) return item;
             if (item.Stroke is { } stroke && stroke.Bounds.Inflate(radius).Contains(world)
-                && stroke.DistanceTo(world) <= radius + stroke.Attributes.BaseWidth / 2) return item;
+                && stroke.DistanceTo(world) <= radius + stroke.HitRadius) return item;
         }
         return null;
     }

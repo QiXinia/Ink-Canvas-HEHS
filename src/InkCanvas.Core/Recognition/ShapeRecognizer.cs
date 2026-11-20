@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace InkCanvas.Core.Recognition;
 
-public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle }
+public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle, Parallelogram, Cube, CoordinateAxes }
 
 public readonly record struct RecognitionResult(
     RecognizedShape Shape,
@@ -28,7 +28,7 @@ public readonly record struct RecognitionResult(
 /// The decision boundaries are our own, so results will not match InkAnalyzer exactly.
 /// </para>
 /// </summary>
-public static class ShapeRecognizer
+public static partial class ShapeRecognizer
 {
     /// <summary>Minimum shape size in pixels; below this we do not guess.</summary>
     public const float MinSize = 40f;

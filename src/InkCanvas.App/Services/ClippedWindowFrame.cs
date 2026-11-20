@@ -85,6 +85,7 @@ internal sealed class ClippedWindowFrame : IDisposable
             return DefSubclassProc(window, message, wParam, lParam);
         }
         if (message == 0x0085 /* WM_NCPAINT */) return IntPtr.Zero;
+        if (message == 0x0014 /* WM_ERASEBKGND */) return new IntPtr(1);
         if (message == 0x0086 /* WM_NCACTIVATE */)
             lParam = new IntPtr(-1); // Update activation without repainting a classic frame.
 

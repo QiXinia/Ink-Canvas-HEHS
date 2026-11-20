@@ -37,7 +37,8 @@ public sealed class InkSceneRenderer : IDisposable
     public void DrawObject(CanvasDrawingSession session, InkController controller, DrawingObject item, Matrix3x2 view)
     {
         if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image) Images.Draw(session, image, view);
-        if (item.Stroke is { } stroke && controller.Playback?.Includes(stroke) != true && !controller.IsAnimatingDot(stroke))
+        if (item.Stroke is { } stroke && controller.Playback?.Includes(stroke) != true && !controller.IsAnimatingDot(stroke)
+            && !controller.IsRecognitionPreviewSource(stroke))
             Strokes.Draw(session, stroke, controller.IsPreviewStroke(stroke) ? controller.SelectionPreviewTransform * view : view);
     }
 
@@ -58,7 +59,8 @@ public sealed class InkSceneRenderer : IDisposable
         }
         Strokes.RetainLive(controller.LiveStrokes);
         foreach (var stroke in controller.LiveStrokes)
-            Strokes.Draw(session, stroke, view);
+            if (!controller.IsRecognitionPreviewSource(stroke)) Strokes.Draw(session, stroke, view);
+        foreach (var stroke in controller.RecognitionPreview) Strokes.Draw(session, stroke, view);
         foreach (var stroke in controller.ShapePreview)
             Strokes.Draw(session, stroke, view);
         _extensionStrokes.Retain(controller.ExtensionPreview);

@@ -97,9 +97,10 @@ public sealed partial class InkController : IDisposable
     private readonly Dictionary<uint, InkStroke> _live = new();
     private readonly Dictionary<uint, uint> _strokeStartTimes = new();
     private readonly Dictionary<uint, (Vector2 Position, uint Since)> _lineEndpoints = new();
-    private const int LineHoldMilliseconds = 450;
+    private int LineHoldMilliseconds => Math.Clamp(RecognitionOptions.HoldMilliseconds, 300, 1500);
     private const float LineHoldRadius = 3;
     private readonly Dictionary<uint, OverlayPointer> _touches = new();
+    private readonly HashSet<uint> _suppressedTouches = new();
     private readonly List<uint> _scratchIds = new();
     private readonly TwoFingerManipulator _manipulator = new();
     private readonly TwoFingerManipulator _selectionManipulator = new();
@@ -157,6 +158,7 @@ public sealed partial class InkController : IDisposable
             var previous = _tool;
             HideEraserPreview();
             _tool = value;
+            ClearShapeHolds();
             if (_configuredPenWidth.HasValue)
                 CurrentAttributes.BaseWidth = value == InkTool.Highlighter ? _configuredHighlighterWidth : _configuredPenWidth.Value;
             var color = value == InkTool.Highlighter ? _highlighterColor : _penColor;
@@ -382,6 +384,8 @@ public sealed partial class InkController : IDisposable
     public bool PalmErases { get; set; } = true;
 
     public bool RecognizeShapes { get; set; } = true;
+    public bool UseHardwarePressure { get; set; } = true;
+    public bool UsePenTilt { get; set; } = true;
 
     public bool MultiTouchEnabled { get; set; } = true;
 
@@ -565,8 +569,19 @@ public sealed partial class InkController : IDisposable
     public void OnPointerDown(in OverlayPointer p)
     {
         if (Playback is not null) return;
-        UpdateEraserPreview(p, notify: false);
         _palm.OnDown(p);
+        if (p.Kind == OverlayPointerKind.Pen && _palm.PenHasPriority)
+        {
+            CancelTouchInk(p.InputSurface);
+            foreach (var touch in _touches.Values)
+                if (touch.InputSurface == p.InputSurface) _suppressedTouches.Add(touch.Id);
+            foreach (var id in _suppressedTouches) _touches.Remove(id);
+            _manipulator.Reset();
+            if (_erasing && _palm.ActivePalms.Contains(_eraserPointerId)) EndErase();
+        }
+        if (_palm.SuppressesTouch(p)) { _suppressedTouches.Add(p.Id); return; }
+        if (p.Kind == OverlayPointerKind.Touch && _palm.ShouldErase(p) && Tool is InkTool.Pan or InkTool.Select) return;
+        UpdateEraserPreview(p, notify: false);
         if (Tool == InkTool.Pan)
         {
             if (PanZoomEnabled && p.Kind == OverlayPointerKind.Touch)
@@ -620,7 +635,6 @@ public sealed partial class InkController : IDisposable
 
         if (p.Kind == OverlayPointerKind.Touch)
         {
-            _touches[p.Id] = p;
             // An explicitly selected eraser must keep its mode/size instead of being
             // reclassified as an implicit palm eraser or a slideshow swipe.
             if (Tool == InkTool.Eraser)
@@ -628,23 +642,21 @@ public sealed partial class InkController : IDisposable
                 if (!_erasing) BeginErase(p.Id, world, partialStroke: EraserMode == InkEraserMode.Area);
                 return;
             }
+            // A palm must never form a pinch pair with the writing finger.
+            if (PalmErases && _palm.ShouldErase(p))
+            {
+                if (!_erasing)
+                {
+                    if (_palm.Advanced is not null)
+                        _gestureEraserRadius = MathF.Max(EraserRadius, MathF.Max(p.ContactWidth, p.ContactHeight) / 2);
+                    BeginErase(p.Id, world, partialStroke: true);
+                }
+                return;
+            }
             // WPF MW_TouchEvents.cs:275-291: isInMultiTouchMode==true means multi-finger
             // WRITING (gestures disabled); gestures run only when the mode is OFF. The second
             // finger then cancels partial touch ink and starts the gesture (first-contact
             // snapshot rollback on lift, MW_TouchEvents.cs:273-321).
-            if (!MultiTouchEnabled && TryGetTouchPair(out var a, out var b, p.InputSurface))
-            {
-                CancelTouchInk(p.InputSurface);
-                _manipulator.Begin(new Vector2(a.X, a.Y), new Vector2(b.X, b.Y));
-                Invalidated?.Invoke();
-                return;
-            }
-            if (PalmErases && _palm.ShouldErase(p))
-            {
-                BeginErase(p.Id, world, partialStroke: true);
-                return;
-            }
-
             // 1:1 special-screen classification (QuadIR / TouchMultiplier / nib-vs-finger bounds).
             // 未验证：按要求跳过行为验证。
             if (_palm.Advanced is not null)
@@ -670,6 +682,14 @@ public sealed partial class InkController : IDisposable
             }
 
             if (!_palm.ShouldDraw(p) && Tool is InkTool.Pen or InkTool.Highlighter) return;
+            _touches[p.Id] = p;
+            if (!MultiTouchEnabled && TryGetTouchPair(out var a, out var b, p.InputSurface))
+            {
+                CancelTouchInk(p.InputSurface);
+                _manipulator.Begin(new Vector2(a.X, a.Y), new Vector2(b.X, b.Y));
+                Invalidated?.Invoke();
+                return;
+            }
         }
 
         switch (Tool)
@@ -699,6 +719,19 @@ public sealed partial class InkController : IDisposable
     public void OnPointerMove(in OverlayPointer p)
     {
         if (Playback is not null) return;
+        if (_suppressedTouches.Contains(p.Id)) return;
+        _palm.OnMove(p);
+        if (p.Kind == OverlayPointerKind.Touch && PalmErases && _palm.ShouldErase(p)
+            && Tool is InkTool.Pen or InkTool.Highlighter or InkTool.Shape && !_erasing)
+        {
+            _live.Remove(p.Id); _strokeStartTimes.Remove(p.Id); _lineEndpoints.Remove(p.Id);
+            RemoveShapeHold(p.Id);
+            _shapeDragStart.Remove(p.Id); _touches.Remove(p.Id);
+            _manipulator.Reset();
+            _gestureEraserRadius = MathF.Max(EraserRadius, MathF.Max(p.ContactWidth, p.ContactHeight) / 2);
+            BeginErase(p.Id, ToWorld(p), partialStroke: true);
+            Invalidated?.Invoke();
+        }
         UpdateEraserPreview(p);
         if (Tool == InkTool.Pan)
         {
@@ -805,13 +838,18 @@ public sealed partial class InkController : IDisposable
 
         if (_live.TryGetValue(p.Id, out var stroke))
         {
+            if (_heldShapes.ContainsKey(p.Id)) { RefineHeldShape(p.Id, world); return; }
             var position = new Vector2(p.X, p.Y);
             if (!_lineEndpoints.TryGetValue(p.Id, out var endpoint)
                 || Vector2.DistanceSquared(position, endpoint.Position) > LineHoldRadius * LineHoldRadius)
+            {
                 _lineEndpoints[p.Id] = (position, p.TimeMs);
+                ResetShapeHold(p.Id);
+            }
             // Widths are settled here, as the point arrives — never after pen-up.
             float time = _strokeStartTimes.TryGetValue(p.Id, out uint startTime) ? unchecked(p.TimeMs - startTime) : p.TimeMs;
-            stroke.AddPoint(world.X, world.Y, p.Pressure, time);
+            stroke.AddPoint(world.X, world.Y, p.Pressure, time, UseHardwarePressure && p.Kind == OverlayPointerKind.Pen && p.HasPressure,
+                UsePenTilt ? p.TiltX : 0, UsePenTilt ? p.TiltY : 0);
             Invalidated?.Invoke();
         }
     }
@@ -819,6 +857,7 @@ public sealed partial class InkController : IDisposable
     public void OnPointerUp(in OverlayPointer p, bool canceled = false)
     {
         if (Playback is not null) return;
+        if (_suppressedTouches.Remove(p.Id)) { _palm.OnUp(p); return; }
         if (p.Kind == OverlayPointerKind.Touch) HideEraserPreview(p.Id);
         else UpdateEraserPreview(p);
         if (Tool == InkTool.Pan)
@@ -913,12 +952,25 @@ public sealed partial class InkController : IDisposable
 
         if (_live.Remove(p.Id, out var stroke))
         {
+            if (!canceled && stroke.UsesHardwarePressure && !_heldShapes.ContainsKey(p.Id)
+                && Vector2.DistanceSquared(stroke.Points[^1].Position, world) > .01f)
+            {
+                var last = stroke.Points[^1];
+                bool pressureOnLift = UseHardwarePressure && p.HasPressure && float.IsFinite(p.Pressure) && p.Pressure > 0;
+                float time = _strokeStartTimes.TryGetValue(p.Id, out uint startTime) ? unchecked(p.TimeMs - startTime) : p.TimeMs;
+                // Pointer-up often reports zero after contact is already lost. Extend to its
+                // final coordinate with the last contact pressure in that case.
+                stroke.AddPoint(world.X, world.Y, pressureOnLift ? p.Pressure : last.Pressure, time,
+                    pressureOnLift || last.HasPressure, UsePenTilt ? p.TiltX : 0, UsePenTilt ? p.TiltY : 0);
+            }
+            if (_heldShapes.ContainsKey(p.Id) && !canceled) RefineHeldShape(p.Id, world);
+            var shapeHold = RemoveShapeHold(p.Id);
             _strokeStartTimes.Remove(p.Id);
             bool held = _lineEndpoints.Remove(p.Id, out var endpoint)
                 && Vector2.DistanceSquared(new Vector2(p.X, p.Y), endpoint.Position) <= LineHoldRadius * LineHoldRadius
                 && unchecked((int)(p.TimeMs - endpoint.Since)) >= LineHoldMilliseconds;
             if (!canceled) stroke = ConfirmTap(stroke, world, p.Kind);
-            if (stroke.Count >= 1) CommitStrokes(new List<InkStroke> { stroke }, "ink", held);
+            if (stroke.Count >= 1) CommitStrokes(new List<InkStroke> { stroke }, "ink", held, canceled ? null : shapeHold);
             if (_dotAnimations.Count > 0) DotAnimationChanged?.Invoke();
             Invalidated?.Invoke();
         }
@@ -953,9 +1005,17 @@ public sealed partial class InkController : IDisposable
         if (!Matrix3x2.Invert(ViewTransform, out var inverse)) return stroke;
         var worldCenter = Vector2.Transform(center, inverse);
 
+        var dotPoint = first;
         float targetWidth = stroke.Attributes.BaseWidth;
+        if (stroke.UsesHardwarePressure)
+        {
+            targetWidth = 0;
+            foreach (var point in stroke.Points)
+                if (point.Width > targetWidth) { targetWidth = point.Width; dotPoint = point; }
+        }
         var dot = new InkStroke(stroke.Attributes.Clone());
-        dot.RestorePoints(new[] { new InkPoint(worldCenter.X, worldCenter.Y, first.Pressure, targetWidth, first.TimeMs) });
+        dot.RestorePoints(new[] { new InkPoint(worldCenter.X, worldCenter.Y, dotPoint.Pressure, targetWidth, first.TimeMs,
+            stroke.UsesHardwarePressure || dotPoint.HasPressure, dotPoint.TiltX, dotPoint.TiltY) });
         if (stroke.Count > 1 || Vector2.DistanceSquared(first.Position, worldCenter) > .001f
             || MathF.Abs(MathF.Max(.5f, first.Width) - MathF.Max(.5f, targetWidth)) > .001f)
         {
@@ -970,11 +1030,14 @@ public sealed partial class InkController : IDisposable
         var attrs = CurrentAttributes.Clone();
         attrs.IsHighlighter = Tool == InkTool.Highlighter;
         var stroke = new InkStroke(attrs);
-        bool relativeTime = attrs.EffectiveTaper is >= TaperKind.SmoothPen and <= TaperKind.InkWash;
+        bool relativeTime = attrs.EffectiveTaper is >= TaperKind.SmoothPen and <= TaperKind.InkWash
+            || UseHardwarePressure && p.Kind == OverlayPointerKind.Pen && p.HasPressure;
         if (relativeTime) _strokeStartTimes[p.Id] = p.TimeMs;
-        stroke.AddPoint(world.X, world.Y, p.Pressure, relativeTime ? 0 : p.TimeMs);
+        stroke.AddPoint(world.X, world.Y, p.Pressure, relativeTime ? 0 : p.TimeMs,
+            UseHardwarePressure && p.Kind == OverlayPointerKind.Pen && p.HasPressure, UsePenTilt ? p.TiltX : 0, UsePenTilt ? p.TiltY : 0);
         _live[p.Id] = stroke;
         _lineEndpoints[p.Id] = (new Vector2(p.X, p.Y), p.TimeMs);
+        ResetShapeHold(p.Id);
         Invalidated?.Invoke();
     }
 
@@ -1112,70 +1175,21 @@ public sealed partial class InkController : IDisposable
     /// <summary>
     /// Complete + move to document + record history, then invalidate exactly once.
     /// </summary>
-    private void CommitStrokes(List<InkStroke> strokes, string name, bool lineEndpointHeld = false)
+    private void CommitStrokes(List<InkStroke> strokes, string name, bool lineEndpointHeld = false, HeldShape heldShape = null)
     {
         long layer = NextLayerOrder();
         foreach (var stroke in strokes) stroke.LayerOrder = layer++;
         foreach (var s in strokes) s.Complete();
-        Document.AddRange(strokes);
-        History.Push(new DelegateAction(name,
-            () => Document.AddRange(strokes),
-            () => Document.RemoveAll(strokes)));
-
-        if (RecognizeShapes && name == "ink") TryRecognize(strokes, lineEndpointHeld);
-        Invalidated?.Invoke();
-    }
-
-    private void TryRecognize(List<InkStroke> committed, bool lineEndpointHeld)
-    {
-        _recentForRecognition.AddRange(committed);
-        while (_recentForRecognition.Count > 4) _recentForRecognition.RemoveAt(0);
-        _recentForRecognition.RemoveAll(s => !Document.Strokes.Contains(s));
-        if (_recentForRecognition.Count == 0) return;
-
-        // A line belongs to the stroke just completed. Nearby handwriting must never be
-        // replaced as part of a combined line fit.
-        var single = ShapeRecognizer.Recognize(committed);
-        var result = single.Shape == RecognizedShape.Line ? single : ShapeRecognizer.Recognize(_recentForRecognition);
-        if (result.Shape is RecognizedShape.None or RecognizedShape.Triangle) return;
-        if (result.Shape == RecognizedShape.Line && (!lineEndpointHeld || committed.Count != 1
-            || single.Shape != RecognizedShape.Line || committed[0].Attributes.IsHighlighter)) return;
-
-        List<InkStroke> replacement;
-        var attrs = committed[0].Attributes.Clone();
-        attrs.TaperKind = TaperKind.None; // recognized shapes are uniform-width too
-        switch (result.Shape)
+        using (Document.DeferNotifications())
         {
-            case RecognizedShape.Circle:
-                // Circle generation is center+radius now: anchor at the recognized center.
-                replacement = ShapeGenerator.Generate(ShapeKind.CircleFromCenter,
-                    result.Center,
-                    result.Center + new Vector2(MathF.Max(result.RadiusX, result.RadiusY), 0), attrs);
-                break;
-            case RecognizedShape.Ellipse:
-                replacement = ShapeGenerator.Generate(ShapeKind.Ellipse,
-                    result.Center - new Vector2(result.RadiusX, result.RadiusY),
-                    result.Center + new Vector2(result.RadiusX, result.RadiusY), attrs);
-                break;
-            case RecognizedShape.Line:
-                replacement = ShapeGenerator.Generate(ShapeKind.Line, result.Corners[0], result.Corners[1], attrs);
-                break;
-            case RecognizedShape.Rectangle:
-                replacement = new List<InkStroke> { ShapeGenerator.Stroke(attrs, result.Corners.Concat(new[] { result.Corners[0] }).ToArray()) };
-                break;
-            default:
-                return;
+            Document.AddRange(strokes);
+            _drawingOrderDirty = true;
+            History.Push(new DelegateAction(name,
+                () => Document.AddRange(strokes),
+                () => Document.RemoveAll(strokes)));
+            if (RecognizeShapes && name == "ink") TryRecognize(strokes, lineEndpointHeld, heldShape);
         }
-
-        var removed = result.Shape == RecognizedShape.Line ? committed.ToList() : _recentForRecognition.ToList();
-        long layer = NextLayerOrder();
-        foreach (var stroke in replacement) stroke.LayerOrder = layer++;
-        Document.RemoveAll(removed);
-        Document.AddRange(replacement);
-        History.Push(new DelegateAction("recognize",
-            () => { Document.RemoveAll(removed); Document.AddRange(replacement); },
-            () => { Document.RemoveAll(replacement); Document.AddRange(removed); }));
-        _recentForRecognition.Clear();
+        Invalidated?.Invoke();
     }
 
     // ---- erasing ----------------------------------------------------------
@@ -1824,6 +1838,7 @@ public sealed partial class InkController : IDisposable
             _live.Remove(id);
             _strokeStartTimes.Remove(id);
             _lineEndpoints.Remove(id);
+            RemoveShapeHold(id);
         }
     }
 
@@ -1856,11 +1871,13 @@ public sealed partial class InkController : IDisposable
         _panPointerId = null;
         _lassoPath.Clear(); IsLassoErasing = false;
         _live.Clear();
+        ClearShapeHolds();
         _dotAnimations.Clear();
         _strokeStartTimes.Clear();
         _eraserPreviewPointer = null;
         _lineEndpoints.Clear();
         _touches.Clear();
+        _suppressedTouches.Clear();
         Selection.Clear();
         SelectedElements.Clear(); GetSelectableElements = null;
         _frameStrokes.Clear(); _frameElements.Clear();

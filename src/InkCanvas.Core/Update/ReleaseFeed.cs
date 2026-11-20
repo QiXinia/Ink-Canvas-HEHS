@@ -1,5 +1,6 @@
 using InkCanvas.Core.Versioning;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace InkCanvas.Core.Update;
 
@@ -13,8 +14,31 @@ public sealed record ReleaseInfo(string Tag, AppVersion Version, string Name, st
     public bool IsNewerThan(AppVersion current) => Version > current;
 }
 
-public static class ReleaseFeed
+public static partial class ReleaseFeed
 {
+    /// <summary>Release attachments remain available through mirrors that cannot proxy GitHub's API or HTML.</summary>
+    public static ReleaseInfo ParseLatestChecksums(string text, string repository)
+    {
+        var releases = new List<ReleaseInfo>();
+        foreach (string line in text.Split('\n'))
+        {
+            var parts = line.Trim().Split((char[])null, 2, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length != 2 || parts[0].Length != 64 || !parts[0].All(Uri.IsHexDigit)) continue;
+            string name = parts[1].TrimStart('*', ' ');
+            var match = PortableFileName().Match(name);
+            if (!match.Success || !AppVersion.TryParse(match.Groups[1].Value, out var version)) continue;
+            string latest = $"https://github.com/{repository}/releases/latest";
+            releases.Add(new("v" + version, version, "Ink Canvas WinUI 3 v" + version,
+                "版本 API 暂不可用，已通过最新稳定版的校验清单获取更新信息。", latest,
+                latest + "/download/" + Uri.EscapeDataString(name), 0)
+            { AssetName = name, Sha256 = parts[0].ToLowerInvariant(), ChecksumsUrl = latest + "/download/SHA256SUMS.txt" });
+        }
+        return releases.OrderByDescending(release => release.Version).FirstOrDefault();
+    }
+
+    [GeneratedRegex("^InkCanvas-WinUI3-([vV]?[0-9]+\\.[0-9]+(?:\\.[0-9]+){0,2})-win-x64\\.zip$", RegexOptions.IgnoreCase, 1000)]
+    private static partial Regex PortableFileName();
+
     public static ReleaseInfo ParseLatest(string json)
     {
         using var document = Read(json);

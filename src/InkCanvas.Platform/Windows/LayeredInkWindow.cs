@@ -19,6 +19,10 @@ public readonly record struct OverlayPointer(
     bool Control = false)
 {
     public long InputSurface { get; init; }
+    public bool HasPressure { get; init; }
+    public float TiltX { get; init; }
+    public float TiltY { get; init; }
+    public bool IsIntermediate { get; init; }
 }
 
 /// <summary>
@@ -53,6 +57,8 @@ public sealed class LayeredInkWindow : IDisposable
     private IntPtr _screenDc;
     private bool _disposed;
     private readonly Dictionary<uint, OverlayPointer> _activePointers = new();
+    private NativeMethods.POINTER_PEN_INFO[] _penHistory;
+    private NativeMethods.POINTER_TOUCH_INFO[] _touchHistory;
     private OverlayPointer? _fallbackMouse;
     private bool _trackingMouseLeave;
     private ScreenRect[] _inputAreas;
@@ -544,8 +550,52 @@ public sealed class LayeredInkWindow : IDisposable
             EndPointer(id, readCurrent: false, canceled: (info.pointerFlags & 0x8000) != 0);
             return;
         }
+        if (info.historyCount > 1)
+        {
+            const int maximumHistory = 256;
+            uint count = Math.Min(info.historyCount, maximumHistory);
+            if (sample.Kind == OverlayPointerKind.Pen)
+            {
+                _penHistory ??= new NativeMethods.POINTER_PEN_INFO[maximumHistory];
+                if (NativeMethods.GetPointerPenInfoHistory(id, ref count, _penHistory))
+                for (int i = (int)Math.Min(count, maximumHistory) - 1; i > 0; i--)
+                {
+                    var pen = _penHistory[i];
+                    if (!AllowsInput(pen.pointerInfo.ptPixelLocation.X, pen.pointerInfo.ptPixelLocation.Y)) continue;
+                    var point = TranslateHistory(sample, pen.pointerInfo) with
+                    {
+                        Pressure = (pen.penMask & 1) != 0 ? Math.Clamp(pen.pressure / 1024f, 0, 1) : .5f,
+                        HasPressure = (pen.penMask & 1) != 0,
+                        TiltX = (pen.penMask & 4) != 0 ? Math.Clamp(pen.tiltX, -89, 89) : 0,
+                        TiltY = (pen.penMask & 8) != 0 ? Math.Clamp(pen.tiltY, -89, 89) : 0,
+                    };
+                    PointerMove?.Invoke(point);
+                }
+            }
+            else if (sample.Kind == OverlayPointerKind.Touch)
+            {
+                _touchHistory ??= new NativeMethods.POINTER_TOUCH_INFO[maximumHistory];
+                if (NativeMethods.GetPointerTouchInfoHistory(id, ref count, _touchHistory))
+                for (int i = (int)Math.Min(count, maximumHistory) - 1; i > 0; i--)
+                {
+                    var touch = _touchHistory[i];
+                    if (!AllowsInput(touch.pointerInfo.ptPixelLocation.X, touch.pointerInfo.ptPixelLocation.Y)) continue;
+                    var screen = ScreenAt(touch.pointerInfo.ptPixelLocation.X, touch.pointerInfo.ptPixelLocation.Y);
+                    var point = TranslateHistory(sample, touch.pointerInfo) with
+                    {
+                        ContactWidth = (float)((touch.rcContact.Right - touch.rcContact.Left) / screen.DpiScale),
+                        ContactHeight = (float)((touch.rcContact.Bottom - touch.rcContact.Top) / screen.DpiScale),
+                    };
+                    PointerMove?.Invoke(point);
+                }
+            }
+        }
         PointerMove?.Invoke(sample);
     }
+
+    private OverlayPointer TranslateHistory(OverlayPointer current, NativeMethods.POINTER_INFO info)
+        => current with { X = (info.ptPixelLocation.X - X) / DpiScale,
+            Y = (info.ptPixelLocation.Y - Y) / DpiScale, TimeMs = info.dwTime, IsIntermediate = true };
 
     private void TrackMouseLeave()
     {
@@ -584,7 +634,8 @@ public sealed class LayeredInkWindow : IDisposable
         if (!NativeMethods.GetPointerInfo(id, out var info)) return false;
         var screen = ScreenAt(info.ptPixelLocation.X, info.ptPixelLocation.Y);
 
-        float pressure = 0.5f, cw = 0, ch = 0;
+        float pressure = 0.5f, cw = 0, ch = 0, tiltX = 0, tiltY = 0;
+        bool hasPressure = false;
         var kind = OverlayPointerKind.Mouse;
 
         if (info.pointerType == NativeMethods.POINTER_INPUT_TYPE_PEN)
@@ -592,8 +643,10 @@ public sealed class LayeredInkWindow : IDisposable
             kind = OverlayPointerKind.Pen;
             if (NativeMethods.GetPointerPenInfo(id, out var pen))
             {
-                // Pen pressure is reported 0..1024; 0 means "no pressure data".
-                pressure = pen.pressure == 0 ? 0.5f : Math.Clamp(pen.pressure / 1024f, 0f, 1f);
+                hasPressure = (pen.penMask & 1) != 0;
+                pressure = hasPressure ? Math.Clamp(pen.pressure / 1024f, 0f, 1f) : .5f;
+                if ((pen.penMask & 4) != 0) tiltX = Math.Clamp(pen.tiltX, -89, 89);
+                if ((pen.penMask & 8) != 0) tiltY = Math.Clamp(pen.tiltY, -89, 89);
             }
         }
         else if (info.pointerType == NativeMethods.POINTER_INPUT_TYPE_TOUCH)
@@ -610,7 +663,7 @@ public sealed class LayeredInkWindow : IDisposable
         var pt = info.ptPixelLocation;
         sample = new OverlayPointer(id, (pt.X - X) / DpiScale, (pt.Y - Y) / DpiScale,
             pressure, cw, ch, kind, info.dwTime, NativeMethods.GetKeyState(0x10) < 0, NativeMethods.GetKeyState(0x11) < 0)
-            { InputSurface = screen.Handle.ToInt64() };
+            { InputSurface = screen.Handle.ToInt64(), HasPressure = hasPressure, TiltX = tiltX, TiltY = tiltY };
         return true;
     }
 

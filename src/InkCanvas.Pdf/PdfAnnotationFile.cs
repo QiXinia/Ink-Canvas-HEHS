@@ -205,7 +205,7 @@ public sealed class PdfAnnotationFile : IDisposable
                 token.ThrowIfCancellationRequested();
                 var color = layer.Color(stroke.Attributes.EffectiveColor);
                 content.Append('/').Append("GS").Append(color.A).Append(" gs\n").Append(Number(color.R / 255d)).Append(' ').Append(Number(color.G / 255d)).Append(' ').Append(Number(color.B / 255d)).Append(" rg\n");
-                var points = stroke.Points; var nib = stroke.Attributes.NibTransform;
+                var points = stroke.Points;
                 if (points.Count == 0) continue;
                 // Union bounded groups of the renderer's exact polygon capsules. This removes
                 // covered cap edges from the PDF without fitting a different curve or rasterizing.
@@ -216,9 +216,7 @@ public sealed class PdfAnnotationFile : IDisposable
                     int end = Math.Min(batch + 256, Math.Max(1, points.Count - 1));
                     for (int segment = batch; segment < end; segment++)
                     {
-                        var first = points[segment]; var last = points[Math.Min(segment + 1, points.Count - 1)];
-                        int length = StrokeGeometry.WriteSegmentOutline(first.Position, MathF.Max(first.Width, .5f) / 2 * layer.WidthScale,
-                            last.Position, MathF.Max(last.Width, .5f) / 2 * layer.WidthScale, contour, nib);
+                        int length = StrokeGeometry.WriteInkSegment(stroke, segment, layer.WidthScale, contour);
                         var path = new Path64(length);
                         for (int p = 0; p < length; p++) path.Add(new Point64(Math.Round(contour[p].X * 10000d), Math.Round(contour[p].Y * 10000d)));
                         paths.Add(path);

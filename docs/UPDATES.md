@@ -6,7 +6,19 @@ Ink Canvas 从 `QiXinia/Ink-Canvas-HEHS` 的 GitHub Releases 获取公开稳定�
 
 更新包必须带有 GitHub Release 提供的 SHA256 digest，或同一 Release 中 `SHA256SUMS.txt` 对应文件名的校验值。下载过程中同时检查发布的文件大小，只有长度与 SHA256 均匹配时才会将 `.partial` 文件移为可安装 ZIP。API、下载内容、超时和校验失败会继续尝试下一个 HTTPS 来源。传输每获得 64 KiB 数据才续期二十秒的进度超时，避免持续返回少量数据的慢连接阻塞切源。
 
-来源顺序为 GitHub、`gh-proxy.com`、`gh-proxy.org`、`ghfast.top`。镜像只代理最初指向 GitHub 的固定仓库 Release/API 地址，返回内容仍经过 JSON 或 SHA256 验证。失败详情写入 Ink Canvas 应用日志。
+版本列表、校验清单和安装包均先访问 GitHub 官方源，再按以下顺序切换镜像。每个镜像前缀后直接拼接包含 `https://` 的完整 GitHub 原始链接。
+
+1. `https://ghfile.geekertao.top/`
+2. `https://github.dpik.top/`
+3. `https://gh-proxy.com/`
+4. `https://fastgit.cc/`
+5. `https://gh.acmsz.top/`
+
+例如 `https://ghfile.geekertao.top/https://github.com/QiXinia/Ink-Canvas-HEHS/releases/download/v3.7.1/SHA256SUMS.txt`。原 `gh-proxy.org`、`ghfast.top` 已移出默认源。
+
+匿名 GitHub API 被限流或全部 API 镜像不可用时，更新器继续读取公开 Releases 页面及其附件清单。若镜像仅支持附件下载，再通过官方最新稳定版 `releases/latest/download/SHA256SUMS.txt` 提取便携包文件名、版本号与 SHA256，此时版本列表只显示获取到的最新稳定版。页面链接限制为同一 GitHub 仓库，排除预发行版。下载始终核对完整 SHA256。
+
+连接与读取停滞会记录明确的中文超时原因，并继续切换下一源。读取额外采用计时等待，即使底层网络流未及时响应取消标志，也会结束该次尝试。用户主动取消或程序退出时终止重试。失败详情写入 Ink Canvas 应用日志。
 
 ## 静默安装
 
@@ -25,3 +37,5 @@ Ink Canvas 从 `QiXinia/Ink-Canvas-HEHS` 的 GitHub Releases 获取公开稳定�
 ## 仓库验收
 
 以 GitHub 仓库发布的 `v3.5.0` 真实 ZIP 在隔离目录执行了完整流程，涵盖版本列表识别、GitHub 下载和 SHA256 校验、GitHub 断连后的镜像列表及 ZIP 下载、ZIP 暂存、外部辅助进程替换、用户插件和 `.icink` 保留，以及更新后程序启动。镜像访问在部分轮次返回 403 或出现 TLS/连接超时，成功轮次的真实包已通过 SHA256 校验。
+
+2026-11-20 更换镜像后的验收使用仓库 `v3.7.1` 的真实更新包，大小为 42,431,373 字节。GitHub 官方源下载及屏蔽 GitHub 直连后的 `ghfile.geekertao.top` 镜像下载均通过 SHA256 校验，校验值为 `2f5c28a052d39bf6d1f4c83625f25e511abfe9f20f8ebdf3499cdcca57b85d7a`。屏蔽直连时，版本 API 在前两个镜像失败后继续从 `gh-proxy.com` 获取列表。单元测试共 775 项通过，覆盖默认源顺序、API 与页面回退、仅附件镜像、主动取消，以及底层流不响应取消时的超时切源。

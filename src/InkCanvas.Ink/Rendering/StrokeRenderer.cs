@@ -150,13 +150,9 @@ public sealed class StrokeRenderer : IDisposable
         using var builder = new CanvasPathBuilder(session);
         builder.SetFilledRegionDetermination(CanvasFilledRegionDetermination.Winding);
         Span<Vector2> scratch = stackalloc Vector2[26];
-        var nib = stroke.Attributes.NibTransform;
         for (int segment = firstSegment; segment < lastSegment; segment++)
         {
-            var start = stroke.Points[segment];
-            var end = stroke.Points[Math.Min(segment + 1, stroke.Count - 1)];
-            int count = StrokeGeometry.WriteSegmentOutline(start.Position, MathF.Max(start.Width, 0.5f) * 0.5f * widthScale,
-                end.Position, MathF.Max(end.Width, 0.5f) * 0.5f * widthScale, scratch, nib);
+            int count = StrokeGeometry.WriteInkSegment(stroke, segment, widthScale, scratch);
             var outline = scratch[..count];
             if (outline.Length < 3) continue;
             builder.BeginFigure(outline[0]);

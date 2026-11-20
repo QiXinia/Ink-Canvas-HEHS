@@ -7,7 +7,8 @@ namespace InkCanvas.Pdf;
 public static class PdfInkCodec
 {
     private const int LegacyMagic = 0x314B4349;
-    private const int Magic = 0x324B4349;
+    private const int ShapeMagic = 0x324B4349;
+    private const int Magic = 0x334B4349;
     public const int MaximumPoints = 2_000_000;
     public static byte[] Encode(IReadOnlyList<InkStroke> strokes)
     {
@@ -36,7 +37,10 @@ public static class PdfInkCodec
                 }
                 writer.Write(stroke.Count);
                 foreach (var point in stroke.Points)
-                { writer.Write(point.X); writer.Write(point.Y); writer.Write(point.Pressure); writer.Write(point.Width); writer.Write(point.TimeMs); }
+                {
+                    writer.Write(point.X); writer.Write(point.Y); writer.Write(point.Pressure); writer.Write(point.Width); writer.Write(point.TimeMs);
+                    writer.Write(point.HasPressure); writer.Write(point.TiltX); writer.Write(point.TiltY);
+                }
             }
         }
         if (output.Length > 48 * 1024 * 1024) throw new InvalidDataException("PDF ink metadata is too large.");
@@ -49,7 +53,7 @@ public static class PdfInkCodec
         using var zlib = new ZLibStream(input, CompressionMode.Decompress);
         using var reader = new BinaryReader(zlib);
         int magic = reader.ReadInt32();
-        if (magic != Magic && magic != LegacyMagic) throw new InvalidDataException("Unsupported PDF ink metadata.");
+        if (magic != Magic && magic != ShapeMagic && magic != LegacyMagic) throw new InvalidDataException("Unsupported PDF ink metadata.");
         int count = reader.ReadInt32();
         if (count < 0 || count > 100_000) throw new InvalidDataException("Invalid PDF ink count.");
         var result = new List<InkStroke>(); int total = 0, sourceBytes = 0;
@@ -71,7 +75,7 @@ public static class PdfInkCodec
                 { frame[j] = reader.ReadSingle(); if (!float.IsFinite(frame[j])) throw new InvalidDataException("Invalid PDF object frame."); }
             }
             ShapeSource source = null;
-            if (magic == Magic && reader.ReadBoolean())
+            if (magic != LegacyMagic && reader.ReadBoolean())
             {
                 var group = reader.ReadBytes(16); if (group.Length != 16) throw new EndOfStreamException();
                 source = new ShapeSource(new Guid(group), ReadText(reader, 128, ref sourceBytes), ReadText(reader, 16384, ref sourceBytes));
@@ -85,6 +89,14 @@ public static class PdfInkCodec
                 if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(pressure) || !float.IsFinite(width) || !float.IsFinite(time)
                     || Math.Abs(x) > 10_000_000 || Math.Abs(y) > 10_000_000 || width is < 0 or > 1_000_000) throw new InvalidDataException("Invalid PDF ink point.");
                 points[j] = new InkPoint(x, y, pressure, width, time);
+                if (magic == Magic)
+                {
+                    points[j].HasPressure = reader.ReadBoolean();
+                    points[j].TiltX = reader.ReadSingle(); points[j].TiltY = reader.ReadSingle();
+                    if (!float.IsFinite(points[j].TiltX) || !float.IsFinite(points[j].TiltY)
+                        || Math.Abs(points[j].TiltX) > 180 || Math.Abs(points[j].TiltY) > 180)
+                        throw new InvalidDataException("Invalid pen tilt.");
+                }
             }
             var stroke = new InkStroke(attributes) { Id = id, LayerOrder = layer, IsRecognizedShape = shape, ShapeSource = source };
             stroke.RestorePoints(points); stroke.ImportObjectFrame(frame); stroke.Complete(); result.Add(stroke);

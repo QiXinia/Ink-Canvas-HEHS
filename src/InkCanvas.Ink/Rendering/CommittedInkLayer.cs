@@ -13,6 +13,8 @@ public sealed class CommittedInkLayer : IDisposable
         public IImageSelectionElement Image;
         public readonly List<InkStroke> Strokes = new();
         public readonly List<InkCanvas.Core.Ink.Rect> Bounds = new();
+        public readonly Dictionary<(int X, int Y), List<int>> TileStrokes = new();
+        public readonly List<int> SpanningStrokes = new();
         public InkCanvas.Core.Ink.Rect Coverage = InkCanvas.Core.Ink.Rect.Empty;
         public CanvasRenderTarget SmallTarget;
         public Vector2 SmallOrigin;
@@ -30,6 +32,7 @@ public sealed class CommittedInkLayer : IDisposable
     private Vector2 _rasterOffset;
     private InkPlayback _playback;
     private long _dotAnimationVersion;
+    private long _recognitionVersion;
     private IReadOnlyList<InkStroke> _preview;
     private InkController _owner;
     private float _dpi;
@@ -38,7 +41,7 @@ public sealed class CommittedInkLayer : IDisposable
     private long _frame;
     private IReadOnlyList<DrawingObject> _objects = Array.Empty<DrawingObject>();
     private long _layerVersion;
-    private const int MaxTiles = 48;
+    private const int MaxTiles = 512;
     private const long MaxTileRasterBytes = 48L * 516 * 516 * 4;
     private long _tileRasterBytes;
     private const long MaxSmallRasterBytes = 12 * 1024 * 1024;
@@ -68,10 +71,10 @@ public sealed class CommittedInkLayer : IDisposable
             && Matrix3x2.Invert(_linear, out var previousInverse) && CanReuseRaster(previousInverse * linear);
         var preview = controller.PreviewStrokes;
         bool changed = !ReferenceEquals(_owner, controller) || linear != _linear && !reuseGestureRaster || dpi != _dpi
-            || !transforming && preview is null && rasterOffset != _rasterOffset
             || !ReferenceEquals(_playback, controller.Playback) || !ReferenceEquals(_preview, preview)
             || _selectionGestureActive != controller.IsSelectionGestureActive
-            || _dotAnimationVersion != controller.DotAnimationVersion || _layerVersion != controller.LayerVersion;
+            || _dotAnimationVersion != controller.DotAnimationVersion || _layerVersion != controller.LayerVersion
+            || _recognitionVersion != controller.RecognitionSourcesVersion;
         bool orderChanged = !ReferenceEquals(_objects, objects) && !_objects.SequenceEqual(objects);
         if (_dirty || changed || orderChanged)
         {
@@ -94,18 +97,21 @@ public sealed class CommittedInkLayer : IDisposable
                     continue;
                 }
                 if (item.Stroke is not { } stroke) continue;
-                if (controller.Playback?.Includes(stroke) == true || controller.IsAnimatingDot(stroke)) continue;
+                if (controller.Playback?.Includes(stroke) == true || controller.IsAnimatingDot(stroke)
+                    || controller.IsRecognitionPreviewSource(stroke)) continue;
                 bool moving = controller.IsPreviewStroke(stroke);
                 if (_runs.Count == 0 || _runs[^1].Image is not null || _runs[^1].Moving != moving) _runs.Add(new Run { Moving = moving });
                 _runs[^1].Strokes.Add(stroke);
                 var bounds = TransformBounds(stroke.Bounds, _linear * Matrix3x2.CreateTranslation(_rasterOffset));
                 _runs[^1].Bounds.Add(bounds);
                 _runs[^1].Coverage = _runs[^1].Coverage.Union(bounds);
+                IndexStroke(_runs[^1], bounds, pixel * 512, pixel * 2);
             }
             _snapshot.Clear();
             foreach (var stroke in strokes) _snapshot.Add((stroke, stroke.GeometryVersion, stroke.Attributes.EffectiveColor.PackedArgb, stroke.Attributes.NibTransform));
             _owner = controller; _preview = preview; _playback = controller.Playback; _dpi = dpi;
             _dotAnimationVersion = controller.DotAnimationVersion; _dirty = false;
+            _recognitionVersion = controller.RecognitionSourcesVersion;
             _objects = objects; _layerVersion = controller.LayerVersion;
             _selectionGestureActive = controller.IsSelectionGestureActive;
         }
@@ -153,11 +159,14 @@ public sealed class CommittedInkLayer : IDisposable
                     var bounds = new InkCanvas.Core.Ink.Rect(x * side - 2 * pixel, y * side - 2 * pixel,
                         (x + 1) * side + 2 * pixel, (y + 1) * side + 2 * pixel);
                     if (!run.Coverage.Intersects(bounds)) continue;
+                    if (!run.TileStrokes.ContainsKey((x, y)) && run.SpanningStrokes.Count == 0) continue;
                     var key = (runIndex, x, y);
                     if (!_tiles.TryGetValue(key, out var tile))
                     {
-                        int rasterScale = run.Moving && _selectionGestureActive ? 2 : 1;
-                        long bytes = 516L * 516 * 4 * rasterScale * rasterScale;
+                        float rasterScale = run.Moving && _selectionGestureActive ? 2
+                            : Math.Clamp(MathF.Sqrt(MathF.Abs(rasterToView.GetDeterminant())), .125f, 1);
+                        long pixels = (long)MathF.Ceiling(516 * rasterScale);
+                        long bytes = pixels * pixels * 4;
                         while (_tiles.Count >= MaxTiles || _tileRasterBytes + bytes > MaxTileRasterBytes)
                         {
                             var oldest = _tiles.MinBy(pair => pair.Value.LastUsed);
@@ -175,10 +184,21 @@ public sealed class CommittedInkLayer : IDisposable
                         using var draw = tile.Target.CreateDrawingSession();
                         if (tile.DrawnCount == 0) draw.Clear(Microsoft.UI.Colors.Transparent);
                         var transform = _linear * Matrix3x2.CreateTranslation(_rasterOffset + new Vector2(-x * side + 2 * pixel, -y * side + 2 * pixel));
-                        for (int i = tile.DrawnCount; i < run.Strokes.Count; i++)
+                        if (run.SpanningStrokes.Count == 0 && run.TileStrokes.TryGetValue((x, y), out var candidates))
                         {
-                            if (!run.Bounds[i].Intersects(bounds)) continue;
-                            scene.Strokes.Draw(draw, run.Strokes[i], transform); CommittedStrokeDraws++;
+                            foreach (int i in candidates)
+                            {
+                                if (i < tile.DrawnCount) continue;
+                                scene.Strokes.Draw(draw, run.Strokes[i], transform); CommittedStrokeDraws++;
+                            }
+                        }
+                        else if (run.SpanningStrokes.Count > 0)
+                        {
+                            for (int i = tile.DrawnCount; i < run.Strokes.Count; i++)
+                            {
+                                if (!run.Bounds[i].Intersects(bounds)) continue;
+                                scene.Strokes.Draw(draw, run.Strokes[i], transform); CommittedStrokeDraws++;
+                            }
                         }
                         tile.DrawnCount = run.Strokes.Count;
                     }
@@ -187,6 +207,24 @@ public sealed class CommittedInkLayer : IDisposable
                 }
             }
             finally { session.Transform = previousTransform; }
+        }
+    }
+
+    private static void IndexStroke(Run run, InkCanvas.Core.Ink.Rect bounds, float side, float padding)
+    {
+        int index = run.Strokes.Count - 1;
+        int left = (int)MathF.Floor((bounds.Left - padding) / side);
+        int top = (int)MathF.Floor((bounds.Top - padding) / side);
+        int right = (int)MathF.Floor((bounds.Right + padding) / side);
+        int bottom = (int)MathF.Floor((bounds.Bottom + padding) / side);
+        if ((long)(right - left + 1) * (bottom - top + 1) > 256)
+        { run.SpanningStrokes.Add(index); return; }
+        for (int y = top; y <= bottom; y++)
+        for (int x = left; x <= right; x++)
+        {
+            if (!run.TileStrokes.TryGetValue((x, y), out var strokes))
+                run.TileStrokes[(x, y)] = strokes = new();
+            strokes.Add(index);
         }
     }
 
@@ -228,8 +266,10 @@ public sealed class CommittedInkLayer : IDisposable
 
     private static bool CanReuseRaster(Matrix3x2 delta)
     {
-        float scale = MathF.Sqrt(MathF.Abs(delta.GetDeterminant()));
-        return scale is >= .75f and <= 1.33f && MathF.Abs(MathF.Atan2(delta.M12, delta.M11)) <= .2f;
+        // Rebuild at gesture end, so a zoom quality threshold cannot stall active fingers.
+        return float.IsFinite(delta.M11) && float.IsFinite(delta.M12)
+            && float.IsFinite(delta.M21) && float.IsFinite(delta.M22)
+            && MathF.Abs(delta.GetDeterminant()) > 1e-6f;
     }
 
     public static InkCanvas.Core.Ink.Rect TransformBounds(InkCanvas.Core.Ink.Rect bounds, Matrix3x2 transform)

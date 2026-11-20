@@ -70,6 +70,7 @@ public sealed class FloatingBarWindow : Window
         };
 
         _bar.LayoutUpdated += OnBarLayoutUpdated;
+        _bar.MainCollapseAnimationChanged += OnMainCollapseAnimationChanged;
         _bar.PanelRequested += OnPanelRequested;
         _bar.SwitchSideRequested += SwitchSide;
         _bar.ThemeRefreshed += () => UpdateAcrylicTint(this, _bar.Theme);
@@ -89,6 +90,7 @@ public sealed class FloatingBarWindow : Window
             _bar.FinishMainCollapseAnimation();
             if (_trackedXamlRoot is not null) _trackedXamlRoot.Changed -= OnXamlRootChanged;
             _bar.LayoutUpdated -= OnBarLayoutUpdated;
+            _bar.MainCollapseAnimationChanged -= OnMainCollapseAnimationChanged;
             _bar.PanelRequested -= OnPanelRequested;
             _bar.SwitchSideRequested -= SwitchSide;
             ClosePanels(includeDetached: true);
@@ -209,6 +211,12 @@ public sealed class FloatingBarWindow : Window
         double userScale = UserScale;
         var (widthDip, heightDip) = _bar.ComputeLayoutSize();
         var expanded = _bar.ComputeLayoutSize(expanded: true);
+        if (_bar.IsMainCollapseAnimating)
+        {
+            widthDip = expanded.Width;
+            _bar.Width = widthDip;
+        }
+        else _bar.Width = double.NaN;
         var work = WindowChrome.GetWorkArea(this);
         userScale = Math.Min(userScale, Math.Min(work.Width / (expanded.Width * dpiScale), work.Height / (heightDip * dpiScale)));
         // Viewbox measures the design at its natural size before scaling. RenderTransform
@@ -236,6 +244,14 @@ public sealed class FloatingBarWindow : Window
     private bool _lastExpanded, _lastCollapsed;
     private double _lastMainExpansion = -1;
 
+    private void OnMainCollapseAnimationChanged()
+    {
+        if (!_initialDpiPlacementDone) return;
+        double dpi = WindowChrome.GetDpiScale(this);
+        var size = GetPhysicalSize(dpi);
+        PlaceBottomCentre(size.Width, size.Height, dpi, keepPosition: true);
+    }
+
     private void OnBarLayoutUpdated(object sender, object e)
     {
         if (!_initialDpiPlacementDone) return;
@@ -250,6 +266,9 @@ public sealed class FloatingBarWindow : Window
         _lastExpanded = expanded;
         _lastCollapsed = collapsed;
         _lastMainExpansion = mainExpansion;
+        // The swap chain stays at its expanded size for the entire transition. Only the
+        // painted XAML cards and their native region change while the smiley animates.
+        if (_bar.IsMainCollapseAnimating) return;
         // Refit in place: keep the left/top edge so the primary buttons never shift; a smiley
         // collapse shrinks the window from the RIGHT only.
         double dpi = WindowChrome.GetDpiScale(this);
@@ -335,10 +354,10 @@ public sealed class FloatingBarWindow : Window
         _root.PointerCanceled += (_, _) => _tapSource = null;
     }
 
-    /// <summary>Leave tint to the XAML brushes and keep the desktop acrylic clear on deactivation.</summary>
+    /// <summary>Use themed acrylic with an opaque card fallback when desktop composition is unavailable.</summary>
     public static void EnableTransparency(Window window)
     {
-        var backdrop = new ChromeBackdrop(WindowChrome.GetHwnd(window));
+        var backdrop = new ChromeBackdrop();
         int theme = (window.Content as FrameworkElement)?.RequestedTheme switch
         {
             ElementTheme.Light => 1,
@@ -350,7 +369,7 @@ public sealed class FloatingBarWindow : Window
     }
 
     /// <summary>
-    /// Theme tint is painted by the XAML surface; the backdrop stays clear in either theme.
+    /// Keep the material and its fallback in the same theme as the painted surface.
     /// </summary>
     public static void UpdateAcrylicTint(Window window, int theme)
     {

@@ -67,15 +67,17 @@ public sealed class TwoFingerManipulator
 
         var delta = Matrix3x2.Identity;
 
-        if (AllowTranslate)
+        if (AllowTranslate && !screenSpace)
             delta *= Matrix3x2.CreateTranslation(mid - prevMid);
+
+        var pivot = screenSpace && AllowTranslate && Vector2.DistanceSquared(center, mid) < .001f ? prevMid : center;
 
         if (AllowZoom && prevLen > 1f && len > 1f)
         {
             float scale = len / prevLen;
             float currentScale = MathF.Sqrt(MathF.Abs(transform.M11 * transform.M22 - transform.M12 * transform.M21));
             scale = Math.Clamp(scale, MinScale / MathF.Max(currentScale, 1e-3f), MaxScale / MathF.Max(currentScale, 1e-3f));
-            delta *= Matrix3x2.CreateTranslation(-center) * Matrix3x2.CreateScale(scale) * Matrix3x2.CreateTranslation(center);
+            delta *= Matrix3x2.CreateTranslation(-pivot) * Matrix3x2.CreateScale(scale) * Matrix3x2.CreateTranslation(pivot);
         }
 
         if (AllowRotation && prevLen > 1f && len > 1f)
@@ -83,10 +85,11 @@ public sealed class TwoFingerManipulator
             float angle = MathF.Atan2(vec.Y, vec.X) - MathF.Atan2(prevVec.Y, prevVec.X);
             while (angle > MathF.PI) angle -= 2 * MathF.PI;
             while (angle < -MathF.PI) angle += 2 * MathF.PI;
-            delta *= Matrix3x2.CreateTranslation(-center) * Matrix3x2.CreateRotation(angle) * Matrix3x2.CreateTranslation(center);
+            delta *= Matrix3x2.CreateTranslation(-pivot) * Matrix3x2.CreateRotation(angle) * Matrix3x2.CreateTranslation(pivot);
         }
 
         _prevA = a; _prevB = b;
+        if (AllowTranslate && screenSpace) delta *= Matrix3x2.CreateTranslation(mid - prevMid);
 
         if (delta == Matrix3x2.Identity) return false;
         transform = screenSpace ? transform * delta : delta * transform;

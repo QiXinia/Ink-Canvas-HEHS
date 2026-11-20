@@ -904,7 +904,8 @@ public sealed class VectorParityTests
         foreach (var c in doc.RootElement.GetProperty("cases").EnumerateArray())
         {
             var actual = ControllerVectorRunner.Run(c.GetProperty("input")[0]);
-            AssertNear(c.GetProperty("expected"), Node(actual), c.GetProperty("tolerance").GetDouble());
+            var error = Record.Exception(() => AssertNear(c.GetProperty("expected"), Node(actual), c.GetProperty("tolerance").GetDouble()));
+            Assert.True(error is null, $"Controller case {c.GetProperty("id").GetString()} failed. {error?.Message}");
         }
     }
 
@@ -1061,6 +1062,14 @@ public sealed class VectorParityTests
             // Soft cooldown settings extend the WPF schema and have dedicated persistence tests.
             foreach (string field in new[] { "samplingMode", "cooldownHalfLifeDays", "cooldownPenaltyStrength" })
                 if (expected["randSettings"]?[field] is null) actual["randSettings"]?.AsObject().Remove(field);
+            // Native pressure, palm routing and hold-to-shape settings extend the legacy schema.
+            foreach (string field in new[] { "UseHardwarePressure", "UsePenTilt" })
+                if (expected["canvas"]?[field] is null) actual["canvas"]?.AsObject().Remove(field);
+            foreach (string field in new[] { "PenHasPriority", "PalmErases" })
+                if (expected["gesture"]?[field] is null) actual["gesture"]?.AsObject().Remove(field);
+            foreach (string field in new[] { "HoldMilliseconds", "AutoAlign", "AlignmentAngle", "RecognizePolygons",
+                "RecognizeRoundShapes", "RecognizeCube", "RecognizeAxes" })
+                if (expected["inkToShape"]?[field] is null) actual["inkToShape"]?.AsObject().Remove(field);
             Assert.True(JsonNode.DeepEquals(actual, expected), $"settings case {id} mismatch");
         }
     }

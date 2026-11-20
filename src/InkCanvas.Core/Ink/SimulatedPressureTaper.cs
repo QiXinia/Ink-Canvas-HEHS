@@ -66,7 +66,7 @@ internal sealed class SimulatedPressureTaper : TaperProfile
 
         if (_kind is TaperKind.SmoothPen or TaperKind.SoftPen)
         {
-            Settle(ref current.Width, baseWidth * _ratio);
+            Settle(ref current.Width, PressureWidth(current, baseWidth) * _ratio);
             return;
         }
 
@@ -78,7 +78,7 @@ internal sealed class SimulatedPressureTaper : TaperProfile
             _headDistance = MathF.Max(_headDistance, Vector2.Distance(current.Position, points[0].Position));
         float head = tipRatio + (1 - tipRatio) * SmoothStep(Math.Clamp(_headDistance / headLength, 0, 1));
         int slot = tipIndex % _widths.Length;
-        _widths[slot] = baseWidth * _ratio * head;
+        _widths[slot] = PressureWidth(current, baseWidth) * _ratio * head;
         _distances[slot] = _distance;
         float tailLength = MathF.Max(10, baseWidth * (_kind is TaperKind.Calligraphy or TaperKind.InkWash ? 4 : 2.5f));
         int first = Math.Max(_stable, tipIndex - _widths.Length + 1);

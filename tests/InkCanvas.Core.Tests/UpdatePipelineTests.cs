@@ -24,6 +24,94 @@ public sealed class UpdatePipelineTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => respond(request, token);
     }
 
+    [Fact]
+    public async Task DefaultSourcesTryOfficialGitHubThenEachRequestedMirrorInOrder()
+    {
+        const string url = "https://api.github.com/repos/QiXinia/Ink-Canvas-HEHS/releases?per_page=100";
+        var handler = new Handler(request => request.RequestUri.Host == "gh.acmsz.top"
+            ? Response("[]") : throw new HttpRequestException("offline"));
+        using var transport = new UpdateTransport(handler);
+        Assert.Equal("[]", await transport.GetTextAsync(url, text => text == "[]", CancellationToken.None));
+        Assert.Equal(new[] { url, "https://ghfile.geekertao.top/" + url, "https://github.dpik.top/" + url,
+            "https://gh-proxy.com/" + url, "https://fastgit.cc/" + url, "https://gh.acmsz.top/" + url }, handler.Requests);
+        Assert.Equal("gh.acmsz.top", transport.LastSource);
+    }
+
+    [Fact]
+    public async Task DefaultDownloadSourcesUseTheSameOrderAndVerifyTheSuccessfulPackage()
+    {
+        string directory = Temporary();
+        try
+        {
+            const string url = "https://github.com/QiXinia/Ink-Canvas-HEHS/releases/download/v3.7.1/package.zip";
+            var handler = new Handler(request => request.RequestUri.Host == "gh.acmsz.top"
+                ? Response("package") : throw new HttpRequestException("offline"));
+            using var transport = new UpdateTransport(handler);
+            string path = Path.Combine(directory, "package.zip");
+            await transport.DownloadAsync(url, path, 7, Hash("package"), null, CancellationToken.None);
+            Assert.Equal(new[] { url, "https://ghfile.geekertao.top/" + url, "https://github.dpik.top/" + url,
+                "https://gh-proxy.com/" + url, "https://fastgit.cc/" + url, "https://gh.acmsz.top/" + url }, handler.Requests);
+            Assert.Equal("package", File.ReadAllText(path)); Assert.False(File.Exists(path + ".partial"));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    [Fact]
+    public async Task SourceTimeoutIsReportedAsTimeoutAndCallerCancellationStopsFailover()
+    {
+        var handler = new AsyncHandler(async (_, token) =>
+        { await Task.Delay(Timeout.Infinite, token); return Response("unused"); });
+        using var transport = new UpdateTransport(handler, Array.Empty<string>()) { HeaderTimeout = TimeSpan.FromMilliseconds(20) };
+        var failure = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            transport.GetTextAsync("https://api.github.com/repos/a/b/releases", _ => true, CancellationToken.None));
+        Assert.Contains("连接超时", failure.Message);
+        using var cancellation = new CancellationTokenSource(); cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            transport.GetTextAsync("https://api.github.com/repos/a/b/releases", _ => true, cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RateLimitedApisFallBackToPublicReleasePageAndRetainDigestVerification()
+    {
+        const string repository = "QiXinia/Ink-Canvas-HEHS";
+        string assets = "<ul><li><a href=\"/" + repository + "/releases/download/v3.7.1/InkCanvas-WinUI3-3.7.1-win-x64.zip\">package</a>"
+            + "<span>sha256:" + Hash("package") + "</span></li></ul>";
+        string html = "<section><a href=\"/" + repository + "/releases/tag/v3.7.1\">Stable 3.7.1</a></section>";
+        var handler = new Handler(request =>
+        {
+            if (request.RequestUri.AbsolutePath.Contains("api.github.com") || request.RequestUri.Host == "api.github.com")
+                return new(HttpStatusCode.Forbidden);
+            if (request.RequestUri.AbsolutePath.EndsWith("/releases")) return Response(html);
+            if (request.RequestUri.AbsolutePath.Contains("expanded_assets")) return Response(assets);
+            return Response("package");
+        });
+        using var service = new UpdateService(transport: new UpdateTransport(handler));
+        var release = Assert.Single(await service.GetReleasesAsync());
+        Assert.Equal("v3.7.1", release.Tag); Assert.Equal(Hash("package"), release.Sha256);
+        string archive = await service.DownloadAsync(release);
+        try { Assert.Equal("package", File.ReadAllText(archive)); }
+        finally { Directory.Delete(Path.GetDirectoryName(archive), true); }
+    }
+
+    [Fact]
+    public async Task AttachmentOnlyMirrorsCanDiscoverAndDownloadLatestStableRelease()
+    {
+        var handler = new Handler(request =>
+        {
+            if (request.RequestUri.Host != "ghfile.geekertao.top") throw new HttpRequestException("offline");
+            if (request.RequestUri.AbsolutePath.EndsWith("SHA256SUMS.txt"))
+                return Response(Hash("package") + "  InkCanvas-WinUI3-3.7.1-win-x64.zip");
+            if (request.RequestUri.AbsolutePath.EndsWith(".zip")) return Response("package");
+            return new(HttpStatusCode.Forbidden);
+        });
+        using var service = new UpdateService(transport: new UpdateTransport(handler));
+        var release = Assert.Single(await service.GetReleasesAsync());
+        Assert.Equal("v3.7.1", release.Tag);
+        string archive = await service.DownloadAsync(release);
+        try { Assert.Equal("package", File.ReadAllText(archive)); Assert.Equal("ghfile.geekertao.top", service.LastSource); }
+        finally { Directory.Delete(Path.GetDirectoryName(archive), true); }
+    }
+
     private sealed class StalledStream : MemoryStream
     {
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
@@ -31,6 +119,13 @@ public sealed class UpdatePipelineTests
             await Task.Delay(Timeout.Infinite, token);
             return 0;
         }
+    }
+
+    private sealed class UncancelableStream : MemoryStream
+    {
+        private readonly TaskCompletionSource<int> _read = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default) => new(_read.Task);
+        protected override void Dispose(bool disposing) { _read.TrySetResult(0); base.Dispose(disposing); }
     }
 
     private sealed class TrickleStream() : MemoryStream(Encoding.UTF8.GetBytes("package"))
@@ -116,6 +211,7 @@ public sealed class UpdatePipelineTests
     [InlineData("body")]
     [InlineData("truncated")]
     [InlineData("trickle")]
+    [InlineData("ignores-cancellation")]
     public async Task StalledOrTruncatedDownloadRetriesMirror(string failure)
     {
         string directory = Temporary();
@@ -127,6 +223,7 @@ public sealed class UpdatePipelineTests
                 if (failure == "headers") await Task.Delay(Timeout.Infinite, token);
                 var response = Response("bad");
                 if (failure == "body") response.Content = new StreamContent(new StalledStream());
+                if (failure == "ignores-cancellation") response.Content = new StreamContent(new UncancelableStream());
                 if (failure == "trickle") response.Content = new StreamContent(new TrickleStream());
                 response.Content.Headers.ContentLength = 7;
                 return response;

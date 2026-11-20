@@ -737,10 +737,9 @@ public sealed class BoardService
         ShapeSource = stroke.ShapeSource,
         HighlighterAlpha = stroke.Attributes.HighlighterAlpha,
         ObjectFrame = stroke.ExportObjectFrame(),
-        Points = stroke.Points.Select(point => new[]
-        {
-            point.X, point.Y, point.Pressure, point.Width, point.TimeMs,
-        }).ToList(),
+        Points = stroke.Points.Select(point => point.HasPressure || point.TiltX != 0 || point.TiltY != 0
+            ? new[] { point.X, point.Y, point.Pressure, point.Width, point.TimeMs, point.TiltX, point.TiltY, point.HasPressure ? 1f : 0f }
+            : new[] { point.X, point.Y, point.Pressure, point.Width, point.TimeMs }).ToList(),
     };
 
     private static InkStroke FromStrokeFile(StrokeFile strokeFile)
@@ -759,7 +758,8 @@ public sealed class BoardService
         var stroke = new InkStroke(attributes) { IsRecognizedShape = strokeFile.Shape, LayerOrder = strokeFile.LayerOrder, ShapeSource = strokeFile.ShapeSource };
         stroke.RestorePoints((strokeFile.Points ?? new List<float[]>())
             .Where(row => row.Length >= 4)
-            .Select(row => new InkPoint(row[0], row[1], row[2], row[3], row.Length > 4 ? row[4] : 0f)));
+            .Select(row => new InkPoint(row[0], row[1], row[2], row[3], row.Length > 4 ? row[4] : 0f,
+                row.Length > 7 && row[7] > 0, row.Length > 5 ? row[5] : 0, row.Length > 6 ? row[6] : 0)));
         stroke.Complete();
         stroke.ImportObjectFrame(strokeFile.ObjectFrame);
         return stroke;

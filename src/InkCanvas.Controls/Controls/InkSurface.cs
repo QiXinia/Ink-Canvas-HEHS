@@ -176,8 +176,15 @@ public sealed class InkSurface : UserControl, IDisposable
             _controller.OnPointerHover(sample);
             return;
         }
-        _activePointers[sample.Id] = sample;
-        _controller.OnPointerMove(sample);
+        // WinUI may coalesce several digitizer packets into one routed event.
+        // Intermediate points are newest first. Preserve their original timestamps.
+        var points = e.GetIntermediatePoints(this);
+        for (int i = points.Count - 1; i >= 0; i--)
+        {
+            var intermediate = Translate(e, points[i]);
+            _activePointers[intermediate.Id] = intermediate;
+            _controller.OnPointerMove(intermediate);
+        }
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs args)
@@ -207,8 +214,10 @@ public sealed class InkSurface : UserControl, IDisposable
     }
 
     private OverlayPointer Translate(PointerRoutedEventArgs e)
+        => Translate(e, e.GetCurrentPoint(this));
+
+    private OverlayPointer Translate(PointerRoutedEventArgs e, Microsoft.UI.Input.PointerPoint point)
     {
-        var point = e.GetCurrentPoint(this);
         var props = point.Properties;
         var kind = point.PointerDeviceType switch
         {
@@ -217,17 +226,32 @@ public sealed class InkSurface : UserControl, IDisposable
             _ => OverlayPointerKind.Mouse,
         };
         var contact = props.ContactRect;
+        bool hasPressure = false;
+        if (kind == OverlayPointerKind.Pen)
+        {
+            if (_activePointers.TryGetValue(e.Pointer.PointerId, out var previous) && previous.HasPressure)
+                hasPressure = true;
+            else if (InkCanvas.Platform.Interop.NativeMethods.GetPointerPenInfo(e.Pointer.PointerId, out var pen))
+                hasPressure = (pen.penMask & 1) != 0;
+            else
+                hasPressure = float.IsFinite(props.Pressure) && props.Pressure != .5f;
+        }
         return new OverlayPointer(
             e.Pointer.PointerId,
             (float)point.Position.X,
             (float)point.Position.Y,
-            props.Pressure <= 0 ? 0.5f : props.Pressure,
+            kind == OverlayPointerKind.Pen ? Math.Clamp(props.Pressure, 0, 1) : .5f,
             (float)contact.Width,
             (float)contact.Height,
             kind,
             (uint)(point.Timestamp / 1000),
             (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Shift) != 0,
-            (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0);
+            (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0)
+        {
+            HasPressure = hasPressure,
+            TiltX = kind == OverlayPointerKind.Pen ? props.XTilt : 0,
+            TiltY = kind == OverlayPointerKind.Pen ? props.YTilt : 0,
+        };
     }
 
     public void Dispose()

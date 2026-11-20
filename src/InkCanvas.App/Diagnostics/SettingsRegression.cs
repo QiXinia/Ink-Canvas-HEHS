@@ -45,6 +45,8 @@ internal static class SettingsRegression
                 && Descendants(window.Content).OfType<WindowWorkspace>().Single().SelectedPage == "启动选项");
             Check("search index builds without blocking the window", searchTimer.ElapsedMilliseconds < 1500);
             Check("search includes choice values", window.SearchSettings("深色").Any(hit => hit.Title == "颜色主题"));
+            Check("search includes ink hold and hardware brush settings", window.SearchSettings("停笔").Any()
+                && window.SearchSettings("硬件压感").Any() && window.SearchSettings("方向吸附").Any());
             Check("search handles case and category terms", window.SearchSettings("powerpoint").Any()
                 && window.SearchSettings("画板 荧光笔").Count == 2);
             Check("search missing and empty queries have no matches", window.SearchSettings("不存在的设置条目").Count == 0
@@ -158,6 +160,17 @@ internal static class SettingsRegression
             eraser.SelectedIndex = 1;
             Check("area eraser applies", services.OverlayInk.EraserMode == InkEraserMode.Area);
             eraser.SelectedIndex = 0;
+            Find<ToggleSwitch>("使用硬件压感").IsOn = false;
+            Check("hardware pressure setting reaches live controller", !services.OverlayInk.UseHardwarePressure);
+            Find<ToggleSwitch>("使用硬件压感").IsOn = true;
+            Find<Slider>("停笔吸附等待时间 (毫秒)").Value = 800;
+            Check("hold duration reaches live controller", services.OverlayInk.RecognitionOptions.HoldMilliseconds == 800);
+            Find<ToggleSwitch>("自动对齐水平、垂直与 45° 方向").IsOn = false;
+            Check("alignment editor follows its toggle", !Find<Slider>("方向吸附容差 (度)").IsEnabled
+                && !services.OverlayInk.RecognitionOptions.AutoAlign);
+            Find<ToggleSwitch>("自动对齐水平、垂直与 45° 方向").IsOn = true;
+            Find<Slider>("方向吸附容差 (度)").Value = 7;
+            Check("alignment tolerance reaches live controller", services.OverlayInk.RecognitionOptions.AlignmentAngle == 7);
             var palette = (EraserPalette)bar.Bar.CreateEraserPanelContent();
             var lasso = Descendants(palette).OfType<Button>().Single(button => AutomationProperties.GetName(button).Contains("套索擦"));
             Invoke(lasso);

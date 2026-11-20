@@ -101,6 +101,7 @@ public sealed class FloatingBar : UserControl
     private double _collapseFrom, _collapseDuration, _expandedMainWidth;
     public double MainExpansion { get; private set; } = 1;
     public bool IsMainCollapseAnimating => _collapseTimer?.IsRunning == true;
+    public event Action MainCollapseAnimationChanged;
     private bool _moreOpen, _gestureOpen, _eraserOpen;
     private InkController _controller;
     private int _theme = 1;
@@ -880,6 +881,7 @@ public sealed class FloatingBar : UserControl
         _mainHost.Visibility = Visibility.Visible;
         _mainHost.IsHitTestVisible = _gestureBorder.IsHitTestVisible = false;
         _collapseTimer.Start();
+        MainCollapseAnimationChanged?.Invoke();
         RefreshGestureBorderVisibility();
         ApplyMainExpansion(_collapseFrom);
     }
@@ -912,6 +914,7 @@ public sealed class FloatingBar : UserControl
 
     public void FinishMainCollapseAnimation()
     {
+        bool wasAnimating = IsMainCollapseAnimating;
         _collapseTimer?.Stop();
         MainExpansion = _mainCollapsed ? 0 : 1;
         _mainHost.Visibility = _mainCollapsed ? Visibility.Collapsed : Visibility.Visible;
@@ -921,6 +924,7 @@ public sealed class FloatingBar : UserControl
         _mainHost.Clip = _gestureBorder.Clip = null;
         _mainHost.IsHitTestVisible = _gestureBorder.IsHitTestVisible = true;
         RefreshGestureBorderVisibility();
+        if (wasAnimating) MainCollapseAnimationChanged?.Invoke();
     }
 
     /// <summary>

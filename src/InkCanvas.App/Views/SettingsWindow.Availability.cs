@@ -45,6 +45,11 @@ public sealed partial class SettingsWindow
     {
         Func<string> requirement = title switch
         {
+            "停笔吸附等待时间 (毫秒)" or "识别圆与椭圆" or "识别三角形、矩形与平行四边形"
+                or "识别立方体线框" or "识别坐标轴" or "自动对齐水平、垂直与 45° 方向"
+                => () => S.InkToShape.IsInkToShapeEnabled ? null : "请先启用墨迹识别。",
+            "方向吸附容差 (度)" => () => !S.InkToShape.IsInkToShapeEnabled ? "请先启用墨迹识别。"
+                : !S.InkToShape.AutoAlign ? "请先启用自动对齐。" : null,
             "静默更新" => () => _updater is null ? "更新服务未启动。" : !S.Startup.IsAutoUpdate ? "请先启用自动检查更新。" : null,
             "静默更新起始时间" or "静默更新终止时间" => () => _updater is null ? "更新服务未启动。"
                 : !S.Startup.IsAutoUpdate || !S.Startup.IsAutoUpdateWithSilence ? "请先启用自动检查更新和静默更新。" : null,

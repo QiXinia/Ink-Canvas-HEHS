@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using InkCanvas.App.Services;
 using InkCanvas.App.Views;
@@ -44,6 +43,14 @@ internal static class ChromeThemeRegression
                 var barBackdrop = (ChromeBackdrop)bar.SystemBackdrop;
                 Check("main toolbar material follows its selected theme", Field<SystemBackdropConfiguration>(barBackdrop, "_configuration")?.Theme
                     == (theme == 2 ? SystemBackdropTheme.Dark : SystemBackdropTheme.Light));
+                var material = Field<DesktopAcrylicController>(barBackdrop, "_controller");
+                Check("active material has a theme foundation instead of clear black", material is null
+                    || material.TintColor.A == 255 && material.TintOpacity >= .5f && material.LuminosityOpacity >= .9f);
+                Check("floating toolbar keeps its XAML swap chain unlayered", !NativeMethods.HasExStyle(WindowChrome.GetHwnd(bar), NativeMethods.WS_EX_LAYERED));
+                Check("toolbar fallback paints its authored theme directly", barBackdrop.State == "Active"
+                    || bar.Bar.ChromeSurfaces.All(surface => surface.Background is SolidColorBrush brush && brush.Color.A == 255
+                        && brush.Color.R == (theme == 1 ? 255 : 0)));
+                await BoardWindowRegression.SaveVisual((FrameworkElement)bar.Content, Path.Combine(directory, $"toolbar-{theme}.png"));
                 var more = new BarPanelWindow(bar, bar.Bar, BarPanelKind.More);
                 windows.Add(more);
                 WindowChrome.ShowWithoutActivation(more);
@@ -96,9 +103,10 @@ internal static class ChromeThemeRegression
                 var window = new Window { Title = "不支持亚克力材质的备用背景", Content = surface };
                 windows.Add(window);
                 WindowChrome.MakeBorderless(window, noActivate: true);
-                var backdrop = new ChromeBackdrop(WindowChrome.GetHwnd(window), enableAcrylic: false);
+                var backdrop = new ChromeBackdrop(enableAcrylic: false);
                 backdrop.SetTheme(theme);
                 window.SystemBackdrop = backdrop;
+                WindowChrome.ClipToSurfaces(window, () => new[] { surface });
                 WindowChrome.ApplyTheme(window, theme);
                 WindowChrome.PlaceDip(window, 100, 100, 200, 100);
                 WindowChrome.ShowWithoutActivation(window);
@@ -107,8 +115,10 @@ internal static class ChromeThemeRegression
                 Check("unsupported acrylic paints an opaque theme foundation", fallback is not null && fallback.Color.A == 255
                     && (theme == 1 ? fallback.Color.R == 255 : fallback.Color.R == 31),
                     new { theme, backdrop.State, color = fallback?.Color.ToString() });
-                Check("unsupported acrylic preserves native translucency", NativeMethods.HasExStyle(WindowChrome.GetHwnd(window), NativeMethods.WS_EX_LAYERED)
-                    && GetLayeredWindowAttributes(WindowChrome.GetHwnd(window), out _, out byte alpha, out _) && alpha is > 0 and < 255);
+                Check("unsupported acrylic paints its XAML card without a black underlay", surface.Background is SolidColorBrush card
+                    && card.Color.A == 255 && card.Color.R == (theme == 1 ? 255 : 0)
+                    && !NativeMethods.HasExStyle(WindowChrome.GetHwnd(window), NativeMethods.WS_EX_LAYERED));
+                await BoardWindowRegression.SaveVisual(surface, Path.Combine(directory, $"fallback-{theme}.png"));
                 backdrop.SetTheme(theme == 1 ? 2 : 1);
                 WindowChrome.ApplyTheme(window, theme);
                 Check("fallback follows explicit window theme changes", fallback?.Color.R == (theme == 1 ? 255 : 31));
@@ -116,14 +126,17 @@ internal static class ChromeThemeRegression
                 configuration.IsHighContrast = true;
                 configuration.HighContrastBackgroundColor = Windows.UI.Color.FromArgb(255, 12, 34, 56);
                 typeof(ChromeBackdrop).GetMethod("ApplyColors", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(backdrop, null);
-                typeof(ChromeBackdrop).GetMethod("UpdateOpacity", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(backdrop, null);
+                backdrop.UpdateSurfaceFallback();
                 Check("high contrast keeps its exact background and full opacity", fallback?.Color == configuration.HighContrastBackgroundColor
+                    && surface.Background is SolidColorBrush contrast && contrast.Color == configuration.HighContrastBackgroundColor
                     && !NativeMethods.HasExStyle(WindowChrome.GetHwnd(window), NativeMethods.WS_EX_LAYERED));
                 backdrop.SetTheme(theme);
                 window.AppWindow.Hide();
                 window.SystemBackdrop = null;
                 Check("releasing hidden material detaches its brush and alpha", Field<Windows.UI.Composition.CompositionColorBrush>(backdrop, "_fallback") is null
                     && !NativeMethods.HasExStyle(WindowChrome.GetHwnd(window), NativeMethods.WS_EX_LAYERED));
+                Check("releasing fallback restores the authored card brush", surface.Background is SolidColorBrush authored
+                    && authored.Color.A == (theme == 1 ? 191 : 153));
                 FloatingBarWindow.EnableTransparency(window);
                 WindowChrome.ShowWithoutActivation(window);
                 await Task.Delay(120);
@@ -159,5 +172,4 @@ internal static class ChromeThemeRegression
     private static T Field<T>(object target, string name) where T : class =>
         typeof(ChromeBackdrop).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(target) as T;
 
-    [DllImport("user32.dll")] private static extern bool GetLayeredWindowAttributes(IntPtr window, out uint key, out byte alpha, out uint flags);
 }

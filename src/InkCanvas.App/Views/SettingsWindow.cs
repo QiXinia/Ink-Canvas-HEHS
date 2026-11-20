@@ -355,6 +355,10 @@ public sealed partial class SettingsWindow : Window
                         _services.Board.SetBackground(v ? InkCanvas.Features.Board.BoardBackground.White : InkCanvas.Features.Board.BoardBackground.Black);
                     }));
                 AddSection("书写与笔尖");
+                _content.Children.Add(ToggleRow("使用硬件压感", () => S.Canvas.UseHardwarePressure,
+                    v => S.Canvas.UseHardwarePressure = v, note: "压感笔按实际压力控制各笔刷与荧光笔的粗细，单击描点也随压力变化。红外触摸屏使用笔速模拟压感。"));
+                _content.Children.Add(ToggleRow("倾斜笔尖与水墨阴影", () => S.Canvas.UsePenTilt,
+                    v => S.Canvas.UsePenTilt = v));
                 _content.Children.Add(ComboRow("笔迹风格", OriginalMenuCatalog.PenStyles,
                     () => S.Canvas.InkStyle, i => S.Canvas.InkStyle = i, index => new StackPanel
                     {
@@ -381,6 +385,10 @@ public sealed partial class SettingsWindow : Window
                 break;
             case "手势选项":
                 AddSection("触控与变换");
+                _content.Children.Add(ToggleRow("压感笔书写优先", () => S.Gesture.PenHasPriority,
+                    v => S.Gesture.PenHasPriority = v, note: "笔尖落下后抑制同一屏幕上的手掌和手指输入，其他屏幕仍可同时书写。"));
+                _content.Children.Add(ToggleRow("手掌与大面积接触擦除", () => S.Gesture.PalmErases,
+                    v => S.Gesture.PalmErases = v, note: "未使用压感笔时，大面积接触作为板擦。阈值沿用特殊屏幕选项中的触摸大小设置。"));
                 _content.Children.Add(ComboRow("缩放/旋转变换中心点", new[]
                     {
                         "画布中心点（默认）", "全部内容的中心点", "手势操作的中心点",
@@ -403,8 +411,24 @@ public sealed partial class SettingsWindow : Window
                     v => S.Gesture.IsEnableTwoFingerRotation = v));
                 break;
             case "墨迹识别选项":
+                AddSection("停笔成形");
                 _content.Children.Add(ToggleRow("启用墨迹识别", () => S.InkToShape.IsInkToShapeEnabled,
                     v => S.InkToShape.IsInkToShapeEnabled = v));
+                _content.Children.Add(SliderRow("停笔吸附等待时间 (毫秒)", () => S.InkToShape.HoldMilliseconds,
+                    300, 1500, v => S.InkToShape.HoldMilliseconds = (int)v, 50));
+                _content.Children.Add(ToggleRow("识别圆与椭圆", () => S.InkToShape.RecognizeRoundShapes,
+                    v => S.InkToShape.RecognizeRoundShapes = v));
+                _content.Children.Add(ToggleRow("识别三角形、矩形与平行四边形", () => S.InkToShape.RecognizePolygons,
+                    v => S.InkToShape.RecognizePolygons = v));
+                _content.Children.Add(ToggleRow("识别立方体线框", () => S.InkToShape.RecognizeCube,
+                    v => S.InkToShape.RecognizeCube = v));
+                _content.Children.Add(ToggleRow("识别坐标轴", () => S.InkToShape.RecognizeAxes,
+                    v => S.InkToShape.RecognizeAxes = v));
+                AddSection("自动对齐");
+                _content.Children.Add(ToggleRow("自动对齐水平、垂直与 45° 方向", () => S.InkToShape.AutoAlign,
+                    v => S.InkToShape.AutoAlign = v, note: "停笔吸附后，继续拖动可微调端点或顶点，抬笔确认。撤销可恢复原笔迹。"));
+                _content.Children.Add(SliderRow("方向吸附容差 (度)", () => S.InkToShape.AlignmentAngle,
+                    1, 12, v => S.InkToShape.AlignmentAngle = v, 1));
                 break;
             case "外观选项":
                 AddSection("主题与工具栏");
