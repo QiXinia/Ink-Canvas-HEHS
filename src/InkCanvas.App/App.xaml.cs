@@ -22,6 +22,14 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var updateUiCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updateuicheck=", StringComparison.OrdinalIgnoreCase));
+        if (updateUiCheck is not null) { _ = Diagnostics.UpdateUiRegression.Run(updateUiCheck["--updateuicheck=".Length..]); return; }
+        var moduleToolbarCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--moduletoolbarcheck=", StringComparison.OrdinalIgnoreCase));
+        if (moduleToolbarCheck is not null) { _ = Diagnostics.ModuleToolbarRegression.Run(moduleToolbarCheck["--moduletoolbarcheck=".Length..]); return; }
+        var storageCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--storagecheck=", StringComparison.OrdinalIgnoreCase));
+        if (storageCheck is not null) { _ = Diagnostics.StorageUpdateRegression.Run(storageCheck["--storagecheck=".Length..]); return; }
+        var pptCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pptcheck=", StringComparison.OrdinalIgnoreCase));
+        if (pptCheck is not null) { _ = Diagnostics.PptRegression.Run(pptCheck["--pptcheck=".Length..]); return; }
         var updateSourceCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updatesourcecheck=", StringComparison.OrdinalIgnoreCase));
         if (updateSourceCheck is not null) { _ = Diagnostics.UpdateSourceRegression.Run(updateSourceCheck["--updatesourcecheck=".Length..]); return; }
         var toolbarAnimationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--toolbaranimationcheck=", StringComparison.OrdinalIgnoreCase));

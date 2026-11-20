@@ -41,6 +41,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private LotteryWindow _lottery;
     private ReplayWindow _replay;
     private InfoWindow _guide;
+    private readonly List<NoticeWindow> _notices = new();
     private PenPaletteWindow _palette;
     private readonly List<PenPaletteWindow> _detachedPalettes = new();
     private ShapePickerWindow _shapePicker;
@@ -67,7 +68,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         services.SettingsApplied += ApplyDisplaySettings;
         Overlay.Window.DisplaySettingsChanged += QueueDisplayRefresh;
         _screens = ScreenService.All();
-        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || _documentWorkspace is not null), new DocumentHost(this), new CanvasToolsHost(this));
+        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || DocumentActive), new DocumentHost(this), new CanvasToolsHost(this));
         _pptSession = new PptInkSession(services.Ppt,
             new PptInkFileStore(services.Settings.Automation.AutoSavedStrokesLocation))
         {
@@ -76,11 +77,18 @@ public sealed partial class ShellController : IShellActions, IDisposable
             ApplyCurrentInk = strokes =>
             {
                 var controller = Services.OverlayInk;
-                controller.Document.Clear();
-                controller.Document.AddRange(strokes);
-                controller.Selection.Clear();
-                controller.History.Clear();
-                _bar?.Bar.RefreshSelection();
+                Overlay.Presenter.BeginSceneUpdate();
+                try
+                {
+                    Overlay.Window.CancelInput();
+                    controller.EndPlayback();
+                    controller.FinishDotAnimations();
+                    controller.ClearSelection();
+                    controller.Document.ReplaceAll(strokes);
+                    controller.History.Clear();
+                    _bar?.Bar.RefreshSelection();
+                }
+                finally { Overlay.Presenter.EndSceneUpdate(); }
             },
             AutoSavePresentationInk = () => Services.Settings.PowerPoint.IsAutoSaveStrokesInPowerPoint,
             AutoSavePptScreenshots = () => Services.Settings.PowerPoint.IsAutoSaveScreenShotInPowerPoint,
@@ -100,7 +108,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Updater = new UpdateCoordinator(services)
         {
             Confirm = ConfirmAsync,
-            Notify = NotifyAsync,
+            ConfirmRelease = ConfirmUpdateReleaseAsync,
+            Notify = ShowUpdateNoticeAsync,
             ExitForInstall = () => { _installingUpdate = true; Exit(); },
             CanInstallSilently = CanInstallUpdateSilently,
             PrepareForInstall = PrepareForUpdateAsync,
@@ -110,6 +119,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _pollTimer = _dispatcher.CreateTimer();
         _pollTimer.Interval = TimeSpan.FromMilliseconds(900);
         _pollTimer.Tick += (_, _) => Poll();
+        services.Ppt.RefreshRequested += QueuePresentationRefresh;
     }
 
     /// <summary>Raised whenever a chrome window is created (for the --shot self-check hook).</summary>
@@ -152,7 +162,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             if (_board is not null) foreach (var panel in _board.ToolPanels) panel.Fit();
             _replay?.RefreshDisplayPlacement();
             foreach (var window in OpenWindows)
-                if (window is SettingsWindow or CountdownWindow or LotteryWindow or InfoWindow or ReplayWindow
+                if (window is SettingsWindow or CountdownWindow or LotteryWindow or InfoWindow or ReplayWindow or NoticeWindow or UpdateWindow
                     || _documentWindows.Contains(window))
                     WindowChrome.KeepVisible(window);
             QueueDesktopSelection();
@@ -180,6 +190,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
             if (_lottery is not null) yield return _lottery;
             if (_replay is not null) yield return _replay;
             if (_guide is not null) yield return _guide;
+            if (_updateWindow is not null) yield return _updateWindow;
+            foreach (var notice in _notices) yield return notice;
             if (_palette is not null) yield return _palette;
             foreach (var palette in _detachedPalettes) yield return palette;
             if (_shapePicker is not null) yield return _shapePicker;
@@ -214,7 +226,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
         NotifyWindowOpened(_bar);
         _bar.Bar.Settings = Services.Settings;
         _bar.Configure(Services.OverlayInk, this);
-        Services.Plugins.Changed += OnPluginsChanged;
+        _displayedExtensionCommands = ExtensionCommands.ToArray();
+        Services.Plugins.Changed += OnExtensionCommandsChanged;
+        Services.Modules.Changed += OnExtensionCommandsChanged;
         _ = StartPluginsAsync();
         _bar.Bar.LayoutChanged += OnBarLayoutChanged;
         _bar.Bar.SettingsEdited += () => { Services.ApplySettings(); Services.SaveSettings(); };
@@ -315,7 +329,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (ink.HasSelection || _selectionToolbar?.IsShown == true) _selectionToolbar?.QueueUpdate();
     }
 
-    internal bool DesktopSelectionAvailable => _board is null && _documentWorkspace is null && !_exiting && !Overlay.ClickThrough
+    internal bool DesktopSelectionAvailable => _board is null && !DocumentActive && !_exiting && !Overlay.ClickThrough
         && Services.OverlayInk.Tool == InkTool.Select;
 
     internal Core.Ink.Rect DesktopToolbarBounds
@@ -331,7 +345,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private InkController ActiveController => _board is not null
         ? Services.Board.Current
-        : _documentWorkspace?.Controller ?? Services.OverlayInk;
+        : DocumentActive ? _documentWorkspace.Controller : Services.OverlayInk;
 
     /// <summary>
     /// WPF GetMainWindowTheme: in board mode the aux windows follow the black/white board
@@ -373,27 +387,21 @@ public sealed partial class ShellController : IShellActions, IDisposable
         return await YesOrNoWindow.AskAsync(owner, message, title);
     }
 
-    private async Task NotifyAsync(string title, string message)
+    private Task NotifyAsync(string title, string message)
     {
-        // A ContentDialog needs a VISIBLE XamlRoot; a folded bar's hidden root would hang the
-        // await forever. Prefer the board, then an unfolded bar, else log and skip.
-        FrameworkElement root = null;
-        if (DocumentActive && _documentWorkspace.Window.Content is FrameworkElement d && d.XamlRoot is not null) root = d;
-        else if (_board?.Content is FrameworkElement b && b.XamlRoot is not null) root = b;
-        else if (_bar is not null && !_bar.IsFolded && _bar.Content is FrameworkElement f && f.XamlRoot is not null) root = f;
-        if (root is null)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile($"notice skipped (no visible dialog root): {title} {message}");
-            return;
-        }
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-            CloseButtonText = "知道了",
-            XamlRoot = root.XamlRoot,
-        };
-        await dialog.ShowAsync();
+        if (_disposed || _exiting) return Task.CompletedTask;
+        _bar?.ClosePanels();
+        var notice = _notices.FirstOrDefault(window => window.Title == title && window.Message == message);
+        if (notice is not null) { notice.Activate(); return notice.Completion; }
+        notice = new NoticeWindow(title, message, EffectiveTheme);
+        _notices.Add(notice);
+        notice.Closed += (_, _) => _notices.Remove(notice);
+        var owner = DocumentActive ? _documentWorkspace.Window : (Window)_board ?? _bar;
+        if (owner is not null) WindowChrome.CenterOnOwner(notice, owner);
+        NotifyWindowOpened(notice);
+        notice.Activate();
+        WindowChrome.EnsureAbove(notice, Overlay.Window.Handle);
+        return notice.Completion;
     }
 
     private void OnPptPresentationNotice(PptPresentationNotice notice)
@@ -455,77 +463,96 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void Poll()
     {
         if (_exiting) return;
+        RefreshDocumentTarget();
         MaintainAutomation();
         Overlay.TrimIdleResources();
         if (_selectionToolbar is { IsShown: false } toolbar && Environment.TickCount64 - toolbar.HiddenSince >= 15_000)
             toolbar.Close();
         if (Environment.TickCount64 - _lastDisplayCheck >= 1000) RefreshDisplays();
-        // WPF used COM events; the port polls. 200ms while a show runs keeps slide-ink
-        // switching snappy; idle stays at 900ms so chrome Z maintenance cadence is unchanged.
-        _pollTimer.Interval = _pptSession.Snapshot?.IsSlideShowRunning == true
-            ? _pptSession.RecommendedPollInterval
-            : TimeSpan.FromMilliseconds(900);
-
-        if (Services.Settings.PowerPoint.PowerPointSupport && _documentWorkspace is null)
-        {
-            var previous = _pptSession.Snapshot;
-            var current = _pptSession.Poll();
-            bool isShow = current.IsSlideShowRunning;
-            if (isShow != _lastSlideShowState)
-            {
-                _lastSlideShowState = isShow;
-                Services.PresentationActive = isShow;
-                Services.ApplySettings();
-                _bar?.Bar.SetPptModeVisible(isShow);
-                if (isShow && _bar is not null && current.WindowHandle != IntPtr.Zero)
-                    WindowChrome.MoveToMonitor(_bar, ScreenService.FromWindow(current.WindowHandle));
-                _bar?.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
-                                 Services.Settings.Appearance.FloatingBarScale);
-                if (isShow)
-                {
-                    // MW_PPT.cs:283-286: slideshow begin leaves board mode.
-                    if (_board is not null) ToggleBoard();
-                    if (Services.Settings.PowerPoint.IsShowCanvasAtNewSlideShow)
-                    {
-                        Overlay.Show();
-                        // MW_PPT.cs:302,397-400: lastDesktopInkColor=1 -> red pen on show begin.
-                        Services.OverlayInk.CurrentAttributes.Color = Core.Ink.InkColor.Red;
-                        _bar?.Bar.RefreshSelection();
-                    }
-                }
-                else
-                {
-                    // MW_PPT.cs:505-508: slideshow end leaves board mode; canvas hide state
-                    // only re-applies when a non-transparent board cover was active (exited above).
-                    if (_board is not null) ToggleBoard();
-                }
-            }
-            UpdatePptNavigation(current);
-        }
-        else
-        {
-            if (_lastSlideShowState)
-            {
-                _lastSlideShowState = false;
-                Services.PresentationActive = false;
-                Services.ApplySettings();
-                _bar?.Bar.SetPptModeVisible(false);
-            }
-            UpdatePptNavigation(PptSnapshot.Detached);
-        }
+        RefreshPresentation();
 
         // Always evaluate auto-fold so disabling its settings also unfolds a bar that was
         // previously folded automatically.
         if (_documentWorkspace is null) ApplyAutoFold();
-
-        // 原条件：放映中 + 尚无墨迹 + 允许手指手势控制放映。未验证。
-        Services.OverlayInk.Palm.PptGestureEligible =
-            _lastSlideShowState
-            && Services.OverlayInk.Document.Count == 0
-            && Services.Settings.PowerPoint.IsEnableFingerGestureSlideShowControl;
-
-        // Keep chrome above the ink overlay without stealing focus from a slideshow.
         RaiseChromeAboveOverlay();
+    }
+
+    private bool _presentationRefreshQueued, _refreshingPresentation;
+    private void QueuePresentationRefresh()
+    {
+        if (_exiting || _disposed || _presentationRefreshQueued) return;
+        _presentationRefreshQueued = true;
+        if (!_dispatcher.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            _presentationRefreshQueued = false;
+            if (_exiting || _disposed) return;
+            RefreshPresentation();
+            RaiseChromeAboveOverlay();
+        })) _presentationRefreshQueued = false;
+    }
+
+    private void RefreshPresentation()
+    {
+        if (_refreshingPresentation) return;
+        _refreshingPresentation = true;
+        try
+        {
+            if (Services.Settings.PowerPoint.PowerPointSupport && _documentWorkspace is null)
+            {
+                var current = _pptSession.Poll();
+                bool isShow = current.IsSlideShowRunning;
+                if (isShow != _lastSlideShowState)
+                {
+                    if (isShow) _bar?.SetPresentationMode(true, current.WindowHandle, current.IsWindowedShow);
+                    _lastSlideShowState = isShow;
+                    Services.PresentationActive = isShow;
+                    Services.ApplySettings();
+                    _bar?.Bar.SetPptModeVisible(isShow);
+                    if (isShow)
+                    {
+                        // MW_PPT.cs:283-286: slideshow begin leaves board mode.
+                        if (_board is not null) ToggleBoard();
+                        if (Services.Settings.PowerPoint.IsShowCanvasAtNewSlideShow)
+                        {
+                            Overlay.Show();
+                            // MW_PPT.cs:302,397-400: lastDesktopInkColor=1 -> red pen on show begin.
+                            Services.OverlayInk.CurrentAttributes.Color = Core.Ink.InkColor.Red;
+                            _bar?.Bar.RefreshSelection();
+                        }
+                    }
+                    else
+                    {
+                        // MW_PPT.cs:505-508: slideshow end leaves board mode; canvas hide state
+                        // only re-applies when a non-transparent board cover was active (exited above).
+                        if (_board is not null) ToggleBoard();
+                    }
+                }
+                _bar?.SetPresentationMode(isShow, current.WindowHandle, current.IsWindowedShow);
+                if (isShow && _board is null) Overlay.Window.EnsureAbove(current.WindowHandle);
+                UpdatePptNavigation(current);
+            }
+            else
+            {
+                if (_lastSlideShowState)
+                {
+                    _lastSlideShowState = false;
+                    Services.PresentationActive = false;
+                    Services.ApplySettings();
+                    _bar?.Bar.SetPptModeVisible(false);
+                }
+                _bar?.SetPresentationMode(false);
+                UpdatePptNavigation(PptSnapshot.Detached);
+            }
+
+            // 原条件：放映中 + 尚无墨迹 + 允许手指手势控制放映。未验证。
+            Services.OverlayInk.Palm.PptGestureEligible =
+                _lastSlideShowState
+                && Services.OverlayInk.Document.Count == 0
+                && Services.Settings.PowerPoint.IsEnableFingerGestureSlideShowControl;
+
+            _pollTimer.Interval = Services.Ppt.LastFailure is null ? _pptSession.RecommendedPollInterval : TimeSpan.FromMilliseconds(80);
+        }
+        finally { _refreshingPresentation = false; }
     }
 
     /// <summary>
@@ -542,6 +569,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_lottery is not null) WindowChrome.EnsureAbove(_lottery, Overlay.Window.Handle);
         if (_replay is not null) WindowChrome.EnsureAbove(_replay, Overlay.Window.Handle);
         if (_guide is not null) WindowChrome.EnsureAbove(_guide, Overlay.Window.Handle);
+        if (_updateWindow is not null) WindowChrome.EnsureAbove(_updateWindow, Overlay.Window.Handle);
+        foreach (var notice in _notices) WindowChrome.EnsureAbove(notice, Overlay.Window.Handle);
         if (_pptBottomLeft is not null) WindowChrome.EnsureAbove(_pptBottomLeft, Overlay.Window.Handle);
         if (_pptBottomRight is not null) WindowChrome.EnsureAbove(_pptBottomRight, Overlay.Window.Handle);
         if (_pptSideLeft is not null) WindowChrome.EnsureAbove(_pptSideLeft, Overlay.Window.Handle);
@@ -1241,17 +1270,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
     {
         if (_board is not null) ToggleBoard(); // MW_PPT.cs:574-581
         _pptSession.Next();
+        QueuePresentationRefresh();
     }
 
     public void PptPrevious()
     {
         if (_board is not null) ToggleBoard(); // MW_PPT.cs:610-617
         _pptSession.Previous();
+        QueuePresentationRefresh();
     }
 
     public void PptExit()
     {
         _pptSession.ExitSlideShow();
+        QueuePresentationRefresh();
         // MW_PPT.cs:685 HideSubPanels("cursor") after View.Exit.
         _bar?.ClosePanels();
         _palette?.Close();
@@ -1299,9 +1331,13 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        StopDocumentForegroundTracking();
+        foreach (var notice in _notices.ToArray()) notice.Close();
+        _updateWindow?.Close();
         foreach (var palette in _detachedPalettes.ToArray()) palette.Close();
         _imageImportCancellation?.Cancel();
-        Services.Plugins.Changed -= OnPluginsChanged;
+        Services.Plugins.Changed -= OnExtensionCommandsChanged;
+        Services.Modules.Changed -= OnExtensionCommandsChanged;
         Services.SettingsApplied -= ApplyDocumentSettings;
         Services.SettingsApplied -= ApplyDisplaySettings;
         Services.Plugins.Dispose();
@@ -1317,6 +1353,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _countdown?.Dispose();
         ClosePptNavigationWindows();
         _pptSession.Dispose();
+        Services.Ppt.RefreshRequested -= QueuePresentationRefresh;
         Services.Ppt.Dispose();
         Updater.Dispose();
         Overlay.Window.DisplaySettingsChanged -= QueueDisplayRefresh;

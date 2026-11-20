@@ -210,6 +210,14 @@ public static class WindowChrome
     public static double GetDpiScale(RectInt32 anchor)
         => ScreenService.FromRect(new(anchor.X, anchor.Y, anchor.Width, anchor.Height)).DpiScale;
 
+    public static Platform.System.ScreenRect GetClientBounds(IntPtr hwnd)
+    {
+        var origin = new NativeMethods.POINT();
+        if (hwnd == IntPtr.Zero || !GetClientRect(hwnd, out var bounds) || !ClientToScreen(hwnd, ref origin))
+            return ScreenService.FromWindow(hwnd).Bounds;
+        return new(origin.X, origin.Y, bounds.Right - bounds.Left, bounds.Bottom - bounds.Top);
+    }
+
     public static void MoveToMonitor(Window window, ScreenInfo target)
     {
         if (ScreenService.FromWindow(GetHwnd(window)).Handle == target.Handle) return;
@@ -782,6 +790,7 @@ public static class WindowChrome
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeMethods.RECT rect);
+    [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, out NativeMethods.RECT rect);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref NativeMethods.POINT point);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hwnd, IntPtr region, bool redraw);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);

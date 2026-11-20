@@ -47,13 +47,12 @@ public sealed class PptInkSession : IDisposable
     public IReadOnlyList<InkStroke> CurrentStrokes => Clone(CaptureCurrentInk());
 
     /// <summary>
-    /// WPF received slide changes through COM events (MW_PPT.cs:108-110) and only polled
-    /// attachment at 1s (MW_Timer.cs:22). This port installs no event sinks, so the host
-    /// should poll at this cadence: fast while a show runs (low-latency ink switching),
-    /// slow otherwise. Adjust the host timer when the value changes.
+    /// Events request immediate refreshes. Polling covers missed events and hosts that
+    /// cannot expose the Office connection point.
     /// </summary>
     public TimeSpan RecommendedPollInterval =>
-        _last.IsSlideShowRunning ? TimeSpan.FromMilliseconds(200) : TimeSpan.FromMilliseconds(1000);
+        _last.IsSlideShowRunning && (!_interop.EventsConnected || _last.IsWindowedShow)
+            ? TimeSpan.FromMilliseconds(80) : TimeSpan.FromMilliseconds(900);
 
     public event Action<PptInkTransition> InkTransition;
     public event Action<PptPresentationNotice> PresentationNotice;
@@ -214,7 +213,7 @@ public sealed class PptInkSession : IDisposable
         {
             bool began = !_showActive || newPresentation;
             bool slideChanged = previous.IsSlideShowRunning && isShow &&
-                (previous.Slide?.SlideId != current.Slide?.SlideId || previous.Presentation?.Identity != current.Presentation?.Identity);
+                (previous.Slide?.SlideId != current.Slide?.SlideId || !SamePresentation(previous.Presentation, current.Presentation));
             if (began)
             {
                 _showActive = true;
@@ -244,8 +243,8 @@ public sealed class PptInkSession : IDisposable
     private void ApplySlide(PptSnapshot current, PptSnapshot previous, PptInkTransitionKind kind)
     {
         CaptureOutgoing(previous);
-        List<InkStroke> incoming = current.Slide is not null && _slides.TryGetValue(current.Slide.SlideId, out var found)
-            ? Clone(found).ToList() : new List<InkStroke>();
+        IReadOnlyList<InkStroke> incoming = current.Slide is not null && _slides.TryGetValue(current.Slide.SlideId, out var found)
+            ? found : Array.Empty<InkStroke>();
         if (!InkManagedExternally()) ApplyCurrentInk?.Invoke(Clone(incoming));
         if (current.Slide is not null && current.Slide.Index > 0)
             _slideIndexes[current.Slide.SlideId] = current.Slide.Index;
@@ -266,6 +265,7 @@ public sealed class PptInkSession : IDisposable
     private void RaiseTransition(PptInkTransitionKind kind, PptSnapshot previous, PptSnapshot current,
         IReadOnlyList<InkStroke> incoming)
     {
+        if (InkTransition is null) return;
         IReadOnlyList<InkStroke> outgoing = Array.Empty<InkStroke>();
         if (previous?.Slide is not null && _slides.TryGetValue(previous.Slide.SlideId, out var found)) outgoing = Clone(found);
         InkTransition?.Invoke(new PptInkTransition(kind, previous, current, outgoing, Clone(incoming)));
@@ -348,7 +348,7 @@ public sealed class PptInkSession : IDisposable
     }
 
     private static bool SameSlideState(PptSnapshot a, PptSnapshot b) =>
-        a.State == b.State && a.Presentation?.Identity == b.Presentation?.Identity &&
+        a.State == b.State && SamePresentation(a.Presentation, b.Presentation) &&
         a.Slide?.SlideId == b.Slide?.SlideId && a.Slide?.Index == b.Slide?.Index &&
         a.ShowPosition == b.ShowPosition && a.WindowHandle == b.WindowHandle;
 

@@ -820,6 +820,14 @@ public sealed class BoardWindow : Window
         _moreFlyout = BuildMoreFlyout(); ShowBoardFlyout(_moreFlyout, _moreCell.Button);
     }
 
+    internal void RefreshExtensionCommands()
+    {
+        if (_moreFlyout is null) return;
+        if (_toolPanels.TryGetValue(_moreFlyout, out var window)) window.Close();
+        else _moreFlyout.Hide();
+        _moreFlyout = null;
+    }
+
     private void ShowGestureFlyout()
     {
         if (ShowDetachedPanel(_gestureFlyout)) return;
@@ -952,7 +960,7 @@ public sealed class BoardWindow : Window
         {
             var extensionRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 2 };
             foreach (var command in commands)
-                extensionRow.Children.Add(MakeExtraButton(Glyphs.ShapesWpf, command.Title, async () => { HideBoardFlyout(flyout); await _shell.ExecuteExtensionCommandAsync(command); }));
+                extensionRow.Children.Add(MakeExtraButton(ExtensionCommandIcons.For(command), command.Title, async () => { HideBoardFlyout(flyout); await _shell.ExecuteExtensionCommandAsync(command); }));
             panel.Children.Add(extensionRow);
         }
 

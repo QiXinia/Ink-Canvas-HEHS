@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using InkCanvas.Core.Ink;
@@ -75,6 +76,7 @@ public static class PdfDiagnostics
                     Check("vector appearance matches native ink page " + index, overlap > .995 && error < 1, new { overlap, meanChannelError = error, rotation = geometry.NormalizedRotation, geometry.UserUnit });
                 }
             }
+            await CheckMarginRenderingAsync();
             var workspaceFile = await PdfAnnotationFile.OpenAsync(source);
             var rasterizer = await PdfRasterizer.OpenAsync(workspaceFile, CancellationToken.None);
             window = new PdfWindow(host, workspaceFile, rasterizer, () => Task.CompletedTask, () => Task.CompletedTask);
@@ -127,6 +129,51 @@ public static class PdfDiagnostics
             Check("adjacent page annotation has independent history", window.Controller.Document.Count == 1 && window.Controller.History.CanUndo);
             window.Controller.Undo();
             Check("adjacent page undo retains other pages", window.Controller.Document.Count == 0);
+            // Exercise the XAML pointer entry point, including InputStarting and page rebinding.
+            window.GoToPage(0); await Task.Delay(150);
+            window.Controller.Tool = InkTool.Pen;
+            window.Controller.RecognizeShapes = false;
+            var surface = window.AnnotationSurface;
+            var pageRight = Vector2.Transform(new(workspaceFile.Pages[0].DipWidth, 180), window.Controller.ViewTransform);
+            var local = new Vector2(Math.Min(window.ViewportSize.X - 12, pageRight.X + 18), pageRight.Y);
+            var screen = surface.TransformToVisual(null).TransformPoint(new(local.X, local.Y));
+            var origin = new Platform.Interop.NativeMethods.POINT();
+            ClientToScreen(WinRT.Interop.WindowNative.GetWindowHandle(window), ref origin);
+            float dpi = (float)surface.XamlRoot.RasterizationScale;
+            bool nativeInput = GetCursorPos(out var oldCursor);
+            bool inputBegan = false;
+            surface.InputBegan += () => inputBegan = true;
+            try
+            {
+                SetCursorPos(origin.X + (int)(screen.X * dpi), origin.Y + (int)(screen.Y * dpi));
+                var hit = WindowFromPoint(new Platform.Interop.NativeMethods.POINT { X = origin.X + (int)(screen.X * dpi), Y = origin.Y + (int)(screen.Y * dpi) });
+                MouseEvent(2, 0, 0, 0, UIntPtr.Zero); await Task.Delay(40);
+                SetCursorPos(origin.X + (int)(screen.X * dpi), origin.Y + (int)((screen.Y + 30) * dpi)); await Task.Delay(40);
+                MouseEvent(4, 0, 0, 0, UIntPtr.Zero); await Task.Delay(180);
+                window.Controller.FinishDotAnimations();
+                if (nativeInput)
+                {
+                    Check("native pointer can annotate page margin", inputBegan && window.Controller.Document.Count == 1
+                        && window.Controller.Document.Strokes[0].Bounds.Right > workspaceFile.Pages[0].DipWidth,
+                        new { hit = hit.ToInt64(), window = WinRT.Interop.WindowNative.GetWindowHandle(window).ToInt64(), count = window.Controller.Document.Count,
+                            bounds = window.Controller.Document.Bounds, screen, dpi });
+                    window.Controller.Undo();
+                }
+                else
+                {
+                    checks.Add(new { check = "native pointer margin input unavailable", available = false, detail = "GetCursorPos returned false. Interactive input requires an unlocked input desktop." });
+                    var sample = new OverlayPointer(441, local.X, local.Y, .5f, 0, 0, OverlayPointerKind.Pen, 1000);
+                    window.ActivateTouchedPage(sample);
+                    window.Controller.OnPointerDown(sample);
+                    window.Controller.OnPointerMove(sample with { Y = sample.Y + 30, TimeMs = 1030 });
+                    window.Controller.OnPointerUp(sample with { Y = sample.Y + 35, TimeMs = 1040 });
+                    window.Controller.FinishDotAnimations();
+                    Check("page margin input commits to the nearest page without clipping", surface.ContentBounds is null && window.Controller.Document.Count == 1
+                        && window.Controller.Document.Strokes[0].Bounds.Right > workspaceFile.Pages[0].DipWidth);
+                    window.Controller.Undo();
+                }
+            }
+            finally { MouseEvent(4, 0, 0, 0, UIntPtr.Zero); SetCursorPos(oldCursor.X, oldCursor.Y); }
             window.GoToPage(0); await Task.Delay(100);
             var pen = window.Controller; pen.RecognizeShapes = false;
             var first = Vector2.Transform(new(140, 200), pen.ViewTransform);
@@ -208,7 +255,87 @@ public static class PdfDiagnostics
             await File.WriteAllTextAsync(Path.Combine(directory, "pdf.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         }
         void Check(string check, bool pass, object detail = null) => checks.Add(new { check, pass, detail });
+
+        async Task CheckMarginRenderingAsync()
+        {
+            string marginSource = Path.Combine(directory, "margin-source.pdf"), marginSaved = Path.Combine(directory, "margin-saved.pdf");
+            CreateFixture(marginSource, 5);
+            using (var pdf = PdfSharp.Pdf.IO.PdfReader.Open(marginSource, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Modify))
+            {
+                foreach (PdfPage page in pdf.Pages)
+                    page.Contents.AppendContent().CreateStream(Encoding.ASCII.GetBytes("q 0 1 0 rg 0 0 600 800 re f 1 1 1 rg 20 30 560 740 re f 0 0 0 rg 80 100 40 40 re f Q"));
+                pdf.Save(marginSource);
+            }
+            using var file = await PdfAnnotationFile.OpenAsync(marginSource);
+            var pages = new Dictionary<int, IReadOnlyList<InkStroke>>();
+            for (int index = 0; index < file.Pages.Count; index++)
+            {
+                var page = file.Pages[index];
+                var strokes = new List<InkStroke>();
+                foreach (var point in new[] { new Vector2(-40, 200), new(200, -40), new(page.DipWidth + 40, 200), new(200, page.DipHeight + 40) })
+                {
+                    var stroke = new InkStroke(new StrokeAttributes { BaseWidth = 20, TaperKind = TaperKind.None, Color = InkColor.Red, Nib = PenNib.Ellipse45 });
+                    stroke.AddPoint(point.X, point.Y); stroke.AddPoint(point.X + 12, point.Y + 15); stroke.Complete(); strokes.Add(stroke);
+                }
+                pages[index] = strokes;
+            }
+            await file.SaveAsync(marginSaved, pages);
+            using var restored = await PdfAnnotationFile.OpenAsync(marginSaved);
+            await using var original = await PdfRasterizer.OpenAsync(file, CancellationToken.None);
+            await using var output = await PdfRasterizer.OpenAsync(marginSaved, null, CancellationToken.None);
+            var device = CanvasDevice.GetSharedDevice();
+            for (int index = 0; index < file.Pages.Count; index++)
+            {
+                var page = file.Pages[index]; var expanded = restored.Pages[index];
+                var offset = PdfPageBleed.InkOffset(page, expanded);
+                using var background = await BitmapAsync(await original.RenderAsync(index, page, new(0, 0, page.DipWidth, page.DipHeight), 1, CancellationToken.None), device);
+                using var actual = await BitmapAsync(await output.RenderAsync(index, expanded, new(0, 0, expanded.DipWidth, expanded.DipHeight), 1, CancellationToken.None), device);
+                using var expected = new CanvasRenderTarget(device, (float)actual.Size.Width, (float)actual.Size.Height, 96);
+                using var controller = new InkController(); controller.Document.AddRange(pages[index]);
+                using var scene = new InkSceneRenderer();
+                var scale = new Vector2((float)actual.Size.Width / expanded.DipWidth, (float)actual.Size.Height / expanded.DipHeight);
+                using (var draw = expected.CreateDrawingSession())
+                {
+                    draw.Clear(Microsoft.UI.Colors.White);
+                    draw.DrawImage(background, new Windows.Foundation.Rect(offset.X * scale.X, offset.Y * scale.Y, page.DipWidth * scale.X, page.DipHeight * scale.Y), background.Bounds);
+                    scene.DrawCommitted(draw, controller, Matrix3x2.CreateTranslation(offset) * Matrix3x2.CreateScale(scale));
+                }
+                byte[] a = actual.GetPixelBytes(), b = expected.GetPixelBytes();
+                long redUnion = 0, redIntersection = 0, exposedGreen = 0;
+                var actualContent = Core.Ink.Rect.Empty;
+                var expectedContent = Core.Ink.Rect.Empty;
+                int width = (int)actual.SizeInPixels.Width;
+                for (int pixel = 0; pixel < a.Length; pixel += 4)
+                {
+                    bool redA = a[pixel] < 100 && a[pixel + 1] < 100 && a[pixel + 2] > 150;
+                    bool redB = b[pixel] < 100 && b[pixel + 1] < 100 && b[pixel + 2] > 150;
+                    if (redA || redB) redUnion++;
+                    if (redA && redB) redIntersection++;
+                    if (a[pixel] < 100 && a[pixel + 1] > 180 && a[pixel + 2] < 100) exposedGreen++;
+                    int x = pixel / 4 % width, y = pixel / 4 / width;
+                    if (Math.Max(a[pixel], Math.Max(a[pixel + 1], a[pixel + 2])) < 100)
+                        actualContent = actualContent.Union(new(x, y, x + 1, y + 1));
+                    if (Math.Max(b[pixel], Math.Max(b[pixel + 1], b[pixel + 2])) < 100)
+                        expectedContent = expectedContent.Union(new(x, y, x + 1, y + 1));
+                }
+                double overlap = redIntersection / (double)Math.Max(1, redUnion);
+                float contentShift = new[] { Math.Abs(actualContent.Left - expectedContent.Left), Math.Abs(actualContent.Top - expectedContent.Top),
+                    Math.Abs(actualContent.Right - expectedContent.Right), Math.Abs(actualContent.Bottom - expectedContent.Bottom) }.Max();
+                // Re-rasterizing vector content at a different pixel origin can move an edge by one pixel.
+                Check("margin ink and original crop render in place page " + index,
+                    overlap > .995 && exposedGreen == 0 && !actualContent.IsEmpty && contentShift <= 2,
+                    new { overlap, exposedGreen, contentShift, page.Rotation, page.UserUnit });
+                await actual.SaveAsync(Path.Combine(directory, "margin-" + index + ".png"), CanvasBitmapFileFormat.Png);
+                await expected.SaveAsync(Path.Combine(directory, "margin-reference-" + index + ".png"), CanvasBitmapFileFormat.Png);
+            }
+        }
     }
+
+    [DllImport("user32.dll")] private static extern bool ClientToScreen(nint window, ref Platform.Interop.NativeMethods.POINT point);
+    [DllImport("user32.dll")] private static extern nint WindowFromPoint(Platform.Interop.NativeMethods.POINT point);
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out Platform.Interop.NativeMethods.POINT point);
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll", EntryPoint = "mouse_event")] private static extern void MouseEvent(uint flags, uint x, uint y, uint data, UIntPtr extra);
 
     private static float MatrixDistance(Matrix3x2 a, Matrix3x2 b)
         => Vector2.Distance(a.Translation, b.Translation) + Math.Abs(a.M11 - b.M11) + Math.Abs(a.M22 - b.M22);

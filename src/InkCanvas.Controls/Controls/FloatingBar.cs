@@ -627,7 +627,7 @@ public sealed class FloatingBar : UserControl
         {
             var row = MoreRow();
             foreach (var command in batch)
-                AddMore(row, Glyphs.Tools, command.Title, async () => { if (Shell is not null) await Shell.ExecuteExtensionCommandAsync(command); });
+                AddMore(row, ExtensionCommandIcons.For(command), command.Title, async () => { if (Shell is not null) await Shell.ExecuteExtensionCommandAsync(command); });
             _moreRows.Children.Add(row);
         }
     }
@@ -679,10 +679,10 @@ public sealed class FloatingBar : UserControl
         {
             button.Click += (_, _) =>
             {
-                onClick();
-                // WPF HideSubPanels dismisses the popup after a tool action.
+                // Dismiss the launching popup before an action opens another window.
                 _moreOpen = false;
                 PanelRequested?.Invoke(BarPanelKind.More, false);
+                onClick();
             };
         }
         row.Children.Add(button);

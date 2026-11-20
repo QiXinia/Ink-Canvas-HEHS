@@ -1,17 +1,18 @@
 using System.Runtime.InteropServices;
+using InkCanvas.App.Views;
 using InkCanvas.Core.Update;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 
 namespace InkCanvas.App.Services;
 
 public sealed partial class ShellController
 {
     private bool _installingUpdate;
+    private UpdateWindow _updateWindow;
     private bool CanInstallUpdateSilently()
     {
         if (_exiting || _disposed || _board is not null || _documentWorkspace is not null || _settings is not null
-            || _countdown is not null || _lottery is not null || _replay is not null || _imagePicking || _lastSlideShowState) return false;
+            || _countdown is not null || _lottery is not null || _replay is not null || _imagePicking || _lastSlideShowState || _updateWindow is not null) return false;
         if (Services.OverlayInk.HasActiveInteraction || Services.OverlayInk.Playback is not null
             || Services.OverlayInk.Document.Count > 0 || Services.ScreenImages.CurrentImages.Count > 0) return false;
         var input = new LastInput { Size = (uint)Marshal.SizeOf<LastInput>() };
@@ -21,7 +22,7 @@ public sealed partial class ShellController
     private async Task<bool> PrepareForUpdateAsync(bool silent)
     {
         if (silent) return CanInstallUpdateSilently();
-        if (ActiveController.HasActiveInteraction) { await NotifyAsync("更新", "请先完成当前笔画或拖动，再安装更新。"); return false; }
+        if (ActiveController.HasActiveInteraction) { await ShowUpdateNoticeAsync("更新", "请先完成当前笔画或拖动，再安装更新。"); return false; }
         if (_documentWorkspace is not null && !await _documentWorkspace.CloseAsync()) return false;
         string directory = Path.Combine(Services.Store.Directory, "BeforeUpdate", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
         if (Services.OverlayInk.Document.Count > 0 || Services.ScreenImages.CurrentImages.Count > 0)
@@ -32,22 +33,28 @@ public sealed partial class ShellController
         return true;
     }
 
-    private async Task<ReleaseInfo> ChooseUpdateReleaseAsync(IReadOnlyList<ReleaseInfo> releases)
+    private Task<ReleaseInfo> ChooseUpdateReleaseAsync(IReadOnlyList<ReleaseInfo> releases)
+        => ShowUpdateWindowAsync(UpdateWindow.Versions(releases, Updater.CurrentVersion, EffectiveTheme));
+
+    private async Task<bool> ConfirmUpdateReleaseAsync(ReleaseInfo release)
+        => await ShowUpdateWindowAsync(UpdateWindow.Confirm(release, Updater.CurrentVersion, EffectiveTheme)) is not null;
+
+    private async Task ShowUpdateNoticeAsync(string title, string message)
+        => await ShowUpdateWindowAsync(UpdateWindow.Notice(title, message, Updater.CurrentVersion, EffectiveTheme));
+
+    private async Task<ReleaseInfo> ShowUpdateWindowAsync(UpdateWindow window)
     {
-        var owner = _settings as Window ?? _bar;
-        var list = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MinWidth = 300, MinHeight = 44 };
-        foreach (var release in releases) list.Items.Add(release.Tag + " · " + release.Name);
-        list.SelectedIndex = releases.Count > 0 ? 0 : -1;
-        var notes = new TextBlock { TextWrapping = TextWrapping.Wrap };
-        void UpdateNotes() => notes.Text = list.SelectedIndex >= 0 ? releases[list.SelectedIndex].Notes : "仓库没有适用的稳定版本。";
-        list.SelectionChanged += (_, _) => UpdateNotes(); UpdateNotes();
-        var dialog = new ContentDialog
-        {
-            Title = "GitHub 稳定版本", PrimaryButtonText = "更新到所选版本", CloseButtonText = "关闭",
-            IsPrimaryButtonEnabled = releases.Count > 0, XamlRoot = ((FrameworkElement)owner.Content).XamlRoot,
-            Content = new StackPanel { Spacing = 12, Children = { list, new ScrollViewer { Content = notes, MaxHeight = 240 } } },
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary && list.SelectedIndex >= 0 ? releases[list.SelectedIndex] : null;
+        if (_disposed || _exiting) { window.Close(); return null; }
+        _bar?.ClosePanels();
+        _updateWindow?.Close();
+        _updateWindow = window;
+        var owner = _settings as Window ?? (DocumentActive ? _documentWorkspace.Window : (Window)_board ?? _bar);
+        if (owner is not null) WindowChrome.CenterOnOwner(window, owner);
+        window.Closed += (_, _) => { if (ReferenceEquals(_updateWindow, window)) _updateWindow = null; };
+        NotifyWindowOpened(window);
+        window.Activate();
+        WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
+        return await window.Result;
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct LastInput { public uint Size, Time; }

@@ -18,6 +18,7 @@ public sealed partial class PdfWindow
     private sealed record PagePreview(CanvasBitmap Bitmap, double Scale);
     private readonly Dictionary<int, PagePreview> _pagePreviews = new();
     private readonly Dictionary<int, InkSceneRenderer> _pageScenes = new();
+    private readonly Dictionary<int, Core.Ink.Rect> _pageInkBounds = new();
     private readonly ScrollBar _scrollbar = new() { Orientation = Orientation.Vertical, Width = 18, Minimum = 0 };
     private bool _scrollUpdating, _previewQueued, _activePageQueued;
     private int[] _requestedPages = Array.Empty<int>();
@@ -25,7 +26,34 @@ public sealed partial class PdfWindow
     public long VisiblePreviewBytes => _pagePreviews.Values.Sum(item => (long)item.Bitmap.SizeInPixels.Width * item.Bitmap.SizeInPixels.Height * 4);
     public int VisiblePageCount => VisiblePages().Length;
     internal Vector2 ViewportSize => new((float)_viewport.ActualWidth, (float)_viewport.ActualHeight);
+    internal InkCanvas.Controls.Controls.InkSurface AnnotationSurface => _ink;
     private Matrix3x2 DocumentView => _layout.DocumentView(_pageIndex, Controller.ViewTransform);
+
+    private IReadOnlyList<InkStroke> PageInk(int index)
+        => _controllers.TryGetValue(index, out var controller) ? controller.Document.Strokes : _file.GetInk(index);
+
+    private void UpdateInkBounds(int index)
+    {
+        var bounds = Core.Ink.Rect.Empty;
+        foreach (var stroke in PageInk(index)) bounds = bounds.Union(stroke.Bounds);
+        if (bounds.IsEmpty) _pageInkBounds.Remove(index);
+        else _pageInkBounds[index] = bounds;
+    }
+
+    private IEnumerable<int> VisibleInkPages()
+    {
+        if (!Matrix3x2.Invert(DocumentView, out var inverse)) yield break;
+        var first = Vector2.Transform(Vector2.Zero, inverse);
+        var last = Vector2.Transform(ViewportSize, inverse);
+        var viewport = new Core.Ink.Rect(first.X, first.Y, last.X, last.Y);
+        foreach (var pair in _pageInkBounds)
+        {
+            var origin = new Vector2(_layout[pair.Key].Left, _layout[pair.Key].Top);
+            var bounds = pair.Value;
+            if (viewport.Intersects(new(bounds.Left + origin.X, bounds.Top + origin.Y, bounds.Right + origin.X, bounds.Bottom + origin.Y)))
+                yield return pair.Key;
+        }
+    }
 
     private int[] VisiblePages()
     {
@@ -38,8 +66,9 @@ public sealed partial class PdfWindow
     internal void ActivateTouchedPage(OverlayPointer sample)
     {
         if (Controller is null || Controller.HasActiveInteraction || !Matrix3x2.Invert(DocumentView, out var inverse)) return;
-        int index = _layout.HitTest(Vector2.Transform(new(sample.X, sample.Y), inverse));
-        if (index >= 0) ActivatePage(index, preserveView: true);
+        var point = Vector2.Transform(new(sample.X, sample.Y), inverse);
+        int index = _layout.NearestPage(point.Y);
+        ActivatePage(index, preserveView: true);
     }
 
     private void QueueActivePage()
@@ -176,7 +205,8 @@ public sealed partial class PdfWindow
             if (_pagePreviews.Count <= Math.Max(6, visible.Length) && VisiblePreviewBytes <= 104 * 1024 * 1024) break;
             _pagePreviews[index].Bitmap.Dispose(); _pagePreviews.Remove(index);
         }
-        foreach (int index in _pageScenes.Keys.Where(index => !visible.Contains(index)).ToArray())
+        var inkPages = VisibleInkPages().ToHashSet();
+        foreach (int index in _pageScenes.Keys.Where(index => !inkPages.Contains(index)).ToArray())
         { _pageScenes[index].Dispose(); _pageScenes.Remove(index); }
     }
 
@@ -203,14 +233,16 @@ public sealed partial class PdfWindow
             if (_pagePreviews.TryGetValue(index, out var preview)) draw.DrawImage(preview.Bitmap, bounds, preview.Bitmap.Bounds);
             if (index == _pageIndex && _detail is not null) draw.DrawImage(_detail, _detailRect, _detail.Bounds);
             DrawSearchHighlights(draw, index);
-            draw.Transform = Matrix3x2.Identity;
+        }
+        draw.Transform = Matrix3x2.Identity;
+        // All page backgrounds precede ink so margin strokes can cross page gaps.
+        foreach (int index in VisibleInkPages())
+        {
             if (index == _pageIndex) continue;
-            var strokes = _controllers.TryGetValue(index, out var controller) ? controller.Document.Strokes : _file.GetInk(index);
+            var view = _layout.PageView(index, document);
+            var strokes = PageInk(index);
             if (strokes.Count == 0) continue;
             if (!_pageScenes.TryGetValue(index, out var scene)) _pageScenes[index] = scene = new InkSceneRenderer { ShowSelectionOutline = false };
-            var origin = Vector2.Transform(Vector2.Zero, view);
-            float scale = MathF.Sqrt(MathF.Abs(view.GetDeterminant()));
-            using var clip = draw.CreateLayer(1, new Rect(origin.X, origin.Y, page.DipWidth * scale, page.DipHeight * scale));
             scene.Strokes.Retain(strokes);
             foreach (var stroke in strokes) scene.Strokes.Draw(draw, stroke, view);
         }

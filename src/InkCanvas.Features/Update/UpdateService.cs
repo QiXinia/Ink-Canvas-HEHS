@@ -9,13 +9,22 @@ namespace InkCanvas.Features.Update;
 public sealed class UpdateService : IDisposable
 {
     private readonly UpdateTransport _transport;
-    public UpdateService(string repository = "QiXinia/Ink-Canvas-HEHS", UpdateTransport transport = null)
+    private FileStream _lease;
+    private string _leasedDirectory;
+    public UpdateService(string repository = "QiXinia/Ink-Canvas-HEHS", UpdateTransport transport = null, UpdateCache cache = null)
     {
         if (repository.Split('/').Length != 2 || repository.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('/' or '-' or '_' or '.')))
             throw new ArgumentException("Invalid GitHub repository.", nameof(repository));
         Repository = repository;
         _transport = transport ?? new UpdateTransport();
+        Cache = cache ?? new UpdateCache();
+        _transport.ProgressChanged += ForwardProgress;
     }
+
+    public UpdateCache Cache { get; }
+    public void ReleaseCache() { _lease?.Dispose(); _lease = null; _leasedDirectory = null; }
+    public event Action<UpdateProgress> ProgressChanged;
+    private void ForwardProgress(UpdateProgress progress) => ProgressChanged?.Invoke(progress);
 
     public string Repository { get; }
     public string LastSource => _transport.LastSource;
@@ -84,9 +93,26 @@ public sealed class UpdateService : IDisposable
             hash = Checksum(sums, release.AssetName);
         }
         if (hash is not { Length: 64 } || !hash.All(Uri.IsHexDigit)) throw new InvalidDataException("此安装包缺少 SHA256 校验信息。");
-        string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "InkCanvas", "Updates", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(directory);
+        string directory = Cache.PackageDirectory(hash);
+        if (_leasedDirectory != directory)
+        {
+            _lease?.Dispose(); _lease = null; _leasedDirectory = null;
+            _lease = await Cache.AcquireAsync(directory, cancellation).ConfigureAwait(false);
+            _leasedDirectory = directory;
+        }
         string path = Path.Combine(directory, "package.zip");
+        if (File.Exists(path))
+        {
+            ProgressChanged?.Invoke(new(UpdateStage.Verifying, Source: "本地缓存"));
+            await using var cached = File.OpenRead(path);
+            string cachedHash = Convert.ToHexStringLower(await System.Security.Cryptography.SHA256.HashDataAsync(cached, cancellation).ConfigureAwait(false));
+            if ((release.InstallerSize <= 0 || cached.Length == release.InstallerSize) && cachedHash.Equals(hash, StringComparison.OrdinalIgnoreCase))
+            {
+                File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+                ProgressChanged?.Invoke(new(UpdateStage.Verifying, Fraction: 1, Source: "本地缓存"));
+                return path;
+            }
+        }
         await _transport.DownloadAsync(release.InstallerUrl, path, release.InstallerSize, hash, progress, cancellation).ConfigureAwait(false);
         return path;
     }
@@ -96,11 +122,20 @@ public sealed class UpdateService : IDisposable
         string directory = Path.Combine(Path.GetDirectoryName(archive), "install-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         using var current = Process.GetCurrentProcess();
-        var plan = await Task.Run(() => UpdatePackage.PrepareAsync(archive, directory, target, release.Version.ToString(),
-            current.Id, current.StartTime.ToUniversalTime().Ticks, Environment.ProcessPath, restart, token), token).ConfigureAwait(false);
-        string planPath = Path.Combine(directory, "plan.json");
-        await File.WriteAllTextAsync(planPath, JsonSerializer.Serialize(plan), token).ConfigureAwait(false);
-        return planPath;
+        try
+        {
+            ProgressChanged?.Invoke(new(UpdateStage.Preparing));
+            var plan = await Task.Run(() => UpdatePackage.PrepareAsync(archive, directory, target, release.Version.ToString(),
+                current.Id, current.StartTime.ToUniversalTime().Ticks, Environment.ProcessPath, restart, token), token).ConfigureAwait(false);
+            string planPath = Path.Combine(directory, "plan.json");
+            await File.WriteAllTextAsync(planPath, JsonSerializer.Serialize(plan), token).ConfigureAwait(false);
+            return planPath;
+        }
+        catch
+        {
+            try { Persistence.StorageFiles.DeleteDirectory(directory); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            throw;
+        }
     }
 
     public static Process LaunchUpdate(string planPath, string hostDirectory = null)
@@ -133,5 +168,5 @@ public sealed class UpdateService : IDisposable
         return null;
     }
 
-    public void Dispose() => _transport.Dispose();
+    public void Dispose() { ReleaseCache(); _transport.ProgressChanged -= ForwardProgress; _transport.Dispose(); }
 }

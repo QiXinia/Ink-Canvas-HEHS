@@ -8,6 +8,7 @@ using InkCanvas.Ink;
 using InkCanvas.Extensibility;
 using InkCanvas.Extensions;
 using InkCanvas.Host.Contracts;
+using InkCanvas.Features.Update;
 
 namespace InkCanvas.App.Services;
 
@@ -21,6 +22,8 @@ public sealed class AppServices : IDisposable
     {
         Store = new SettingsStore(settingsDirectory);
         Settings = Store.Load();
+        Settings.Storage ??= new();
+        UpdateCache = new UpdateCache(settingsDirectory is null ? null : Path.Combine(settingsDirectory, "UpdateCache"));
         ExtensionStore = new ExtensionPreferencesStore(Store.Directory);
         ExtensionPreferences = ExtensionStore.Load();
         Plugins = new PluginManager(Path.Combine(AppContext.BaseDirectory, "PluginHost", "InkCanvas.PluginHost.exe"), Path.Combine(Store.Directory, "PluginData"));
@@ -40,6 +43,7 @@ public sealed class AppServices : IDisposable
     }
 
     public SettingsStore Store { get; }
+    public UpdateCache UpdateCache { get; }
 
     public AppSettings Settings { get; private set; }
     public ModuleRuntime Modules { get; } = new();
@@ -89,6 +93,8 @@ public sealed class AppServices : IDisposable
     /// <summary>Push the current settings into every controller.</summary>
     public void ApplySettings()
     {
+        Settings.Storage ??= new();
+        Settings.Storage.UpdateCacheDays = Math.Clamp(Settings.Storage.UpdateCacheDays, 1, 30);
         Settings.Experimental ??= new ExperimentalSettings();
         foreach (var controller in AllControllers())
         {

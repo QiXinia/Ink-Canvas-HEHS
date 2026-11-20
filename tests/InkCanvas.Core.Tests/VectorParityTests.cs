@@ -1059,6 +1059,8 @@ public sealed class VectorParityTests
             if (expected["experimental"] is null) actual.AsObject().Remove("experimental");
             // Monitor selection is a Windows extension with its own persistence coverage.
             if (expected["display"] is null) actual.AsObject().Remove("display");
+            // Cache retention is a WinUI extension, covered by StorageManagementTests.
+            if (expected["storage"] is null) actual.AsObject().Remove("storage");
             // Soft cooldown settings extend the WPF schema and have dedicated persistence tests.
             foreach (string field in new[] { "samplingMode", "cooldownHalfLifeDays", "cooldownPenaltyStrength" })
                 if (expected["randSettings"]?[field] is null) actual["randSettings"]?.AsObject().Remove(field);

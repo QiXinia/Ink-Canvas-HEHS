@@ -26,19 +26,23 @@ public sealed partial class ShellController
         try { await Services.Plugins.StartEnabledAsync(new HashSet<string>(Services.ExtensionPreferences.EnabledPlugins)); }
         catch (Exception ex) { Core.Diagnostics.FileLog.WriteLogToFile("Plugin startup: " + ex.Message, Core.Diagnostics.LogType.Error); }
     }
-    private void OnPluginsChanged()
+    private void OnExtensionCommandsChanged()
     {
         _dispatcher.TryEnqueue(() =>
         {
             if (_disposed) return;
-            var commands = Services.Plugins.Commands;
+            var commands = ExtensionCommands.ToArray();
             if (_displayedExtensionCommands.SequenceEqual(commands)) return;
             _displayedExtensionCommands = commands;
             _bar?.ClosePanels(); _bar?.Bar.RefreshExtensionCommands();
+            _board?.RefreshExtensionCommands();
         });
     }
     public async Task ExecuteExtensionCommandAsync(ExtensionCommand command)
     {
+        // A menu or detached panel may outlive a module that stopped after it opened.
+        if (!ExtensionCommands.Any(available => available.PluginId == command.PluginId && available.CommandId == command.CommandId))
+        { OnExtensionCommandsChanged(); return; }
         if (command.PluginId == "inkcanvas.analytic-geometry")
         {
             try { Services.Modules.GetExport<Host.Contracts.IAnalyticGeometryService>()?.Open(); }

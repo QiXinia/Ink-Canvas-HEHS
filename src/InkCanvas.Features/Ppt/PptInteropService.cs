@@ -4,8 +4,8 @@ using System.Runtime.InteropServices;
 namespace InkCanvas.Features.Ppt;
 
 /// <summary>Late-bound PowerPoint/WPS COM adapter. Construct and use on one WinUI STA thread.</summary>
-/// <remarks>No timers, worker threads, UI objects or event sinks are owned here. The UI host
-/// calls <see cref="Poll"/> periodically from its dispatcher; returned snapshots contain only managed data.</remarks>
+/// <remarks>COM events request a refresh on the owning dispatcher. Periodic polling remains
+/// available for hosts without events. Snapshots contain only managed data.</remarks>
 public sealed class PptInteropService : IDisposable
 {
     [DllImport("ole32.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
@@ -19,6 +19,10 @@ public sealed class PptInteropService : IDisposable
     private string _progId;
     private PptSnapshot _snapshot = PptSnapshot.Detached;
     private bool _disposed;
+    private static readonly Guid ApplicationEvents = new("914934C2-5A91-11CF-8700-00AA0060263B");
+    private readonly List<(int Id, Delegate Handler)> _events = new();
+    public bool EventsConnected => _events.Count > 0;
+    public event Action RefreshRequested;
     // Per-presentation SlideID->index map so slideshow polls do not re-scan every slide
     // through COM on each tick (ink-switch latency). Cleared when identity/count changes.
     private readonly Dictionary<int, int> _slideIndexById = new();
@@ -26,6 +30,7 @@ public sealed class PptInteropService : IDisposable
     // FullName/path/page-setup are stable for one COM presentation identity; reuse them
     // across polls (Name is re-checked live) instead of re-reading every property per tick.
     private PptPresentationInfo _cachedInfo;
+    private nint _presentationIdentity;
 
     public string[] ProgIds { get; set; } = { "PowerPoint.Application", "KWPP.Application" };
     public bool AllowWps { get; set; } = true;
@@ -87,6 +92,7 @@ public sealed class PptInteropService : IDisposable
                 punk = IntPtr.Zero;
                 _app = app;
                 _progId = progId;
+                ConnectEvents();
                 LastFailure = null;
                 Poll();
                 if (_app is not null) return true;
@@ -130,12 +136,14 @@ public sealed class PptInteropService : IDisposable
             Fail("Poll", ex.Message, hr);
             if (IsDisconnectedError(hr))
             {
+                DisconnectEvents();
                 ReleaseComObject(_app);
                 _app = null;
                 _progId = null;
                 _slideIndexById.Clear();
                 _slideIndexKey = null;
                 _cachedInfo = null;
+                ReleasePresentationIdentity();
                 return Publish(PptSnapshot.Detached);
             }
             return _snapshot;
@@ -173,8 +181,8 @@ public sealed class PptInteropService : IDisposable
         catch (Exception ex) { Fail("Read presentation details", ex.Message, Marshal.GetHRForException(ex)); return null; }
     }
 
-    public bool Next() => InvokeShow("Next", view => view.Next(), activateWindow: true);
-    public bool Previous() => InvokeShow("Previous", view => view.Previous(), activateWindow: true);
+    public bool Next() => InvokeShow("Next", view => view.Next());
+    public bool Previous() => InvokeShow("Previous", view => view.Previous());
     public bool ExitSlideShow() => InvokeShow("Exit slideshow", view => view.Exit());
 
     /// <summary>Show PowerPoint's built-in slide navigation pane, as the original page-number control did.</summary>
@@ -332,12 +340,14 @@ public sealed class PptInteropService : IDisposable
     public void Detach()
     {
         VerifyThread();
+        DisconnectEvents();
         ReleaseComObject(_app);
         _app = null;
         _progId = null;
         _slideIndexById.Clear();
         _slideIndexKey = null;
         _cachedInfo = null;
+        ReleasePresentationIdentity();
         LastFailure = null;
         Publish(PptSnapshot.Detached);
     }
@@ -357,14 +367,21 @@ public sealed class PptInteropService : IDisposable
         object showWindow = GetShowWindow(scope, app);
         bool inShow = showWindow is not null;
         object p = inShow ? GetPresentation(scope, (dynamic)showWindow) : GetActivePresentation(scope, app);
-        if (p is null) return PptSnapshot.Detached;
+        if (inShow && p is null) return _snapshot;
+        if (p is null) { ReleasePresentationIdentity(); return PptSnapshot.Detached; }
         dynamic presentation = p;
         dynamic slides = scope.Own((object)presentation.Slides);
         int count = (int)slides.Count;
         IntPtr punk = Marshal.GetIUnknownForObject(p);
-        string identity;
-        try { identity = $"{_attachmentId:N}:{_progId}:{punk.ToInt64():X}"; }
-        finally { Marshal.Release(punk); }
+        // Keep the current COM identity alive between polls. Releasing the last reference
+        // let Office return a new proxy each time and made an unchanged page look new.
+        if (_presentationIdentity == punk) Marshal.Release(punk);
+        else
+        {
+            if (_presentationIdentity != 0) Marshal.Release(_presentationIdentity);
+            _presentationIdentity = punk;
+        }
+        string identity = $"{_attachmentId:N}:{_progId}:{punk.ToInt64():X}";
         // Name stays live (one call) so an in-place Save As invalidates the cached metadata.
         string name = SafeString(() => (string)presentation.Name) ?? string.Empty;
         PptPresentationInfo info;
@@ -393,15 +410,30 @@ public sealed class PptInteropService : IDisposable
         nint hwnd = 0;
         int showPosition = 0;
         int? showState = null;
+        bool windowedShow = false;
         if (inShow)
         {
             dynamic window = showWindow;
             hwnd = SafeNint(() => (nint)(long)window.HWND) ?? 0;
+            windowedShow = SafeTriState(() => (int)window.IsFullScreen) == false;
+            if (hwnd == 0)
+                hwnd = _snapshot.IsSlideShowRunning && _snapshot.Presentation?.Identity == identity
+                    && _snapshot.IsWindowedShow == windowedShow && Platform.Interop.NativeMethods.IsWindowVisible(_snapshot.WindowHandle)
+                    ? _snapshot.WindowHandle : PptNativeWindow.Find((object)window);
             dynamic view = scope.Own((object)window.View);
             showPosition = SafeInt(() => (int)view.CurrentShowPosition) ?? 0;
             showState = SafeInt(() => (int)view.State);
             dynamic slide = SafeCom(scope, () => (object)view.Slide);
-            if (slide is not null) current = BuildSlideInfo(scope, slides, slide, (int)slide.SlideID, 0, _slideIndexById);
+            if (slide is not null)
+            {
+                int id = (int)slide.SlideID;
+                current = _snapshot.Presentation?.Identity == identity && _snapshot.Slide?.SlideId == id
+                    ? _snapshot.Slide
+                    : BuildSlideInfo(scope, slides, slide, id, SafeInt(() => (int)slide.SlideIndex) ?? 0, _slideIndexById);
+            }
+            else if (showState != 5 && _snapshot.IsSlideShowRunning && _snapshot.WindowHandle == hwnd
+                && _snapshot.Presentation?.Identity == identity)
+                current = _snapshot.Slide;
         }
         else
         {
@@ -420,6 +452,7 @@ public sealed class PptInteropService : IDisposable
         {
             State = inShow ? PptConnectionState.SlideShow : PptConnectionState.Editing,
             Presentation = info, Slide = current, WindowHandle = hwnd, ShowPosition = showPosition, ShowState = showState,
+            IsWindowedShow = windowedShow,
         };
     }
 
@@ -446,12 +479,10 @@ public sealed class PptInteropService : IDisposable
 
     private static object GetShowWindow(ComScope scope, dynamic app)
     {
-        try
-        {
-            dynamic windows = scope.Own((object)app.SlideShowWindows);
-            return (int)windows.Count > 0 ? scope.Own((object)windows[1]) : null;
-        }
-        catch { return null; }
+        // A rejected COM call during a transition must retain the last snapshot. Treating
+        // that failure as an ended show clears and reloads otherwise unchanged ink.
+        dynamic windows = scope.Own((object)app.SlideShowWindows);
+        return (int)windows.Count > 0 ? scope.Own((object)windows[1]) : null;
     }
     private static object GetShowPresentation(ComScope scope, dynamic app)
     {
@@ -524,6 +555,43 @@ public sealed class PptInteropService : IDisposable
         }
         else _snapshot = snapshot;
         return snapshot;
+    }
+
+    private void ConnectEvents()
+    {
+        try
+        {
+            // EApplication events use the same dispatch IDs across supported Office versions.
+            foreach (int id in new[] { 2004, 2011, 2013, 2014 })
+            {
+                Action<object> handler = _ => RefreshRequested?.Invoke();
+                ComEventsHelper.Combine(_app, ApplicationEvents, id, handler);
+                _events.Add((id, handler));
+            }
+            Action<object, object> activated = (_, _) => RefreshRequested?.Invoke();
+            ComEventsHelper.Combine(_app, ApplicationEvents, 2009, activated);
+            _events.Add((2009, activated));
+        }
+        catch (Exception ex)
+        {
+            DisconnectEvents();
+            Core.Diagnostics.FileLog.WriteLogToFile("PPT events unavailable, using polling: " + ex.Message);
+        }
+    }
+
+    private void DisconnectEvents()
+    {
+        foreach (var entry in _events)
+            try { ComEventsHelper.Remove(_app, ApplicationEvents, entry.Id, entry.Handler); }
+            catch (Exception) { /* A disconnected Office process can no longer unadvise. */ }
+        _events.Clear();
+    }
+
+    private void ReleasePresentationIdentity()
+    {
+        if (_presentationIdentity == 0) return;
+        Marshal.Release(_presentationIdentity);
+        _presentationIdentity = 0;
     }
     private void Fail(string operation, string message, int hr)
     {

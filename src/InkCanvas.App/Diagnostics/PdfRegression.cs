@@ -1,10 +1,12 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using InkCanvas.App.Services;
 using InkCanvas.App.Views;
 using InkCanvas.Controls.Controls;
 using InkCanvas.Host.Contracts;
 using InkCanvas.Ink;
+using InkCanvas.Platform.Interop;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
@@ -46,6 +48,7 @@ internal static class PdfRegression
             shell.OpenPenPalette(false); await Task.Delay(120);
             Check("shared pen popup targets PDF", workspace.Controller.Tool == InkTool.Pen && shell.OpenWindows.OfType<PenPaletteWindow>().Any());
             foreach (var palette in shell.OpenWindows.OfType<PenPaletteWindow>().ToArray()) palette.Close();
+            await CheckDesktopRouting(workspace, bar);
             shell.ToggleBoard(); await Task.Delay(150);
             var board = shell.OpenWindows.OfType<BoardWindow>().Single();
             Check("board suspends PDF without replacing its ink", ReferenceEquals(bar.Bar.Controller, services.Board.Current));
@@ -75,7 +78,65 @@ internal static class PdfRegression
             await File.WriteAllTextAsync(Path.Combine(directory, "pdf-integration.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
             shell.Dispose(); Application.Current.Exit();
         }
-        void Check(string check, bool pass) => checks.Add(new { check, pass });
+        void Check(string check, bool pass, object detail = null) => checks.Add(new { check, pass, detail });
+
+        async Task CheckDesktopRouting(IDocumentWorkspace workspace, FloatingBarWindow bar)
+        {
+            string statePath = Path.Combine(directory, "pdf-foreground-host.json");
+            File.Delete(statePath);
+            var start = new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden };
+            start.ArgumentList.Add("--activationhost=" + statePath);
+            using var peer = Process.Start(start);
+            try
+            {
+                nint foreground = 0;
+                for (int attempt = 0; attempt < 60 && foreground == 0; attempt++)
+                {
+                    await Task.Delay(100);
+                    try
+                    {
+                        using var state = JsonDocument.Parse(await File.ReadAllTextAsync(statePath));
+                        foreground = (nint)state.RootElement.GetProperty("hwnd").GetInt64();
+                    }
+                    catch (Exception ex) when (ex is IOException or JsonException) { }
+                }
+                if (foreground == 0) throw new TimeoutException("PDF foreground test host did not start.");
+                var pdfController = workspace.Controller;
+                int pdfCount = pdfController.Document.Count;
+                NativeMethods.SetForegroundWindow(foreground); await Task.Delay(250);
+                bool liveForeground = NativeMethods.GetForegroundWindow() == foreground;
+                if (!liveForeground) shell.RefreshDocumentTarget(foreground);
+                Check("switching away from PDF restores screen annotation", ReferenceEquals(bar.Bar.Controller, services.OverlayInk) && shell.Overlay.Window.IsVisible,
+                    new { bound = ReferenceEquals(bar.Bar.Controller, services.OverlayInk), visible = shell.Overlay.Window.IsVisible,
+                        liveForeground, foreground = NativeMethods.GetForegroundWindow().ToInt64(), expectedForeground = foreground.ToInt64() });
+                if (shell.Overlay.ClickThrough) shell.ToggleClickThrough();
+                services.OverlayInk.Tool = InkTool.Pen;
+                var input = new InkCanvas.Platform.Windows.OverlayPointer(884, 100, 100, .5f, 0, 0, InkCanvas.Platform.Windows.OverlayPointerKind.Mouse, 1000);
+                services.OverlayInk.OnPointerDown(input);
+                services.OverlayInk.OnPointerMove(input with { X = 160, Y = 120, TimeMs = 1030 });
+                services.OverlayInk.OnPointerUp(input with { X = 180, Y = 130, TimeMs = 1050 });
+                services.OverlayInk.FinishDotAnimations();
+                Check("desktop annotation uses independent PDF and screen histories", services.OverlayInk.Document.Count == 1 && pdfController.Document.Count == pdfCount);
+                services.OverlayInk.Undo();
+                shell.ToggleClickThrough();
+                workspace.Window.Activate(); NativeMethods.SetForegroundWindow(WindowChrome.GetHwnd(workspace.Window)); await Task.Delay(250);
+                if (!liveForeground) shell.RefreshDocumentTarget(WindowChrome.GetHwnd(workspace.Window));
+                Check("returning to PDF restores page toolbar and input", ReferenceEquals(bar.Bar.Controller, pdfController) && !shell.Overlay.Window.IsVisible);
+                shell.OpenPenPalette(false); await Task.Delay(120);
+                Check("PDF palette retains the document target", ReferenceEquals(bar.Bar.Controller, pdfController) && !shell.Overlay.Window.IsVisible);
+                foreach (var palette in shell.OpenWindows.OfType<PenPaletteWindow>().ToArray()) palette.Close();
+                workspace.Window.AppWindow.Hide();
+                shell.RefreshDocumentTarget(0);
+                Check("hidden PDF restores screen annotation", ReferenceEquals(bar.Bar.Controller, services.OverlayInk) && shell.Overlay.Window.IsVisible);
+                workspace.Window.Activate();
+                shell.RefreshDocumentTarget(WindowChrome.GetHwnd(workspace.Window));
+                Check("showing PDF restores its unchanged ink history", ReferenceEquals(bar.Bar.Controller, pdfController) && pdfController.Document.Count == pdfCount);
+            }
+            finally
+            {
+                if (!peer.HasExited) { peer.CloseMainWindow(); await Task.Delay(200); }
+            }
+        }
     }
     private static async Task<ContentDialog> FindDialogAsync(ShellController shell, string title)
     {

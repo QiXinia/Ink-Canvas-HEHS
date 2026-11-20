@@ -285,6 +285,19 @@ public sealed class LayeredInkWindow : IDisposable
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
     }
 
+    /// <summary>Repair ordering only when the presentation has moved above the ink surface.</summary>
+    public void EnsureAbove(nint presentation)
+    {
+        if (!IsVisible || presentation == 0 || !NativeMethods.IsWindowVisible(presentation)) return;
+        for (var above = NativeMethods.GetWindow(_hwnd, 3 /* GW_HWNDPREV */); above != 0;
+            above = NativeMethods.GetWindow(above, 3))
+        {
+            if (above != presentation) continue;
+            Topmost = true;
+            return;
+        }
+    }
+
     public event Action<OverlayPointer> PointerDown;
     public event Action<OverlayPointer> PointerMove;
     public event Action<OverlayPointer> PointerUp;

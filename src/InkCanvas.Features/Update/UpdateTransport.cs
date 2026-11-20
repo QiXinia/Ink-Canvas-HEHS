@@ -15,6 +15,7 @@ public sealed class UpdateTransport : IDisposable
     public string LastSource { get; private set; }
     public string LastError { get; private set; }
     public event Action<string> StatusChanged;
+    public event Action<UpdateProgress> ProgressChanged;
 
     public UpdateTransport(HttpMessageHandler handler = null, IEnumerable<string> mirrors = null)
     {
@@ -63,6 +64,7 @@ public sealed class UpdateTransport : IDisposable
             try
             {
                 StatusChanged?.Invoke("正在下载 · " + candidate.Source);
+                ProgressChanged?.Invoke(new(UpdateStage.Downloading, Source: candidate.Source));
                 using var response = await OpenAsync(candidate.Url, token).ConfigureAwait(false);
                 long expected = size > 0 ? size : response.Content.Headers.ContentLength ?? 0;
                 if (response.Content.Headers.ContentLength is long contentLength && size > 0 && contentLength != size)
@@ -70,9 +72,20 @@ public sealed class UpdateTransport : IDisposable
                 await using (var input = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false))
                 await using (var output = new FileStream(partial, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 81920, true))
                 {
+                    var watch = Stopwatch.StartNew();
+                    long lastReport = -1000;
                     long count = await CopyAsync(input, output, expected > 0 ? expected : 1024L * 1024 * 1024,
-                        expected > 0 ? read => progress?.Report((double)read / expected) : null, token).ConfigureAwait(false);
+                        read =>
+                        {
+                            if (watch.ElapsedMilliseconds - lastReport < 100 && read != expected) return;
+                            lastReport = watch.ElapsedMilliseconds;
+                            double? fraction = expected > 0 ? (double)read / expected : null;
+                            if (fraction.HasValue) progress?.Report(fraction.Value);
+                            ProgressChanged?.Invoke(new(UpdateStage.Downloading, fraction, read, expected,
+                                read / Math.Max(.001, watch.Elapsed.TotalSeconds), candidate.Source));
+                        }, token).ConfigureAwait(false);
                     if (expected > 0 && count != expected) throw new InvalidDataException("安装包下载不完整。");
+                    ProgressChanged?.Invoke(new(UpdateStage.Verifying, DownloadedBytes: count, TotalBytes: expected, Source: candidate.Source));
                     output.Position = 0;
                     string actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(output, token).ConfigureAwait(false));
                     if (!actual.Equals(sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("安装包 SHA256 校验失败。");

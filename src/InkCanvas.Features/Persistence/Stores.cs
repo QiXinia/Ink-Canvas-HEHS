@@ -22,34 +22,67 @@ public sealed class SettingsStore
     public string Directory { get; }
 
     public string SettingsPath => Path.Combine(Directory, "Settings.json");
+    public string BackupPath => SettingsPath + ".bak";
+    public string LastError { get; private set; }
+    public bool RecoveredFromBackup { get; private set; }
+    public DateTime? LastSavedUtc => File.Exists(SettingsPath) ? File.GetLastWriteTimeUtc(SettingsPath) : null;
+    private readonly object _gate = new();
+    private string _savedJson;
+    private bool _protectBackup;
 
     public AppSettings Load()
     {
-        try
+        lock (_gate)
         {
-            if (!File.Exists(SettingsPath)) return new AppSettings();
-            var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
-        }
-        catch
-        {
-            // A corrupt settings file must never stop the app from starting.
+            RecoveredFromBackup = false;
+            foreach (string path in new[] { SettingsPath, BackupPath })
+            {
+                try
+                {
+                    if (!File.Exists(path)) continue;
+                    var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options);
+                    if (settings is null) continue;
+                    RecoveredFromBackup = path == BackupPath;
+                    _protectBackup = RecoveredFromBackup;
+                    _savedJson = RecoveredFromBackup ? null : JsonSerializer.Serialize(settings, Options);
+                    LastError = null;
+                    return settings;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { LastError = ex.Message; }
+            }
             return new AppSettings();
         }
     }
 
     public void Save(AppSettings settings)
     {
+        lock (_gate)
         try
         {
+            string json = JsonSerializer.Serialize(settings, Options);
+            if (json == _savedJson && File.Exists(SettingsPath)) return;
             System.IO.Directory.CreateDirectory(Directory);
-            var tmp = SettingsPath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(settings, Options));
-            File.Move(tmp, SettingsPath, overwrite: true);
+            string temporary = SettingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, json);
+                bool preserveCurrent = File.Exists(SettingsPath) && !_protectBackup;
+                if (preserveCurrent)
+                {
+                    try { preserveCurrent = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath), Options) is not null; }
+                    catch (JsonException) { preserveCurrent = false; }
+                }
+                if (preserveCurrent)
+                    File.Replace(temporary, SettingsPath, BackupPath);
+                else File.Move(temporary, SettingsPath, overwrite: true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            _savedJson = json; LastError = null;
+            _protectBackup = false;
         }
-        catch
+        catch (Exception ex)
         {
-            // Disk full / locked file: keep running with in-memory settings.
+            LastError = ex.Message;
         }
     }
 }

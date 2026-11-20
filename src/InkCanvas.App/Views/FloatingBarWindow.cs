@@ -22,6 +22,10 @@ public sealed class FloatingBarWindow : Window
     private readonly Dictionary<BarPanelKind, BarPanelWindow> _panels = new();
     private bool _isFolded;
     private bool _userPlaced;
+    private bool _presentationMode, _windowedPresentation, _desktopUserPlaced;
+    private nint _presentationWindow;
+    private Windows.Graphics.PointInt32 _desktopPosition;
+    private ScreenRect _presentationArea;
     private double _bottomMargin = 100, _scalePercent = 100;
     private bool _initialDpiPlacementDone;
     private double _lastDpiScale = 1;
@@ -136,6 +140,68 @@ public sealed class FloatingBarWindow : Window
     public bool IsFolded => _isFolded;
     internal IReadOnlyList<FoldedBarHandleWindow> FoldHandles => _foldHandles;
 
+    public void SetPresentationMode(bool active, nint window = default, bool windowed = false)
+    {
+        if (!active)
+        {
+            if (!_presentationMode) return;
+            _presentationMode = false;
+            _presentationWindow = 0;
+            _userPlaced = _desktopUserPlaced;
+            ClosePanels();
+            var screen = ScreenService.FromRect(new(_desktopPosition.X, _desktopPosition.Y, 1, 1));
+            WindowChrome.MoveToMonitor(this, screen);
+            var size = GetPhysicalSize(WindowChrome.GetDpiScale(this));
+            var restored = new ScreenRect(_desktopPosition.X, _desktopPosition.Y, size.Width, size.Height).FitInside(screen.WorkArea);
+            WindowChrome.PlaceClient(this, restored.X, restored.Y, restored.Width, restored.Height);
+            RefreshFoldHandles();
+            return;
+        }
+        bool targetChanged = !_presentationMode || _presentationWindow != window || _windowedPresentation != windowed;
+        if (!_presentationMode)
+        {
+            _desktopPosition = WindowChrome.GetClientPosition(this);
+            _desktopUserPlaced = _userPlaced;
+        }
+        _presentationMode = true;
+        _presentationWindow = window;
+        _windowedPresentation = windowed;
+        var area = GetPlacementArea();
+        if (!targetChanged && area == _presentationArea) return;
+        _presentationArea = area;
+        if (targetChanged)
+        {
+            _userPlaced = false;
+            ClosePanels();
+            WindowChrome.MoveToMonitor(this, ScreenService.FromWindow(window));
+        }
+        Reposition(_bottomMargin, _scalePercent, recenter: false);
+        RefreshFoldHandles();
+    }
+
+    private void RefreshFoldHandles()
+    {
+        if (!_isFolded) return;
+        CloseFoldHandles();
+        CreateFoldHandles();
+    }
+
+    private ScreenRect GetPlacementArea()
+    {
+        if (!_presentationMode)
+        {
+            var work = WindowChrome.GetWorkArea(this);
+            return new(work.X, work.Y, work.Width, work.Height);
+        }
+        var screen = ScreenService.FromWindow(_presentationWindow);
+        if (!_windowedPresentation) return screen.Bounds;
+        var client = WindowChrome.GetClientBounds(_presentationWindow);
+        int left = Math.Max(client.X, screen.WorkArea.X), top = Math.Max(client.Y, screen.WorkArea.Y);
+        int right = Math.Min(client.X + client.Width, screen.WorkArea.X + screen.WorkArea.Width);
+        int bottom = Math.Min(client.Y + client.Height, screen.WorkArea.Y + screen.WorkArea.Height);
+        return right > left && bottom > top ? new(left, top, right - left, bottom - top) : screen.WorkArea;
+    }
+
     public void SetFolded(bool folded)
     {
         if (_isFolded == folded) return;
@@ -217,7 +283,7 @@ public sealed class FloatingBarWindow : Window
             _bar.Width = widthDip;
         }
         else _bar.Width = double.NaN;
-        var work = WindowChrome.GetWorkArea(this);
+        var work = GetPlacementArea();
         userScale = Math.Min(userScale, Math.Min(work.Width / (expanded.Width * dpiScale), work.Height / (heightDip * dpiScale)));
         // Viewbox measures the design at its natural size before scaling. RenderTransform
         // scales after layout, so small windows clip the bar before the transform is applied.
@@ -230,12 +296,12 @@ public sealed class FloatingBarWindow : Window
 
     private void PlaceBottomCentre(int width, int height, double dpiScale, bool keepPosition = false)
     {
-        var work = WindowChrome.GetWorkArea(this);
-        bool keep = keepPosition || _userPlaced || (_isFolded && _foldHandles.Count > 0);
+        var work = GetPlacementArea();
+        bool keep = _presentationMode ? _userPlaced : keepPosition || _userPlaced || (_isFolded && _foldHandles.Count > 0);
         var current = WindowChrome.GetClientPosition(this);
         int x = keep ? current.X : work.X + (work.Width - width) / 2;
         int y = keep ? current.Y
-            : work.Y + work.Height - height - (int)Math.Ceiling(Math.Max(0, _bottomMargin) * dpiScale);
+            : work.Y + work.Height - height - (int)Math.Ceiling((_presentationMode ? 8 * UserScale : Math.Max(0, _bottomMargin)) * dpiScale);
         var fit = new ScreenRect(x, y, width, height).FitInside(new(work.X, work.Y, work.Width, work.Height));
         WindowChrome.PlaceClient(this, fit.X, fit.Y, fit.Width, fit.Height);
     }

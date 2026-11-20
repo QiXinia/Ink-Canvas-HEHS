@@ -53,7 +53,8 @@ public sealed partial class SettingsWindow
             "静默更新" => () => _updater is null ? "更新服务未启动。" : !S.Startup.IsAutoUpdate ? "请先启用自动检查更新。" : null,
             "静默更新起始时间" or "静默更新终止时间" => () => _updater is null ? "更新服务未启动。"
                 : !S.Startup.IsAutoUpdate || !S.Startup.IsAutoUpdateWithSilence ? "请先启用自动检查更新和静默更新。" : null,
-            "检查更新" or "版本列表" => () => _updater is null ? "更新服务未启动，请从主程序打开设置。" : null,
+            "检查更新" or "版本列表" => () => _updater is null ? "更新服务未启动，请从主程序打开设置。"
+                : _updater.IsBusy ? "正在处理更新，请等待当前操作完成。" : null,
             "启用屏幕内容跟随（实验性）" => TrackingRequirement,
             "批注跟随正文滚动" or "批注跟随页面缩放" or "遮罩固定区域和悬浮界面" or "自动记忆不同文档与页面的墨迹"
                 or "适配 Microsoft Word" or "适配 Microsoft PowerPoint" or "适配 Microsoft Edge" or "重新绑定当前批注位置"

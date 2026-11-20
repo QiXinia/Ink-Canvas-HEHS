@@ -122,6 +122,8 @@ internal static class UpdateRegression
             plan = plan with { ParentProcessId = parent.Id, ParentStartedUtcTicks = parent.StartTime.ToUniversalTime().Ticks,
                 ParentExecutable = parent.MainModule.FileName };
             string planPath = Path.Combine(work, "plan.json"); await File.WriteAllTextAsync(planPath, JsonSerializer.Serialize(plan));
+            // This diagnostic substitutes a short-lived parent instead of exiting its own app.
+            service.ReleaseCache();
             using var helper = UpdateService.LaunchUpdate(planPath);
             await Task.Delay(150);
             Check("external updater waits for the identified parent process to exit", !helper.HasExited

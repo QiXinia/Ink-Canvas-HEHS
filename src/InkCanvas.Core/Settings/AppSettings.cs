@@ -22,6 +22,7 @@ public sealed class AppSettings
     [JsonPropertyName("randSettings")] public RandSettings Rand { get; set; } = new();
     [JsonPropertyName("experimental")] public ExperimentalSettings Experimental { get; set; } = new();
     [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
+    [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
 
     public AppSettings Clone() =>
         JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(this)) ?? new AppSettings();
@@ -150,6 +151,12 @@ public sealed class AppSettings
         Rand.CooldownPenaltyStrength = 1;
         Experimental = new ExperimentalSettings();
     }
+}
+
+public sealed class StorageSettings
+{
+    public bool AutomaticallyCleanCache { get; set; } = true;
+    public int UpdateCacheDays { get; set; } = 7;
 }
 
 public sealed class ExperimentalSettings

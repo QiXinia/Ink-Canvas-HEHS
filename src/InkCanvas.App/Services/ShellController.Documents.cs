@@ -1,6 +1,9 @@
 using InkCanvas.Host.Contracts;
 using InkCanvas.Ink;
+using InkCanvas.Platform.Interop;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using System.Runtime.InteropServices;
 
 namespace InkCanvas.App.Services;
 
@@ -8,7 +11,10 @@ public sealed partial class ShellController
 {
     private IDocumentWorkspace _documentWorkspace;
     private readonly List<Window> _documentWindows = new();
-    private bool DocumentActive => _documentWorkspace is not null && _board is null;
+    private bool _documentFocused;
+    private bool DocumentActive => _documentWorkspace is not null && _documentFocused && _board is null;
+    private nint _documentForegroundHook;
+    private ForegroundCallback _documentForegroundCallback;
     internal IDocumentWorkspaceHost WorkspaceHost => new DocumentHost(this);
     private void ApplyDocumentSettings() => _documentWorkspace?.ApplySettings();
     private void BindToolbar(InkController controller)
@@ -36,12 +42,16 @@ public sealed partial class ShellController
         _replay?.Close(); _palette?.Close(); _shapePicker?.Close(); _bar?.ClosePanels();
         _selectionToolbar?.Hide();
         _documentWorkspace = workspace;
+        _documentFocused = true;
         _lastSlideShowState = false;
         _bar?.Bar.SetPptModeVisible(false);
+        _bar?.SetPresentationMode(false);
         ClosePptNavigationWindows();
         workspace.ControllerChanged += OnDocumentPageChanged;
         workspace.InputBegan += OnBoardInputBegan;
         workspace.Window.Activated += OnDocumentActivated;
+        _documentForegroundCallback = (_, _, _, _, _, _, _) => _dispatcher.TryEnqueue(RefreshDocumentTarget);
+        _documentForegroundHook = SetWinEventHook(3, 3, 0, _documentForegroundCallback, 0, 0, 0);
         OnDocumentPageChanged();
         Overlay.Hide();
         if (_bar is not null && !_bar.IsFolded) WindowChrome.ShowWithoutActivation(_bar);
@@ -49,13 +59,61 @@ public sealed partial class ShellController
     }
     private void OnDocumentActivated(object sender, WindowActivatedEventArgs args)
     {
-        if (DocumentActive && args.WindowActivationState != WindowActivationState.Deactivated) RaiseChromeAboveOverlay();
+        if (args.WindowActivationState != WindowActivationState.Deactivated)
+        {
+            SetDocumentTarget(true);
+            if (DocumentActive) RaiseChromeAboveOverlay();
+        }
+        else _dispatcher.TryEnqueue(RefreshDocumentTarget);
     }
+
+    private void RefreshDocumentTarget()
+        => RefreshDocumentTarget(NativeMethods.GetForegroundWindow());
+
+    internal void RefreshDocumentTarget(nint foreground)
+    {
+        if (_disposed || _exiting || _documentWorkspace is null || _board is not null) return;
+        if (!_documentWorkspace.Window.AppWindow.IsVisible
+            || _documentWorkspace.Window.AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized })
+        { SetDocumentTarget(false); return; }
+        if (foreground == 0) return;
+        if (foreground == WindowChrome.GetHwnd(_documentWorkspace.Window)) { SetDocumentTarget(true); return; }
+        NativeMethods.GetWindowThreadProcessId(foreground, out uint process);
+        // Tool palettes and the nonactivating toolbar keep the current drawing target.
+        if (process != Environment.ProcessId) SetDocumentTarget(false);
+    }
+
+    private void SetDocumentTarget(bool focused)
+    {
+        if (_documentWorkspace is null || _documentFocused == focused) return;
+        _documentFocused = focused;
+        if (_board is not null) return;
+        _replay?.Close(); _palette?.Close(); _shapePicker?.Close(); _bar?.ClosePanels();
+        _selectionToolbar?.Hide();
+        BindBoardController(DocumentActive ? _documentWorkspace.Controller : null);
+        BindToolbar(ActiveController);
+        if (DocumentActive) Overlay.Hide();
+        else Overlay.Show();
+        OnControllerToolChanged();
+        Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
+    }
+
+    private void StopDocumentForegroundTracking()
+    {
+        if (_documentForegroundHook != 0) UnhookWinEvent(_documentForegroundHook);
+        _documentForegroundHook = 0;
+        _documentForegroundCallback = null;
+    }
+
+    private delegate void ForegroundCallback(nint hook, uint eventId, nint window, int objectId, int childId, uint thread, uint time);
+    [DllImport("user32.dll")] private static extern nint SetWinEventHook(uint eventMin, uint eventMax, nint module,
+        ForegroundCallback callback, uint processId, uint threadId, uint flags);
+    [DllImport("user32.dll")] private static extern bool UnhookWinEvent(nint hook);
 
     private void OnDocumentPageChanged()
     {
-        _replay?.Close(); _palette?.Close(); _shapePicker?.Close();
         if (!DocumentActive) return;
+        _replay?.Close(); _palette?.Close(); _shapePicker?.Close();
         BindBoardController(_documentWorkspace.Controller);
         BindToolbar(_documentWorkspace.Controller);
         OnControllerToolChanged();
@@ -67,7 +125,9 @@ public sealed partial class ShellController
         workspace.ControllerChanged -= OnDocumentPageChanged;
         workspace.InputBegan -= OnBoardInputBegan;
         workspace.Window.Activated -= OnDocumentActivated;
+        StopDocumentForegroundTracking();
         _documentWorkspace = null;
+        _documentFocused = false;
         _replay?.Close(); _palette?.Close(); _shapePicker?.Close();
         BindBoardController(_board?.CurrentController);
         BindToolbar(ActiveController);

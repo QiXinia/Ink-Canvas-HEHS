@@ -22,6 +22,7 @@ public sealed class PdfAnnotationFile : IDisposable
     public string RenderPath { get; private set; }
     public string Password { get; }
     public IReadOnlyList<PdfPageGeometry> Pages { get; }
+    public IEnumerable<int> InkPages => _stored.Keys;
     public IReadOnlyList<PdfBookmark> Bookmarks { get; }
     public bool ReadOnly { get; }
     public bool HasSignatures { get; }
@@ -158,12 +159,37 @@ public sealed class PdfAnnotationFile : IDisposable
             {
                 token.ThrowIfCancellationRequested(); if (pair.Value.Count == 0) continue;
                 var page = document.Pages[pair.Key]; var geometry = Pages[pair.Key];
-                var annotation = new InkAnnotation(document) { Rectangle = new PdfRectangle(new PdfSharp.Drawing.XRect(geometry.Left, geometry.Bottom, geometry.Width, geometry.Height)),
+                var expanded = PdfPageBleed.IncludeInk(geometry, pair.Value);
+                if (expanded != geometry)
+                {
+                    // Enlarging CropBox must not reveal content hidden by the original crop.
+                    var clip = Encoding.ASCII.GetBytes($"q\n{Number(geometry.Left)} {Number(geometry.Bottom)} {Number(geometry.Width)} {Number(geometry.Height)} re W n\n");
+                    page.Contents.PrependContent().CreateStream(clip);
+                    // Cover the new margin after restoring the original graphics state. Some
+                    // renderers expand a rectangular clip to whole pixels at the crop edge.
+                    var margin = $"\nQ\nq 1 1 1 rg {Number(expanded.Left)} {Number(expanded.Bottom)} {Number(expanded.Width)} {Number(expanded.Height)} re "
+                        + $"{Number(geometry.Left)} {Number(geometry.Bottom)} {Number(geometry.Width)} {Number(geometry.Height)} re f* Q\n";
+                    page.Contents.AppendContent().CreateStream(Encoding.ASCII.GetBytes(margin));
+                    if (!page.Elements.ContainsKey("/TrimBox")) page.TrimBox = Rectangle(geometry);
+                    var media = page.MediaBox;
+                    var bleed = page.Elements.ContainsKey("/BleedBox") ? page.BleedBox : Rectangle(geometry);
+                    page.CropBox = Rectangle(expanded);
+                    page.BleedBox = Box(Math.Min(expanded.Left, bleed.X1), Math.Min(expanded.Bottom, bleed.Y1),
+                        Math.Max(expanded.Right, bleed.X2), Math.Max(expanded.Top, bleed.Y2));
+                    page.MediaBox = Box(Math.Min(media.X1, page.BleedBox.X1), Math.Min(media.Y1, page.BleedBox.Y1),
+                        Math.Max(media.X2, page.BleedBox.X2), Math.Max(media.Y2, page.BleedBox.Y2));
+                }
+                var annotation = new InkAnnotation(document) { Rectangle = Rectangle(expanded),
                     Contents = "Ink Canvas 可编辑墨迹", Flags = PdfAnnotationFlags.Print };
                 annotation.Elements.SetInteger("/InkCanvasVersion", 1);
-                var state = CompressedStream(PdfInkCodec.Encode(pair.Value), alreadyCompressed: true);
+                var offset = PdfPageBleed.InkOffset(geometry, expanded);
+                var savedInk = offset == Vector2.Zero ? pair.Value : pair.Value.Select(stroke =>
+                {
+                    var copy = stroke.Clone(); copy.Transform(Matrix3x2.CreateTranslation(offset), scaleWidth: false); return copy;
+                }).ToArray();
+                var state = CompressedStream(PdfInkCodec.Encode(savedInk), alreadyCompressed: true);
                 annotation.Elements["/InkCanvasData"] = state.Reference;
-                var appearance = Appearance(pair.Value, geometry);
+                var appearance = Appearance(pair.Value, geometry, expanded);
                 var ap = new PdfDictionary(document); ap.Elements["/N"] = appearance.Reference; annotation.Elements["/AP"] = ap;
                 page.Annotations.Add(annotation);
             }
@@ -185,7 +211,7 @@ public sealed class PdfAnnotationFile : IDisposable
             dictionary.CreateStream(alreadyCompressed ? data : Compress(data)); dictionary.Elements.SetName("/Filter", "/FlateDecode");
             document.Internals.AddObject(dictionary); return dictionary;
         }
-        PdfDictionary Appearance(IReadOnlyList<InkStroke> strokes, PdfPageGeometry geometry)
+        PdfDictionary Appearance(IReadOnlyList<InkStroke> strokes, PdfPageGeometry geometry, PdfPageGeometry extent)
         {
             var content = new StringBuilder("q\n"); var states = new PdfDictionary(document);
             var alphas = new HashSet<byte>();
@@ -226,7 +252,7 @@ public sealed class PdfAnnotationFile : IDisposable
                         for (int p = 0; p < outline.Count; p++)
                         {
                             var point = geometry.ToPdf(new Vector2(outline[p].X / 10000f, outline[p].Y / 10000f));
-                            content.Append(Number(point.X - geometry.Left)).Append(' ').Append(Number(point.Y - geometry.Bottom)).Append(p == 0 ? " m\n" : " l\n");
+                            content.Append(Number(point.X - extent.Left)).Append(' ').Append(Number(point.Y - extent.Bottom)).Append(p == 0 ? " m\n" : " l\n");
                         }
                         content.Append("h\n");
                     }
@@ -236,10 +262,14 @@ public sealed class PdfAnnotationFile : IDisposable
             content.Append("Q\n");
             var form = CompressedStream(Encoding.ASCII.GetBytes(content.ToString()));
             form.Elements.SetName("/Type", "/XObject"); form.Elements.SetName("/Subtype", "/Form"); form.Elements.SetInteger("/FormType", 1);
-            form.Elements["/BBox"] = new PdfRectangle(new PdfSharp.Drawing.XRect(0, 0, geometry.Width, geometry.Height));
+            form.Elements["/BBox"] = new PdfRectangle(new PdfSharp.Drawing.XRect(0, 0, extent.Width, extent.Height));
             var resources = new PdfDictionary(document); resources.Elements["/ExtGState"] = states; form.Elements["/Resources"] = resources;
             return form;
         }
+
+        static PdfRectangle Box(double left, double bottom, double right, double top)
+            => new(new PdfSharp.Drawing.XRect(left, bottom, right - left, top - bottom));
+        static PdfRectangle Rectangle(PdfPageGeometry bounds) => Box(bounds.Left, bounds.Bottom, bounds.Right, bounds.Top);
     }
     private void RememberFile(string path)
     {

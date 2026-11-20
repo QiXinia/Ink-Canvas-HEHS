@@ -22,7 +22,7 @@ public sealed partial class SettingsWindow : Window
     private readonly IShellActions _shell;
     private StackPanel _content;
     private WindowWorkspace _workspace;
-    private static readonly string[] Categories = { "启动选项", "画板选项", "手势选项", "显示器", "墨迹识别选项", "外观选项", "PPT 选项", "高级选项", "自动选项", "实验性设置", "模块与插件", "关于 Ink Canvas Artistry", "抽奖与点名" };
+    private static readonly string[] Categories = { "启动选项", "画板选项", "手势选项", "显示器", "墨迹识别选项", "外观选项", "PPT 选项", "高级选项", "自动选项", "实验性设置", "模块与插件", "关于 Ink Canvas Artistry", "抽奖与点名", "存储与缓存" };
     private TextBlock _screenTrackingStatus;
     private TextBlock _updateStatus;
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer _trackingStatusTimer;
@@ -132,7 +132,7 @@ public sealed partial class SettingsWindow : Window
         _theme = S.Appearance.Theme;
         _workspace = new WindowWorkspace { IsTitleBarAutoPaddingEnabled = false };
         _workspace.Resources["NavigationViewHeaderMargin"] = new Thickness(24, 24, 24, 12);
-        string[] icons = { "\uE768", "\uE70F", "\uE815", "\uE7F4", "\uE8A5", "\uE790", "\uE8A1", "\uE713", "\uE77C", "\uE713", "\uE8F1", "\uE946", "\uE8D4" };
+        string[] icons = { "\uE768", "\uE70F", "\uE815", "\uE7F4", "\uE8A5", "\uE790", "\uE8A1", "\uE713", "\uE77C", "\uE713", "\uE8F1", "\uE946", "\uE8D4", "\uE8B7" };
         for (int index = 0; index < Categories.Length; index++)
         {
             string category = Categories[index];
@@ -141,7 +141,14 @@ public sealed partial class SettingsWindow : Window
         _workspace.SearchBox = CreateSearchBox(searchText);
         _notification = new InfoBar { IsOpen = false, IsClosable = true, Severity = InfoBarSeverity.Success, Margin = new Thickness(24) };
         var root = new Grid { Background = PopupBrushes.WindowSurface(BrushTheme) };
+        root.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new() { Height = GridLength.Auto });
         root.Children.Add(_workspace);
+        _updateCard = new UpdateStatusCard(BrushTheme) { Margin = new Thickness(24, 8, 24, 16), MaxWidth = 1000, HorizontalAlignment = HorizontalAlignment.Stretch };
+        _updateCard.CancelRequested += () => _updater?.Cancel();
+        Grid.SetRow(_updateCard, 1);
+        root.Children.Add(_updateCard);
+        RefreshUpdateStatus();
         root.KeyDown += SearchKeyDown;
         _notification.VerticalAlignment = VerticalAlignment.Bottom;
         root.Children.Add(_notification);
@@ -156,6 +163,8 @@ public sealed partial class SettingsWindow : Window
         try
         {
             _buildingCategory = category;
+            if (!_indexingSearch) _storagePageGeneration++;
+            if (!_indexingSearch) _updateStatus = null;
             if (!_indexingSearch) { ResetSearchHighlight(); _searchTargets.Clear(); }
             _refreshControls.Clear();
             _content = new StackPanel { Spacing = 4, MaxWidth = 1000, HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -624,6 +633,9 @@ public sealed partial class SettingsWindow : Window
             case "抽奖与点名":
                 BuildLotterySettings();
                 break;
+            case "存储与缓存":
+                BuildStorageSettings();
+                break;
         }
     }
 
@@ -637,7 +649,23 @@ public sealed partial class SettingsWindow : Window
 
     private void RefreshUpdateStatus()
     {
-        if (!_closed && _updateStatus is not null) _updateStatus.Text = _updater.Status;
+        if (_closed) return;
+        if (_updateStatus is not null) _updateStatus.Text = (_updater?.Status ?? "更新服务未启动")
+            + (_updater?.LastCheckUtc is DateTime lastCheck ? "\n上次检查 " + lastCheck.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") : "");
+        if (_updateCard is null) return;
+        var progress = _updater?.Progress;
+        bool active = _updater?.IsBusy == true;
+        _updateCard.Visibility = active || progress?.Stage is Features.Update.UpdateStage.Failed or Features.Update.UpdateStage.Waiting
+            ? Visibility.Visible : Visibility.Collapsed;
+        string details = progress?.Source;
+        if (progress?.DownloadedBytes > 0)
+            details = string.Join(" · ", new[] { details, FormatBytes(progress.DownloadedBytes)
+                + (progress.TotalBytes > 0 ? " / " + FormatBytes(progress.TotalBytes) : ""),
+                progress.BytesPerSecond > 0 ? FormatBytes((long)progress.BytesPerSecond) + "/秒" : null }.Where(value => value is not null));
+        _updateCard.Update(_updater?.Status ?? "更新服务未启动", details, progress?.Fraction,
+            active && progress?.Stage is Features.Update.UpdateStage.Checking or Features.Update.UpdateStage.Downloading
+                or Features.Update.UpdateStage.Verifying or Features.Update.UpdateStage.Preparing, _updater?.CanCancel == true);
+        if (!_building && !_committing) RefreshControls();
     }
 
     private FrameworkElement PathShortcuts()

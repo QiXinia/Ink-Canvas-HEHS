@@ -53,6 +53,7 @@ public sealed class PptNavigationWindow : Window
     private readonly StackPanel _panel;
     private XamlRoot _trackedRoot;
     private IntPtr _showWindow;
+    private bool _windowedShow;
 
     public PptNavigationWindow(PptNavigationPlacement placement, IShellActions shell, int theme)
     {
@@ -218,6 +219,7 @@ public sealed class PptNavigationWindow : Window
     public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible)
     {
         _showWindow = snapshot?.WindowHandle ?? IntPtr.Zero;
+        _windowedShow = snapshot?.IsWindowedShow == true;
         _counter.Visibility = counterVisible ? Visibility.Visible : Visibility.Collapsed;
         int position = snapshot?.ShowPosition > 0 ? snapshot.ShowPosition : snapshot?.Slide?.Index ?? 0;
         int count = snapshot?.Presentation?.SlideCount ?? 0;
@@ -230,6 +232,7 @@ public sealed class PptNavigationWindow : Window
 
     private void SetVisible(bool visible)
     {
+        if (NativeMethods.IsWindowVisible(WindowChrome.GetHwnd(this)) == visible) return;
         if (visible) WindowChrome.ShowWithoutActivation(this);
         else NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_HIDE);
     }
@@ -253,7 +256,7 @@ public sealed class PptNavigationWindow : Window
     private void PlaceOnScreen()
     {
         var monitor = Platform.System.ScreenService.FromWindow(_showWindow);
-        var screen = monitor.Bounds;
+        var screen = _windowedShow ? WindowChrome.GetClientBounds(_showWindow).FitInside(monitor.WorkArea) : monitor.Bounds;
         double dpi = monitor.DpiScale;
         bool vertical = _placement is PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight;
         bool counter = _counter.Visibility == Visibility.Visible;

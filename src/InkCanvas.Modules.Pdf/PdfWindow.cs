@@ -79,6 +79,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
     {
         _host = host; _file = file; _rasterizer = rasterizer; _targetPath = file.SourcePath;
         _layout = new PdfContinuousLayout(file.Pages);
+        foreach (int index in file.InkPages) UpdateInkBounds(index);
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -248,9 +249,9 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             {
                 next = new InkController(); Configure(next);
                 next.Document.AddRange(_file.GetInk(index).Select(stroke => stroke.Clone()));
-                next.Document.Changed += OnInkChanged;
-                next.LayersChanged += OnInkChanged;
                 _controllers[index] = next;
+                next.Document.Changed += () => OnInkChanged(index);
+                next.LayersChanged += () => OnInkChanged(index);
             }
             if (previous is not null)
             {
@@ -269,7 +270,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             Controller.Invalidated += OnInvalidated; Controller.SelectionChanged += QueueSelection;
             Controller.ToolChanged += OnToolChanged;
             _ink.Controller = next;
-            var geometry = _file.Pages[index]; _ink.ContentBounds = new Core.Ink.Rect(0, 0, geometry.DipWidth, geometry.DipHeight);
+            _ink.ContentBounds = null;
             _pageNumber.Value = index + 1; _pages.SelectedIndex = index;
             _generation++; _detailCancellation?.Cancel();
             _detail?.Dispose(); _detail = null;
@@ -292,10 +293,12 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         if (_file.ReadOnly && Controller.Tool != InkTool.Pan) Controller.Tool = InkTool.Pan;
         QueueSelection();
     }
-    private void OnInkChanged()
+    private void OnInkChanged(int index)
     {
         _version++; UpdateTitle();
-        if (_realizedThumbnails.TryGetValue(_pageIndex, out var item)) _ = LoadThumbnailAsync(item);
+        UpdateInkBounds(index);
+        _paper.Invalidate();
+        if (_realizedThumbnails.TryGetValue(index, out var item)) _ = LoadThumbnailAsync(item);
     }
     private void UpdateTitle()
     {

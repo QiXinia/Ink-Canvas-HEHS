@@ -85,12 +85,12 @@ public sealed class UpdatePipelineTests
             if (request.RequestUri.AbsolutePath.Contains("expanded_assets")) return Response(assets);
             return Response("package");
         });
-        using var service = new UpdateService(transport: new UpdateTransport(handler));
+        using var service = new UpdateService(transport: new UpdateTransport(handler), cache: new UpdateCache(Temporary()));
         var release = Assert.Single(await service.GetReleasesAsync());
         Assert.Equal("v3.7.1", release.Tag); Assert.Equal(Hash("package"), release.Sha256);
         string archive = await service.DownloadAsync(release);
         try { Assert.Equal("package", File.ReadAllText(archive)); }
-        finally { Directory.Delete(Path.GetDirectoryName(archive), true); }
+        finally { service.Dispose(); Directory.Delete(service.Cache.Root, true); }
     }
 
     [Fact]
@@ -104,12 +104,12 @@ public sealed class UpdatePipelineTests
             if (request.RequestUri.AbsolutePath.EndsWith(".zip")) return Response("package");
             return new(HttpStatusCode.Forbidden);
         });
-        using var service = new UpdateService(transport: new UpdateTransport(handler));
+        using var service = new UpdateService(transport: new UpdateTransport(handler), cache: new UpdateCache(Temporary()));
         var release = Assert.Single(await service.GetReleasesAsync());
         Assert.Equal("v3.7.1", release.Tag);
         string archive = await service.DownloadAsync(release);
         try { Assert.Equal("package", File.ReadAllText(archive)); Assert.Equal("ghfile.geekertao.top", service.LastSource); }
-        finally { Directory.Delete(Path.GetDirectoryName(archive), true); }
+        finally { service.Dispose(); Directory.Delete(service.Cache.Root, true); }
     }
 
     private sealed class StalledStream : MemoryStream
@@ -247,7 +247,7 @@ public sealed class UpdatePipelineTests
             { AssetName = "app.zip", ChecksumsUrl = url + "SHA256SUMS.txt" };
         var handler = new Handler(request => Response(request.RequestUri.AbsolutePath.EndsWith("SHA256SUMS.txt")
             ? Hash("package") + "  *app.zip\n" : "package"));
-        using var service = new UpdateService(transport: new UpdateTransport(handler, Array.Empty<string>()));
+        using var service = new UpdateService(transport: new UpdateTransport(handler, Array.Empty<string>()), cache: new UpdateCache(Temporary()));
         string archive = await service.DownloadAsync(release);
         try
         {
@@ -256,7 +256,7 @@ public sealed class UpdatePipelineTests
             await Assert.ThrowsAsync<InvalidDataException>(() => service.DownloadAsync(release with { InstallerUrl = "https://github.com/another/repo/releases/download/v1/app.zip" }));
             Assert.Equal(2, handler.Requests.Count);
         }
-        finally { Directory.Delete(Path.GetDirectoryName(archive), true); }
+        finally { service.Dispose(); Directory.Delete(service.Cache.Root, true); }
     }
 
     [Theory]

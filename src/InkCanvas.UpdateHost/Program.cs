@@ -24,6 +24,10 @@ try
         catch (ArgumentException) { }
     }
     parentExited = true;
+    // The launcher retains this lease while alive. Hold it through replacement and rollback
+    // so another Ink Canvas instance cannot reclaim the updater's working directory.
+    using var cacheLease = new FileStream(Path.Combine(Path.GetDirectoryName(directory), ".lease"),
+        FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     // File locks held by runtime teardown can outlive the parent process briefly.
     for (int attempt = 0; ; attempt++)
     {

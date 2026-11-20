@@ -84,6 +84,78 @@ public sealed class PdfDocumentTests
         foreach (var point in new[] { Vector2.Zero, new Vector2(100, 200), new Vector2(geometry.DipWidth, geometry.DipHeight) })
             Assert.True(Vector2.Distance(point, geometry.FromPdf(geometry.ToPdf(point))) < .001f);
     }
+
+    [Theory]
+    [InlineData(0, 1)] [InlineData(90, 1)] [InlineData(180, 2)] [InlineData(270, 2)]
+    public async Task MarginInkExpandsPageAndBleedWithoutMovingContentOrAccumulatingPadding(int rotation, double unit)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "inkcanvas-pdf-bleed-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string source = Path.Combine(root, "source.pdf"), saved = Path.Combine(root, "saved.pdf"), again = Path.Combine(root, "again.pdf");
+            CreateFixture(source, pages: 1, rotation: rotation);
+            using (var document = PdfReader.Open(source, PdfDocumentOpenMode.Modify))
+            {
+                document.Pages[0].CropBox = new(new XRect(20, 30, 560, 740));
+                document.Pages[0].Elements.SetReal("/UserUnit", unit);
+                document.Save(source);
+            }
+            using var file = await PdfAnnotationFile.OpenAsync(source);
+            var original = file.Pages[0];
+            var ink = new List<InkStroke>();
+            foreach (var point in new[] { new Vector2(-35, 120), new(120, -45), new(original.DipWidth + 55, 120), new(120, original.DipHeight + 65) })
+            {
+                var stroke = new InkStroke(new StrokeAttributes { BaseWidth = 30, TaperKind = TaperKind.None, Nib = PenNib.Ellipse45 });
+                stroke.AddPoint(point.X, point.Y); stroke.AddPoint(point.X + 8, point.Y + 4); stroke.Complete(); ink.Add(stroke);
+            }
+            var originalPoints = ink.Select(stroke => stroke.Points.ToArray()).ToArray();
+            var expanded = PdfPageBleed.IncludeInk(original, ink);
+            Assert.True(expanded.Width > original.Width && expanded.Height > original.Height);
+            var pages = new Dictionary<int, IReadOnlyList<InkStroke>> { [0] = ink };
+            await file.SaveAsync(saved, pages);
+            await file.SaveAsync(saved, pages);
+            using (var pdf = PdfReader.Open(saved, PdfDocumentOpenMode.Modify))
+            {
+                var page = pdf.Pages[0];
+                Assert.Equal(new PdfRectangle(new XRect(20, 30, 560, 740)), page.TrimBox);
+                Assert.Equal(page.CropBox, page.BleedBox);
+                Assert.True(page.MediaBox.Contains(page.CropBox));
+                Assert.Equal(2, page.Annotations.Count);
+            }
+            using var reopened = await PdfAnnotationFile.OpenAsync(saved);
+            var restored = reopened.GetInk(0);
+            Assert.Equal(expanded, reopened.Pages[0]);
+            Assert.Equal(ink.Count, restored.Count);
+            for (int stroke = 0; stroke < ink.Count; stroke++)
+            {
+                Assert.Equal(originalPoints[stroke], ink[stroke].Points);
+                var copy = restored.Single(item => item.Id == ink[stroke].Id);
+                Assert.InRange(copy.Bounds.Left, 0, expanded.DipWidth);
+                Assert.InRange(copy.Bounds.Top, 0, expanded.DipHeight);
+                Assert.InRange(copy.Bounds.Right, 0, expanded.DipWidth);
+                Assert.InRange(copy.Bounds.Bottom, 0, expanded.DipHeight);
+                for (int point = 0; point < copy.Count; point++)
+                {
+                    Assert.True(Vector2.Distance(original.ToPdf(ink[stroke].Points[point].Position), expanded.ToPdf(copy.Points[point].Position)) < .001f);
+                    Assert.Equal(ink[stroke].Points[point].Width, copy.Points[point].Width);
+                }
+            }
+            await reopened.SaveAsync(again, new Dictionary<int, IReadOnlyList<InkStroke>> { [0] = restored });
+            using var final = await PdfAnnotationFile.OpenAsync(again);
+            Assert.Equal(expanded, final.Pages[0]);
+            Assert.Equal(restored[0].Points, final.GetInk(0).Single(stroke => stroke.Id == restored[0].Id).Points);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void InPageInkRetainsOriginalPageBounds()
+    {
+        var page = new PdfPageGeometry(20, 30, 580, 770, 0);
+        Assert.Same(page, PdfPageBleed.IncludeInk(page, new[] { Stroke() }));
+        Assert.Same(page, PdfPageBleed.IncludeInk(page, Array.Empty<InkStroke>()));
+    }
     [Theory]
     [InlineData(false, PenNib.Round)] [InlineData(true, PenNib.Ellipse45)]
     public void EmbeddedInkRoundTripsEveryStoredCoordinateWidthAndBrush(bool highlighter, PenNib nib)

@@ -21,23 +21,9 @@ public sealed class InfoWindow : Window
     {
         Title = title;
 
-        var body = new StackPanel { Spacing = 8, Padding = new Thickness(24) };
-        foreach (var raw in markdown.ReplaceLineEndings("\n").Split('\n'))
-        {
-            var line = raw.TrimEnd();
-            if (line.Length == 0) { body.Children.Add(new Border { Height = 6 }); continue; }
-
-            if (line.StartsWith("### "))
-                body.Children.Add(Heading(line[4..], 15, Microsoft.UI.Text.FontWeights.SemiBold));
-            else if (line.StartsWith("## "))
-                body.Children.Add(Heading(line[3..], 18, Microsoft.UI.Text.FontWeights.SemiBold));
-            else if (line.StartsWith("# "))
-                body.Children.Add(Heading(line[2..], 22, Microsoft.UI.Text.FontWeights.Bold));
-            else if (line.StartsWith("- ") || line.StartsWith("* "))
-                body.Children.Add(Paragraph("•  " + line[2..]));
-            else
-                body.Children.Add(Paragraph(line));
-        }
+        var body = new MarkdownView(theme) { Padding = new Thickness(24) };
+        string version = typeof(InfoWindow).Assembly.GetName().Version?.ToString(3) ?? "3.7.3";
+        body.SetMarkdown(markdown, new Uri("https://github.com/QiXinia/Ink-Canvas-HEHS/blob/v" + version + "/"));
 
         var workspace = new WindowWorkspace { IsTitleBarAutoPaddingEnabled = false };
         workspace.AddPage("版本更新", "", () => body);
@@ -139,20 +125,6 @@ public sealed class InfoWindow : Window
             CornerRadius = new CornerRadius(4), Child = text };
         _themed.Add(theme => cap.BorderBrush = PopupBrushes.Border(theme));
         return cap;
-    }
-
-    private TextBlock Heading(string text, double size, Windows.UI.Text.FontWeight weight)
-    {
-        var tb = new TextBlock
-        {
-            Text = text,
-            FontSize = size,
-            FontWeight = weight,
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 8, 0, 2),
-        };
-        ThemeFg(tb);
-        return tb;
     }
 
     private TextBlock Paragraph(string text)

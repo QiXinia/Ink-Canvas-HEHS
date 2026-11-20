@@ -43,6 +43,9 @@ public static class Glyphs
     public const string Help = "";
     public const string Info = "";
     public const string Download = "";
+    public const string Pdf = "\uEA90";
+    public const string Import = "\uE8B5";
+    public const string Calculator = "\uE8EF";
     // ---- Exact WPF floating-bar codepoints (upstream MainWindow.xaml) ----
     public const string Cursor = "";
     public const string PenWpf = "";
