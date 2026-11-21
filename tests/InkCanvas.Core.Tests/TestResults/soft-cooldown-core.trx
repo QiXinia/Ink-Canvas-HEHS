@@ -1,0 +1,201 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="e8c13c3d-4fab-4d3a-ba9d-6c32ad9dd721" name="Administrator@iZp9b4djbu8992Z 2026-11-19 23:43:45" runUser="iZp9b4djbu8992Z\Administrator" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-19T23:43:45.3942108+08:00" queuing="2026-11-19T23:43:45.3942110+08:00" start="2026-11-19T23:43:44.3813558+08:00" finish="2026-11-19T23:43:45.5286249+08:00" />
+  <TestSettings name="default" id="a24d0416-dbd1-4d43-92df-113a072d98cc">
+    <Deployment runDeploymentRoot="Administrator_iZp9b4djbu8992Z_2026-11-19_23_43_45" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="cc363a7e-3f9a-42e5-a5d9-a19c884eb938" testId="fb33caf0-66ab-1b64-8d01-cafce9a25b4f" testName="InkCanvas.Core.Tests.LotteryCooldownTests.ClockRollbackAndInvalidSettingsDoNotCreateInvalidProbabilities" computerName="iZp9b4djbu8992Z" duration="00:00:00.0031234" startTime="2026-11-19T23:43:45.3700191+08:00" endTime="2026-11-19T23:43:45.3700191+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cc363a7e-3f9a-42e5-a5d9-a19c884eb938" />
+    <UnitTestResult executionId="53cbb248-2b3e-4a1b-ac7a-01c6b3e4f858" testId="c7564895-9fe6-95bc-9e0d-8830d6dc30bb" testName="InkCanvas.Core.Tests.ClassroomToolsTests.EqualNamesRemainSeparateRosterEntries" computerName="iZp9b4djbu8992Z" duration="00:00:00.0001731" startTime="2026-11-19T23:43:45.3396558+08:00" endTime="2026-11-19T23:43:45.3396559+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="53cbb248-2b3e-4a1b-ac7a-01c6b3e4f858" />
+    <UnitTestResult executionId="83f0e7b1-dd96-4143-a65c-70fda2c32c0e" testId="d71c7a03-5ab3-88d7-6c56-a6d513187a40" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;学号,姓名,班级\n1,张三,一班\n2,李四,一班&quot;, expected: &quot;张三|李四&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0016181" startTime="2026-11-19T23:43:45.3400245+08:00" endTime="2026-11-19T23:43:45.3400245+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="83f0e7b1-dd96-4143-a65c-70fda2c32c0e" />
+    <UnitTestResult executionId="ca697006-a3e8-4629-9f12-17b45873bd5e" testId="72134ecd-df30-a164-0e01-6f89a4d64edf" testName="InkCanvas.Core.Tests.ClassroomToolsTests.NumericPoolChangesResetTheRoundAndNamedPoolIgnoresNumericSize" computerName="iZp9b4djbu8992Z" duration="00:00:00.0002570" startTime="2026-11-19T23:43:45.3699749+08:00" endTime="2026-11-19T23:43:45.3699749+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ca697006-a3e8-4629-9f12-17b45873bd5e" />
+    <UnitTestResult executionId="74aa2e75-49c8-4853-8d98-48e2085e3cf6" testId="12a75cc5-3796-267d-6b66-663799b7cec1" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;学号\t姓名\t班级\n1\t张三\t一班&quot;, expected: &quot;张三&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0000030" startTime="2026-11-19T23:43:45.3696864+08:00" endTime="2026-11-19T23:43:45.3696866+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="74aa2e75-49c8-4853-8d98-48e2085e3cf6" />
+    <UnitTestResult executionId="8e10921b-ab61-4df3-80b9-496b438a9673" testId="056b6216-f551-7156-63b4-cf194592cf06" testName="InkCanvas.Core.Tests.LotteryCooldownTests.BatchIsUniqueButLaterDrawsCanRepeatAndTheProbabilityNeverVanishes" computerName="iZp9b4djbu8992Z" duration="00:00:00.0961185" startTime="2026-11-19T23:43:45.3400353+08:00" endTime="2026-11-19T23:43:45.3400353+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8e10921b-ab61-4df3-80b9-496b438a9673" />
+    <UnitTestResult executionId="097ce19e-d21c-4afc-b131-3135650e4caa" testId="011d4b10-ec6a-f822-c3cd-a322b2c7718d" testName="InkCanvas.Core.Tests.LotteryCooldownTests.ReorderingNamesKeepsCooldownAndDuplicateNamesHaveIndependentMemory" computerName="iZp9b4djbu8992Z" duration="00:00:00.0052687" startTime="2026-11-19T23:43:45.3715640+08:00" endTime="2026-11-19T23:43:45.3715641+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="097ce19e-d21c-4afc-b131-3135650e4caa" />
+    <UnitTestResult executionId="5582710b-106b-4141-8484-dc4d818237b5" testId="4e3c217e-9343-6d39-c9fe-b7920839e219" testName="InkCanvas.Core.Tests.LotteryCooldownTests.NumericPoolsAndDifferentRostersDoNotSharePenaltyRecords" computerName="iZp9b4djbu8992Z" duration="00:00:00.0003999" startTime="2026-11-19T23:43:45.4404552+08:00" endTime="2026-11-19T23:43:45.4404552+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5582710b-106b-4141-8484-dc4d818237b5" />
+    <UnitTestResult executionId="7a325711-e514-4bcf-9746-c59d7bb69160" testId="6c73618b-a68a-77b8-33d6-f2f3e115bca9" testName="InkCanvas.Core.Tests.LotteryCooldownTests.CountsAccumulateAndChangingHalfLifePreservesDecayAlreadyElapsed" computerName="iZp9b4djbu8992Z" duration="00:00:00.0080455" startTime="2026-11-19T23:43:45.3699974+08:00" endTime="2026-11-19T23:43:45.3699975+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7a325711-e514-4bcf-9746-c59d7bb69160" />
+    <UnitTestResult executionId="45dd1be6-bef5-42c8-b799-db44f0e21497" testId="a7564b09-5309-dfad-f3be-1340a287466f" testName="InkCanvas.Core.Tests.LotteryCooldownTests.ConcurrentDrawsRemainUniqueAndPersistAllUpdates" computerName="iZp9b4djbu8992Z" duration="00:00:00.0039084" startTime="2026-11-19T23:43:45.4722027+08:00" endTime="2026-11-19T23:43:45.4722029+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="45dd1be6-bef5-42c8-b799-db44f0e21497" />
+    <UnitTestResult executionId="222fdb46-0de2-45e3-baf5-f0bff617f7c5" testId="e1447c05-c1ea-9853-0d57-d5a11cb8a3ab" testName="InkCanvas.Core.Tests.LotteryCooldownTests.PersistenceRestoresOfflineDecayAndFlushesTheLastPendingPick" computerName="iZp9b4djbu8992Z" duration="00:00:00.0276720" startTime="2026-11-19T23:43:45.4682309+08:00" endTime="2026-11-19T23:43:45.4682314+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="222fdb46-0de2-45e3-baf5-f0bff617f7c5" />
+    <UnitTestResult executionId="22ecf9a7-3a61-4ac7-9e22-624171b5ed09" testId="62b0f9fa-c86e-3fbc-5741-5cee7f51f0f0" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;甲,一班\n乙,二班&quot;, expected: &quot;甲|乙&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0000027" startTime="2026-11-19T23:43:45.3400823+08:00" endTime="2026-11-19T23:43:45.3400823+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="22ecf9a7-3a61-4ac7-9e22-624171b5ed09" />
+    <UnitTestResult executionId="46d65dc9-452d-4192-96a3-c527f69a87fd" testId="4e58c930-76bf-faf3-0506-fbd94cb0284d" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;﻿姓名\n甲\n乙&quot;, expected: &quot;甲|乙&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0000020" startTime="2026-11-19T23:43:45.3400936+08:00" endTime="2026-11-19T23:43:45.3400936+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="46d65dc9-452d-4192-96a3-c527f69a87fd" />
+    <UnitTestResult executionId="545744a7-b854-4f4f-b6b9-cdfb89d67793" testId="66c784e7-8279-3864-ac74-6216e25c8d14" testName="InkCanvas.Core.Tests.LotteryCooldownTests.ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes" computerName="iZp9b4djbu8992Z" duration="00:00:00.0058063" startTime="2026-11-19T23:43:45.3761524+08:00" endTime="2026-11-19T23:43:45.3761526+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="545744a7-b854-4f4f-b6b9-cdfb89d67793">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.NotEqual() Failure: Values are equal&#xD;
+Expected: Not 0.375&#xD;
+Actual:       0.375</Message>
+          <StackTrace>   at InkCanvas.Core.Tests.LotteryCooldownTests.ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes() in D:\InkCanvas\tests\InkCanvas.Core.Tests\LotteryCooldownTests.cs:line 125&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="bbe86561-34c1-450f-be2b-e341c5037d01" testId="b80d6fcf-9423-9272-b3a0-5949e1ffc41c" testName="InkCanvas.Core.Tests.ClassroomToolsTests.ReopeningTheSameRosterKeepsTheRoundAndResults" computerName="iZp9b4djbu8992Z" duration="00:00:00.0921001" startTime="2026-11-19T23:43:45.3362550+08:00" endTime="2026-11-19T23:43:45.3362802+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="bbe86561-34c1-450f-be2b-e341c5037d01" />
+    <UnitTestResult executionId="542395be-f688-49e9-95f1-5489bebc41a9" testId="8dbf3827-9feb-59f0-8e8d-4df818bd22a9" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot; 甲 \r\n\r\n乙\n&quot;, expected: &quot;甲|乙&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0002360" startTime="2026-11-19T23:43:45.3400588+08:00" endTime="2026-11-19T23:43:45.3400589+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="542395be-f688-49e9-95f1-5489bebc41a9" />
+    <UnitTestResult executionId="3b830769-2feb-43e1-b0d4-a3bb45de1e27" testId="548e37cd-92b5-1cde-81e0-b7082b2b3e84" testName="InkCanvas.Core.Tests.ClassroomToolsTests.WholeRoundDrawsEveryParticipantExactlyOnce" computerName="iZp9b4djbu8992Z" duration="00:00:00.0131753" startTime="2026-11-19T23:43:45.3715906+08:00" endTime="2026-11-19T23:43:45.3715906+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3b830769-2feb-43e1-b0d4-a3bb45de1e27" />
+    <UnitTestResult executionId="e742ca5c-f6d2-400d-87d3-06014b9af250" testId="b2d92767-b4c6-1994-2e2b-cf02825ceb7d" testName="InkCanvas.Core.Tests.ClassroomToolsTests.PartialFinalBatchDoesNotResetOrRepeatTheRound" computerName="iZp9b4djbu8992Z" duration="00:00:00.0002174" startTime="2026-11-19T23:43:45.3700631+08:00" endTime="2026-11-19T23:43:45.3700632+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e742ca5c-f6d2-400d-87d3-06014b9af250" />
+    <UnitTestResult executionId="676a53a7-d136-47cd-8978-bf2b17582f8a" testId="0c90c8f6-9e8b-4bc5-5781-0636da08f43f" testName="InkCanvas.Core.Tests.LotteryCooldownTests.FirstPickLowersProbabilityAndActualTimeRestoresItWithATenDayHalfLife" computerName="iZp9b4djbu8992Z" duration="00:00:00.0006217" startTime="2026-11-19T23:43:45.4400087+08:00" endTime="2026-11-19T23:43:45.4400087+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="676a53a7-d136-47cd-8978-bf2b17582f8a" />
+    <UnitTestResult executionId="aa0b439a-9642-4492-a1d4-2f32980b3cce" testId="bb56c1c9-beda-2b0d-ca21-94939d95fae1" testName="InkCanvas.Core.Tests.ClassroomToolsTests.EveryBatchIsUniqueWhenRepetitionBetweenBatchesIsAllowed" computerName="iZp9b4djbu8992Z" duration="00:00:00.0007013" startTime="2026-11-19T23:43:45.3715267+08:00" endTime="2026-11-19T23:43:45.3715268+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="aa0b439a-9642-4492-a1d4-2f32980b3cce" />
+    <UnitTestResult executionId="9880314c-86c2-4e1f-801e-962fa68c7d3d" testId="2e2aa7ce-89c5-67a4-171b-28c295f760fb" testName="InkCanvas.Core.Tests.LotteryCooldownTests.SoftCooldownDefaultsAndLegacyModesSurviveSettingsRoundTrips" computerName="iZp9b4djbu8992Z" duration="00:00:00.0692097" startTime="2026-11-19T23:43:45.4393501+08:00" endTime="2026-11-19T23:43:45.4393506+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9880314c-86c2-4e1f-801e-962fa68c7d3d" />
+    <UnitTestResult executionId="e3fff114-65cf-43d2-979c-da82f6fe7bd0" testId="c9850229-736e-05d8-08f1-57292300f5c9" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;Name,Class\n\&quot;Smith, John\&quot;,A\n\&quot;A \&quot;\&quot;B\&quot;\&quot;\&quot;,A&quot;, expected: &quot;Smith, John|A \&quot;B\&quot;&quot;)" computerName="iZp9b4djbu8992Z" duration="00:00:00.0000082" startTime="2026-11-19T23:43:45.3400714+08:00" endTime="2026-11-19T23:43:45.3400715+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="e3fff114-65cf-43d2-979c-da82f6fe7bd0" />
+    <UnitTestResult executionId="8293bddd-b8f3-46cb-85a1-f0213a38836d" testId="fb6d008c-2b14-9d74-abfa-64082562747a" testName="InkCanvas.Core.Tests.ClassroomToolsTests.SavedRosterKeepsNamesContainingCommasAndAppliesLegacyReplacements" computerName="iZp9b4djbu8992Z" duration="00:00:00.0107461" startTime="2026-11-19T23:43:45.3700397+08:00" endTime="2026-11-19T23:43:45.3700397+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="8293bddd-b8f3-46cb-85a1-f0213a38836d" />
+    <UnitTestResult executionId="029062fd-c63b-44ca-ab84-b7256bd93b31" testId="d9da12f8-0883-4d59-3f07-099602677f60" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterChangesNotifyOnceAndKeepUnchangedRounds" computerName="iZp9b4djbu8992Z" duration="00:00:00.0006287" startTime="2026-11-19T23:43:45.3700882+08:00" endTime="2026-11-19T23:43:45.3700883+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="029062fd-c63b-44ca-ab84-b7256bd93b31" />
+    <UnitTestResult executionId="6f56bf2f-a2fa-4a60-bfe5-da8dfb10bc1f" testId="a1abc944-994c-bc90-1c17-5cc41de06622" testName="InkCanvas.Core.Tests.ClassroomToolsTests.RosterReadsUtf8Utf16AndChineseWindowsCsv" computerName="iZp9b4djbu8992Z" duration="00:00:00.0025265" startTime="2026-11-19T23:43:45.3699460+08:00" endTime="2026-11-19T23:43:45.3699461+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="6f56bf2f-a2fa-4a60-bfe5-da8dfb10bc1f" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;Name,Class\n\&quot;Smith, John\&quot;,A\n\&quot;A \&quot;\&quot;B\&quot;\&quot;\&quot;,A&quot;, expected: &quot;Smith, John|A \&quot;B\&quot;&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="c9850229-736e-05d8-08f1-57292300f5c9">
+      <Execution id="e3fff114-65cf-43d2-979c-da82f6fe7bd0" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;学号,姓名,班级\n1,张三,一班\n2,李四,一班&quot;, expected: &quot;张三|李四&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="d71c7a03-5ab3-88d7-6c56-a6d513187a40">
+      <Execution id="83f0e7b1-dd96-4143-a65c-70fda2c32c0e" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterReadsUtf8Utf16AndChineseWindowsCsv" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="a1abc944-994c-bc90-1c17-5cc41de06622">
+      <Execution id="6f56bf2f-a2fa-4a60-bfe5-da8dfb10bc1f" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterReadsUtf8Utf16AndChineseWindowsCsv" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="66c784e7-8279-3864-ac74-6216e25c8d14">
+      <Execution id="545744a7-b854-4f4f-b6b9-cdfb89d67793" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.EqualNamesRemainSeparateRosterEntries" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="c7564895-9fe6-95bc-9e0d-8830d6dc30bb">
+      <Execution id="53cbb248-2b3e-4a1b-ac7a-01c6b3e4f858" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="EqualNamesRemainSeparateRosterEntries" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterChangesNotifyOnceAndKeepUnchangedRounds" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="d9da12f8-0883-4d59-3f07-099602677f60">
+      <Execution id="029062fd-c63b-44ca-ab84-b7256bd93b31" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterChangesNotifyOnceAndKeepUnchangedRounds" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.NumericPoolChangesResetTheRoundAndNamedPoolIgnoresNumericSize" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="72134ecd-df30-a164-0e01-6f89a4d64edf">
+      <Execution id="ca697006-a3e8-4629-9f12-17b45873bd5e" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="NumericPoolChangesResetTheRoundAndNamedPoolIgnoresNumericSize" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.PartialFinalBatchDoesNotResetOrRepeatTheRound" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="b2d92767-b4c6-1994-2e2b-cf02825ceb7d">
+      <Execution id="e742ca5c-f6d2-400d-87d3-06014b9af250" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="PartialFinalBatchDoesNotResetOrRepeatTheRound" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.SavedRosterKeepsNamesContainingCommasAndAppliesLegacyReplacements" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="fb6d008c-2b14-9d74-abfa-64082562747a">
+      <Execution id="8293bddd-b8f3-46cb-85a1-f0213a38836d" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="SavedRosterKeepsNamesContainingCommasAndAppliesLegacyReplacements" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.ConcurrentDrawsRemainUniqueAndPersistAllUpdates" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="a7564b09-5309-dfad-f3be-1340a287466f">
+      <Execution id="45dd1be6-bef5-42c8-b799-db44f0e21497" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="ConcurrentDrawsRemainUniqueAndPersistAllUpdates" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;学号\t姓名\t班级\n1\t张三\t一班&quot;, expected: &quot;张三&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="12a75cc5-3796-267d-6b66-663799b7cec1">
+      <Execution id="74aa2e75-49c8-4853-8d98-48e2085e3cf6" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;甲,一班\n乙,二班&quot;, expected: &quot;甲|乙&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="62b0f9fa-c86e-3fbc-5741-5cee7f51f0f0">
+      <Execution id="22ecf9a7-3a61-4ac7-9e22-624171b5ed09" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.WholeRoundDrawsEveryParticipantExactlyOnce" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="548e37cd-92b5-1cde-81e0-b7082b2b3e84">
+      <Execution id="3b830769-2feb-43e1-b0d4-a3bb45de1e27" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="WholeRoundDrawsEveryParticipantExactlyOnce" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.CountsAccumulateAndChangingHalfLifePreservesDecayAlreadyElapsed" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="6c73618b-a68a-77b8-33d6-f2f3e115bca9">
+      <Execution id="7a325711-e514-4bcf-9746-c59d7bb69160" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="CountsAccumulateAndChangingHalfLifePreservesDecayAlreadyElapsed" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.NumericPoolsAndDifferentRostersDoNotSharePenaltyRecords" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="4e3c217e-9343-6d39-c9fe-b7920839e219">
+      <Execution id="5582710b-106b-4141-8484-dc4d818237b5" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="NumericPoolsAndDifferentRostersDoNotSharePenaltyRecords" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.FirstPickLowersProbabilityAndActualTimeRestoresItWithATenDayHalfLife" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="0c90c8f6-9e8b-4bc5-5781-0636da08f43f">
+      <Execution id="676a53a7-d136-47cd-8978-bf2b17582f8a" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="FirstPickLowersProbabilityAndActualTimeRestoresItWithATenDayHalfLife" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot;﻿姓名\n甲\n乙&quot;, expected: &quot;甲|乙&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="4e58c930-76bf-faf3-0506-fbd94cb0284d">
+      <Execution id="46d65dc9-452d-4192-96a3-c527f69a87fd" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.PersistenceRestoresOfflineDecayAndFlushesTheLastPendingPick" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="e1447c05-c1ea-9853-0d57-d5a11cb8a3ab">
+      <Execution id="222fdb46-0de2-45e3-baf5-f0bff617f7c5" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="PersistenceRestoresOfflineDecayAndFlushesTheLastPendingPick" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.ClockRollbackAndInvalidSettingsDoNotCreateInvalidProbabilities" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="fb33caf0-66ab-1b64-8d01-cafce9a25b4f">
+      <Execution id="cc363a7e-3f9a-42e5-a5d9-a19c884eb938" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="ClockRollbackAndInvalidSettingsDoNotCreateInvalidProbabilities" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.SoftCooldownDefaultsAndLegacyModesSurviveSettingsRoundTrips" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="2e2aa7ce-89c5-67a4-171b-28c295f760fb">
+      <Execution id="9880314c-86c2-4e1f-801e-962fa68c7d3d" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="SoftCooldownDefaultsAndLegacyModesSurviveSettingsRoundTrips" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.ReorderingNamesKeepsCooldownAndDuplicateNamesHaveIndependentMemory" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="011d4b10-ec6a-f822-c3cd-a322b2c7718d">
+      <Execution id="097ce19e-d21c-4afc-b131-3135650e4caa" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="ReorderingNamesKeepsCooldownAndDuplicateNamesHaveIndependentMemory" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.RosterSupportsPastedListsAndTableNameColumns(input: &quot; 甲 \r\n\r\n乙\n&quot;, expected: &quot;甲|乙&quot;)" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="8dbf3827-9feb-59f0-8e8d-4df818bd22a9">
+      <Execution id="542395be-f688-49e9-95f1-5489bebc41a9" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="RosterSupportsPastedListsAndTableNameColumns" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.ReopeningTheSameRosterKeepsTheRoundAndResults" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="b80d6fcf-9423-9272-b3a0-5949e1ffc41c">
+      <Execution id="bbe86561-34c1-450f-be2b-e341c5037d01" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="ReopeningTheSameRosterKeepsTheRoundAndResults" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.ClassroomToolsTests.EveryBatchIsUniqueWhenRepetitionBetweenBatchesIsAllowed" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="bb56c1c9-beda-2b0d-ca21-94939d95fae1">
+      <Execution id="aa0b439a-9642-4492-a1d4-2f32980b3cce" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.ClassroomToolsTests" name="EveryBatchIsUniqueWhenRepetitionBetweenBatchesIsAllowed" />
+    </UnitTest>
+    <UnitTest name="InkCanvas.Core.Tests.LotteryCooldownTests.BatchIsUniqueButLaterDrawsCanRepeatAndTheProbabilityNeverVanishes" storage="d:\inkcanvas\tests\inkcanvas.core.tests\bin\x64\release\net10.0-windows10.0.26100.0\win-x64\inkcanvas.core.tests.dll" id="056b6216-f551-7156-63b4-cf194592cf06">
+      <Execution id="8e10921b-ab61-4df3-80b9-496b438a9673" />
+      <TestMethod codeBase="D:\InkCanvas\tests\InkCanvas.Core.Tests\bin\x64\Release\net10.0-windows10.0.26100.0\win-x64\InkCanvas.Core.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="InkCanvas.Core.Tests.LotteryCooldownTests" name="BatchIsUniqueButLaterDrawsCanRepeatAndTheProbabilityNeverVanishes" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="fb33caf0-66ab-1b64-8d01-cafce9a25b4f" executionId="cc363a7e-3f9a-42e5-a5d9-a19c884eb938" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c7564895-9fe6-95bc-9e0d-8830d6dc30bb" executionId="53cbb248-2b3e-4a1b-ac7a-01c6b3e4f858" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d71c7a03-5ab3-88d7-6c56-a6d513187a40" executionId="83f0e7b1-dd96-4143-a65c-70fda2c32c0e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="72134ecd-df30-a164-0e01-6f89a4d64edf" executionId="ca697006-a3e8-4629-9f12-17b45873bd5e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="12a75cc5-3796-267d-6b66-663799b7cec1" executionId="74aa2e75-49c8-4853-8d98-48e2085e3cf6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="056b6216-f551-7156-63b4-cf194592cf06" executionId="8e10921b-ab61-4df3-80b9-496b438a9673" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="011d4b10-ec6a-f822-c3cd-a322b2c7718d" executionId="097ce19e-d21c-4afc-b131-3135650e4caa" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4e3c217e-9343-6d39-c9fe-b7920839e219" executionId="5582710b-106b-4141-8484-dc4d818237b5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6c73618b-a68a-77b8-33d6-f2f3e115bca9" executionId="7a325711-e514-4bcf-9746-c59d7bb69160" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a7564b09-5309-dfad-f3be-1340a287466f" executionId="45dd1be6-bef5-42c8-b799-db44f0e21497" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e1447c05-c1ea-9853-0d57-d5a11cb8a3ab" executionId="222fdb46-0de2-45e3-baf5-f0bff617f7c5" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="62b0f9fa-c86e-3fbc-5741-5cee7f51f0f0" executionId="22ecf9a7-3a61-4ac7-9e22-624171b5ed09" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4e58c930-76bf-faf3-0506-fbd94cb0284d" executionId="46d65dc9-452d-4192-96a3-c527f69a87fd" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="66c784e7-8279-3864-ac74-6216e25c8d14" executionId="545744a7-b854-4f4f-b6b9-cdfb89d67793" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b80d6fcf-9423-9272-b3a0-5949e1ffc41c" executionId="bbe86561-34c1-450f-be2b-e341c5037d01" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8dbf3827-9feb-59f0-8e8d-4df818bd22a9" executionId="542395be-f688-49e9-95f1-5489bebc41a9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="548e37cd-92b5-1cde-81e0-b7082b2b3e84" executionId="3b830769-2feb-43e1-b0d4-a3bb45de1e27" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b2d92767-b4c6-1994-2e2b-cf02825ceb7d" executionId="e742ca5c-f6d2-400d-87d3-06014b9af250" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0c90c8f6-9e8b-4bc5-5781-0636da08f43f" executionId="676a53a7-d136-47cd-8978-bf2b17582f8a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bb56c1c9-beda-2b0d-ca21-94939d95fae1" executionId="aa0b439a-9642-4492-a1d4-2f32980b3cce" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2e2aa7ce-89c5-67a4-171b-28c295f760fb" executionId="9880314c-86c2-4e1f-801e-962fa68c7d3d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c9850229-736e-05d8-08f1-57292300f5c9" executionId="e3fff114-65cf-43d2-979c-da82f6fe7bd0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="fb6d008c-2b14-9d74-abfa-64082562747a" executionId="8293bddd-b8f3-46cb-85a1-f0213a38836d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d9da12f8-0883-4d59-3f07-099602677f60" executionId="029062fd-c63b-44ca-ab84-b7256bd93b31" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="a1abc944-994c-bc90-1c17-5cc41de06622" executionId="6f56bf2f-a2fa-4a60-bfe5-da8dfb10bc1f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="列表中未列出的结果" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="所有已加载的结果" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="25" executed="25" passed="24" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.15)&#xD;
+[xUnit.net 00:00:00.19]   Discovering: InkCanvas.Core.Tests&#xD;
+[xUnit.net 00:00:00.43]   Discovered:  InkCanvas.Core.Tests&#xD;
+[xUnit.net 00:00:00.44]   Starting:    InkCanvas.Core.Tests&#xD;
+[xUnit.net 00:00:00.61]       Assert.NotEqual() Failure: Values are equal&#xD;
+[xUnit.net 00:00:00.61]       Expected: Not 0.375&#xD;
+[xUnit.net 00:00:00.61]       Actual:       0.375&#xD;
+[xUnit.net 00:00:00.61]       Stack Trace:&#xD;
+[xUnit.net 00:00:00.61]         D:\InkCanvas\tests\InkCanvas.Core.Tests\LotteryCooldownTests.cs(125,0): at InkCanvas.Core.Tests.LotteryCooldownTests.ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes()&#xD;
+[xUnit.net 00:00:00.61]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:00.61]            at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:00.71]   Finished:    InkCanvas.Core.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="iZp9b4djbu8992Z" outcome="Error" timestamp="2026-11-19T23:43:45.4032446+08:00">
+        <Text>[xUnit.net 00:00:00.61]     InkCanvas.Core.Tests.LotteryCooldownTests.ResettingNonRepeatingRoundsDoesNotEraseCooldownAndExplicitClearDoes [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

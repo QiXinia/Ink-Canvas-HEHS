@@ -355,6 +355,9 @@
         },
         "matrixTransformCenterPoint": {
           "type": "number"
+        },
+        "isEnableStylusGesture": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -364,7 +367,8 @@
         "AutoSwitchTwoFingerGesture",
         "isEnableTwoFingerRotation",
         "isEnableTwoFingerRotationOnSelection",
-        "matrixTransformCenterPoint"
+        "matrixTransformCenterPoint",
+        "isEnableStylusGesture"
       ],
       "additionalProperties": false
     },

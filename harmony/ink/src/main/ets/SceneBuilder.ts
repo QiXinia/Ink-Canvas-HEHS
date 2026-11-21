@@ -75,7 +75,9 @@ export function buildScene(
   committed: SceneStrokeInput[],
   active: SceneStrokeInput | null,
   selection: SceneSelectionInput | null,
-  view?: number[]
+  view?: number[],
+  preview?: SceneStrokeInput[],
+  marquee?: number[] | null
 ): InkScene {
   const scene = new InkScene();
   if (view !== undefined && view.length === 6) {
@@ -86,6 +88,14 @@ export function buildScene(
   }
   if (active !== null) {
     scene.Active = commandFor(buildStroke(active));
+  }
+  if (preview !== undefined && preview !== null) {
+    for (let i = 0; i < preview.length; i++) {
+      scene.Preview.push(commandFor(buildStroke(preview[i])));
+    }
+  }
+  if (marquee !== null && marquee !== undefined && marquee.length === 4) {
+    scene.Marquee = marquee.slice();
   }
   if (selection !== null) {
     const handles: HandlePoint[] = [

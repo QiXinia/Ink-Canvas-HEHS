@@ -1,0 +1,17 @@
+{
+  "Id": "inkcanvas.pdf",
+  "Name": "PDF 阅读与批注",
+  "Version": "1.0.5",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.Pdf.dll",
+  "EntryType": "InkCanvas.Modules.Pdf.PdfModule",
+  "PackageFiles": [
+    "InkCanvas.Pdf.dll",
+    "Clipper2Lib.dll",
+    "PdfSharp.dll", "PdfSharp.Shared.dll", "PdfSharp.System.dll", "PdfSharp.Cryptography.dll", "System.Security.Cryptography.Pkcs.dll",
+    "UglyToad.PdfPig.dll", "UglyToad.PdfPig.Core.dll", "UglyToad.PdfPig.Fonts.dll",
+    "UglyToad.PdfPig.Tokenization.dll", "UglyToad.PdfPig.Tokens.dll", "UglyToad.PdfPig.DocumentLayoutAnalysis.dll", "UglyToad.PdfPig.Package.dll",
+    "Microsoft.Extensions.Logging.Abstractions.dll", "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "Licenses/PDFsharp.txt", "Licenses/PdfPig.txt", "Licenses/PdfPig-NOTICE.txt", "Licenses/DotNet.txt", "Licenses/Clipper2.txt"
+  ]
+}

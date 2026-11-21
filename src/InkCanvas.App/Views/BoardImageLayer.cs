@@ -1,6 +1,8 @@
+using InkCanvas.Controls.Theming;
 using InkCanvas.Core.AiAssistant;
 using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
+using InkCanvas.Ink;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -11,30 +13,32 @@ using Windows.Storage.Streams;
 
 namespace InkCanvas.App.Views;
 
-/// <summary>Per-page raster layer. Images remain in the same DIP coordinate space as board ink.</summary>
+/// <summary>
+/// Per-page raster layer. Images remain in the same DIP coordinate space as board ink.
+/// Rotate/flip/gesture deltas accumulate in <see cref="BoardImageAsset.Transform"/>, the port of
+/// the WPF element RenderTransform TransformGroup (MW_SelectionGestures.cs ApplyElementMatrixTransform).
+/// </summary>
 internal sealed class BoardImageLayer : Canvas
 {
     private const string SelectionBorderTag = "selection-border";
     private const string ResizeHandleTag = "resize-handle";
 
     private readonly Dictionary<Guid, Grid> _views = new();
+    private readonly HashSet<(Guid Id, int Version)> _loading = new();
+    private readonly Dictionary<byte[], Task<Microsoft.UI.Xaml.Media.Imaging.BitmapImage>> _bitmapSources = new();
     private BoardService _board;
     private BoardImageAsset _selected;
-    private Grid _dragTarget;
-    private bool _resizing;
     private int _refreshVersion;
-    private Windows.Foundation.Point _pointerStart;
-    private BoardImageGeometry _geometryAtStart;
+    public bool RenderInScene { get; set; }
 
-    public BoardImageLayer()
-    {
-        Background = null;
-        PointerReleased += OnPointerReleased;
-        PointerCanceled += OnPointerReleased;
-        PointerCaptureLost += OnPointerReleased;
-    }
+    public BoardImageLayer() => Background = null;
 
     public BoardImageAsset SelectedImage => _selected;
+    public void SetSelection(IEnumerable<BoardImageAsset> assets)
+    {
+        _selected = assets.FirstOrDefault();
+        foreach (var view in _views.Values) SetSelectedVisual(view, false);
+    }
 
     public event Action SelectionChanged;
 
@@ -42,51 +46,87 @@ internal sealed class BoardImageLayer : Canvas
     {
         _board = board;
         _selected = null;
+        Children.Clear();
+        _views.Clear();
+        _bitmapSources.Clear();
+        _refreshVersion++;
         Refresh();
     }
 
-    public void UpdateViewTransform(System.Numerics.Matrix3x2 transform)
+    public void UpdateViewTransform(Matrix3x2 transform)
     {
-        RenderTransform = new MatrixTransform
-        {
-            Matrix = new Microsoft.UI.Xaml.Media.Matrix(
-                transform.M11, transform.M12, transform.M21, transform.M22,
-                transform.M31, transform.M32),
-        };
+        if (RenderTransform is not MatrixTransform matrix) RenderTransform = matrix = new MatrixTransform();
+        matrix.Matrix = new Matrix(transform.M11, transform.M12, transform.M21, transform.M22, transform.M31, transform.M32);
     }
 
+    /// <summary>
+    /// Reconcile views with the page's assets instead of rebuilding: survives undo/transform
+    /// without re-decoding bitmaps, and keeps the current selection (and its panel) alive.
+    /// </summary>
     public void Refresh()
     {
-        var annotationLayers = new List<CanvasControl>();
-        foreach (var view in _views.Values)
+        if (RenderInScene) return;
+        if (_board is null)
         {
-            foreach (var child in view.Children)
-            {
-                if (child is CanvasControl layer) annotationLayers.Add(layer);
-            }
+            Children.Clear();
+            _views.Clear();
+            return;
         }
-
-        Children.Clear();
-        foreach (var layer in annotationLayers) layer.RemoveFromVisualTree();
-        _views.Clear();
-        if (_board is null) return;
-        if (_selected is not null && !_board.CurrentImages.Contains(_selected))
+        var present = new HashSet<Guid>();
+        foreach (var asset in _board.CurrentImages) present.Add(asset.Id);
+        var sources = _board.CurrentImages.Select(asset => asset.Data).ToHashSet();
+        foreach (var data in _bitmapSources.Keys.Where(data => !sources.Contains(data)).ToArray()) _bitmapSources.Remove(data);
+        foreach (var id in _views.Keys.ToList())
+        {
+            if (present.Contains(id)) continue;
+            Children.Remove(_views[id]);
+            _views.Remove(id);
+        }
+        int version = _refreshVersion;
+        int stackIndex = 0;
+        foreach (var asset in _board.CurrentImages)
+        {
+            if (_views.TryGetValue(asset.Id, out var view)) { ApplyGeometry(view, asset); Canvas.SetZIndex(view, stackIndex); }
+            else if (_loading.Add((asset.Id, version))) _ = AddViewAsync(asset, version);
+            stackIndex++;
+        }
+        if (_selected is not null && !present.Contains(_selected.Id))
         {
             _selected = null;
             SelectionChanged?.Invoke();
         }
-        int version = ++_refreshVersion;
-        foreach (var asset in _board.CurrentImages)
-            _ = AddViewAsync(asset, version);
+    }
+
+    /// <summary>Re-apply one asset's placement/transform to its live view (gesture/undo feedback).</summary>
+    public void UpdateElement(BoardImageAsset asset)
+    {
+        if (asset is not null && _views.TryGetValue(asset.Id, out var view))
+            ApplyGeometry(view, asset);
+    }
+
+    private static void ApplyGeometry(Grid view, BoardImageAsset asset)
+    {
+        view.Width = asset.Width;
+        view.Height = asset.Height;
+        view.Opacity = Math.Clamp(asset.Opacity, 0, 1);
+        Canvas.SetLeft(view, asset.Left);
+        Canvas.SetTop(view, asset.Top);
+        // Canvas-space element matrix expressed as a local RenderTransform (origin top-left).
+        var m = BoardElementMath.RenderMatrix(asset.Left, asset.Top, asset.Transform);
+        view.RenderTransformOrigin = new Windows.Foundation.Point(0, 0);
+        if (view.RenderTransform is not MatrixTransform matrix) view.RenderTransform = matrix = new MatrixTransform();
+        matrix.Matrix = new Matrix(m.M11, m.M12, m.M21, m.M22, m.M31, m.M32);
     }
 
     private async Task AddViewAsync(BoardImageAsset asset, int version)
     {
         try
         {
-            var bitmap = await LoadBitmapAsync(asset.Data);
+            if (!_bitmapSources.TryGetValue(asset.Data, out var source))
+                _bitmapSources[asset.Data] = source = LoadBitmapAsync(asset.Data);
+            var bitmap = await source;
             if (version != _refreshVersion || !_board.CurrentImages.Contains(asset)) return;
-            var image = new Image { Source = bitmap, Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform };
+            var image = new Image { Source = bitmap, Stretch = Stretch.Uniform };
             var border = new Border
             {
                 BorderThickness = new Thickness(2),
@@ -100,14 +140,12 @@ internal sealed class BoardImageLayer : Canvas
                 Height = 12,
                 HorizontalAlignment = HorizontalAlignment.Right,
                 VerticalAlignment = VerticalAlignment.Bottom,
-                Background = (Brush)Application.Current.Resources["IcAccentBrush"],
+                Background = PopupBrushes.Accent(),
                 Visibility = Visibility.Collapsed,
                 Tag = ResizeHandleTag,
             };
             var view = new Grid
             {
-                Width = asset.Width,
-                Height = asset.Height,
                 Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
                 Tag = asset,
             };
@@ -119,21 +157,18 @@ internal sealed class BoardImageLayer : Canvas
 
             view.Children.Add(border);
             view.Children.Add(handle);
-            view.PointerPressed += OnImagePointerPressed;
-            view.PointerMoved += OnImagePointerMoved;
-            view.PointerReleased += OnImagePointerReleased;
-            view.PointerCanceled += OnImagePointerReleased;
-            view.PointerCaptureLost += OnImagePointerReleased;
-            Canvas.SetLeft(view, asset.Left);
-            Canvas.SetTop(view, asset.Top);
+            // Selection input is routed by the common board selection host.
+            ApplyGeometry(view, asset);
             _views[asset.Id] = view;
+            Canvas.SetZIndex(view, _board.CurrentImages.ToList().IndexOf(asset));
             Children.Add(view);
-            SetSelectedVisual(view, asset == _selected);
+            SetSelectedVisual(view, false);
         }
         catch
         {
             // Keep the rest of the board usable if an embedded image is corrupt or unsupported.
         }
+        finally { _loading.Remove((asset.Id, version)); }
     }
 
     private static CanvasControl BuildShapeAnnotationLayer(BoardImageAsset asset)
@@ -218,69 +253,6 @@ internal sealed class BoardImageLayer : Canvas
         return bitmap;
     }
 
-    private void OnImagePointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is not Grid view || view.Tag is not BoardImageAsset asset) return;
-        Select(asset);
-        _dragTarget = view;
-        var local = e.GetCurrentPoint(view).Position;
-        _resizing = local.X >= view.ActualWidth - 20 && local.Y >= view.ActualHeight - 20;
-        _pointerStart = e.GetCurrentPoint(this).Position;
-        _geometryAtStart = GetGeometry(asset);
-        view.CapturePointer(e.Pointer);
-        e.Handled = true;
-    }
-
-    private void OnImagePointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (!ReferenceEquals(sender, _dragTarget) || _dragTarget?.Tag is not BoardImageAsset asset) return;
-        var point = e.GetCurrentPoint(this).Position;
-        float dx = (float)(point.X - _pointerStart.X);
-        float dy = (float)(point.Y - _pointerStart.Y);
-        if (_resizing)
-        {
-            float aspect = _geometryAtStart.Width / Math.Max(1, _geometryAtStart.Height);
-            float width = Math.Max(32, _geometryAtStart.Width + dx);
-            float height = Math.Max(32, _geometryAtStart.Height + dy);
-            if (MathF.Abs(dx) >= MathF.Abs(dy)) height = width / Math.Max(0.05f, aspect);
-            else width = height * aspect;
-            asset.Width = width;
-            asset.Height = height;
-            _dragTarget.Width = width;
-            _dragTarget.Height = height;
-            foreach (var child in _dragTarget.Children)
-            {
-                if (child is not CanvasControl layer) continue;
-                layer.Width = width;
-                layer.Height = height;
-                layer.Invalidate();
-            }
-        }
-        else
-        {
-            asset.Left = _geometryAtStart.Left + dx;
-            asset.Top = _geometryAtStart.Top + dy;
-            Canvas.SetLeft(_dragTarget, asset.Left);
-            Canvas.SetTop(_dragTarget, asset.Top);
-        }
-        e.Handled = true;
-    }
-
-    private void OnImagePointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is not Grid view || !ReferenceEquals(view, _dragTarget) || view.Tag is not BoardImageAsset asset) return;
-        var after = GetGeometry(asset);
-        _dragTarget = null;
-        _board.RecordImageTransform(asset, _geometryAtStart, after);
-        e.Handled = true;
-    }
-
-    private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (_dragTarget is null) return;
-        _dragTarget = null;
-    }
-
     public void DeleteSelected()
     {
         if (_selected is null) return;
@@ -290,12 +262,12 @@ internal sealed class BoardImageLayer : Canvas
         SelectionChanged?.Invoke();
     }
 
-    private void Select(BoardImageAsset asset)
+    /// <summary>Drop the selection without deleting (mode switch or outside click).</summary>
+    public void ClearSelection()
     {
-        if (_selected == asset) return;
-        _selected = asset;
-        foreach (var (id, view) in _views)
-            SetSelectedVisual(view, id == asset.Id);
+        if (_selected is null) return;
+        _selected = null;
+        foreach (var view in _views.Values) SetSelectedVisual(view, false);
         SelectionChanged?.Invoke();
     }
 
@@ -315,7 +287,4 @@ internal sealed class BoardImageLayer : Canvas
             }
         }
     }
-
-    private static BoardImageGeometry GetGeometry(BoardImageAsset image)
-        => new(image.Left, image.Top, image.Width, image.Height);
 }

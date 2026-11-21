@@ -52,6 +52,19 @@ public sealed class UndoStack
 
     public event Action Changed;
 
+    public UndoHistoryState Capture() => new(_undo.ToArray(), _redo.ToArray());
+
+    public void Restore(UndoHistoryState state)
+    {
+        _undo.Clear(); _redo.Clear();
+        if (state is not null)
+        {
+            _undo.AddRange(state.Undo.TakeLast(Capacity));
+            _redo.AddRange(state.Redo.TakeLast(Capacity));
+        }
+        Changed?.Invoke();
+    }
+
     public void Push(IUndoableAction action)
     {
         if (action is null) throw new ArgumentNullException(nameof(action));
@@ -91,3 +104,5 @@ public sealed class UndoStack
         Changed?.Invoke();
     }
 }
+
+public sealed record UndoHistoryState(IReadOnlyList<IUndoableAction> Undo, IReadOnlyList<IUndoableAction> Redo);

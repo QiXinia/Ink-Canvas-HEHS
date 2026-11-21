@@ -29,6 +29,8 @@ public sealed record PptSnapshot
     public int ShowPosition { get; init; }
     /// <summary>PowerPoint PpSlideShowState (1 running, 2 paused, 3 black, 4 white, 5 done).</summary>
     public int? ShowState { get; init; }
+    /// <summary>Includes PowerPoint Reading View and other windowed slide shows.</summary>
+    public bool IsWindowedShow { get; init; }
     public bool IsAttached => State != PptConnectionState.Detached;
     public bool IsSlideShowRunning => State == PptConnectionState.SlideShow;
 }

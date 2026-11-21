@@ -1,0 +1,9 @@
+{
+  "Id": "sample.guide-lines",
+  "Name": "参考线示例插件",
+  "Version": "1.0.0",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.SamplePlugin.dll",
+  "EntryType": "InkCanvas.SamplePlugin.GuideLinesPlugin",
+  "Capabilities": ["CanvasWrite"]
+}

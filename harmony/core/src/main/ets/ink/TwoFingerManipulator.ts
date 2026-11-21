@@ -17,6 +17,8 @@ export interface TwoFingerOptionsInput {
   allowRotation: boolean;
   minScale: number;
   maxScale: number;
+  zoomDamping?: number;
+  zoomDeadZone?: number;
 }
 
 export interface TwoFingerSample {
@@ -42,6 +44,12 @@ export class TwoFingerManipulator {
   AllowRotation: boolean = false;
   MinScale: number = 0.2;
   MaxScale: number = 8;
+
+  /** 对数缩放增量的比例；1 = 旧行为，往返手势和不同采样率不产生额外缩放漂移。 */
+  ZoomDamping: number = 1;
+
+  /** 两指间距死区（DIP），低于此值不缩放/不旋转。 */
+  ZoomDeadZone: number = 1;
 
   private prevAX: number = 0;
   private prevAY: number = 0;
@@ -90,8 +98,9 @@ export class TwoFingerManipulator {
       delta = multiplyMatrix(delta, createTranslationMatrix(midX - prevMidX, midY - prevMidY));
     }
 
-    if (this.AllowZoom && prevLen > 1 && len > 1) {
+    if (this.AllowZoom && prevLen > this.ZoomDeadZone && len > this.ZoomDeadZone) {
       let scale = len / prevLen;
+      scale = Math.pow(scale, Math.min(Math.max(this.ZoomDamping, 0.05), 1));
       const determinant = transform.M11 * transform.M22 - transform.M12 * transform.M21;
       const currentScale = Math.sqrt(Math.abs(determinant));
       const denominator = Math.max(currentScale, 1e-3);
@@ -103,7 +112,7 @@ export class TwoFingerManipulator {
       delta = multiplyMatrix(delta, around);
     }
 
-    if (this.AllowRotation && prevLen > 1 && len > 1) {
+    if (this.AllowRotation && prevLen > this.ZoomDeadZone && len > this.ZoomDeadZone) {
       let angle = Math.atan2(vy, vx) - Math.atan2(prevVY, prevVX);
       while (angle > Math.PI) {
         angle -= 2 * Math.PI;
@@ -146,6 +155,8 @@ export function simulateTwoFinger(
   manipulator.AllowRotation = options.allowRotation;
   manipulator.MinScale = options.minScale;
   manipulator.MaxScale = options.maxScale;
+  manipulator.ZoomDamping = options.zoomDamping !== undefined ? options.zoomDamping : 1;
+  manipulator.ZoomDeadZone = options.zoomDeadZone !== undefined ? options.zoomDeadZone : 1;
 
   let transform = matrixFromArray(initial);
   const changed: boolean[] = [];

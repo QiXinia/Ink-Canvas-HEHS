@@ -1,0 +1,17 @@
+{
+  "Id": "inkcanvas.analytic-geometry",
+  "Name": "数学工作区 · 解析几何",
+  "Version": "2.0.2",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.AnalyticGeometry.dll",
+  "EntryType": "InkCanvas.Modules.AnalyticGeometry.GeometryModule",
+  "PackageFiles": [
+    "InkCanvas.AnalyticGeometry.dll", "AngouriMath.dll", "Antlr4.Runtime.Standard.dll",
+    "GenericTensor.dll", "HonkSharp.dll", "Numbers.dll",
+    "Jint.dll", "Acornima.dll", "Licenses/Jint.txt", "Licenses/Acornima.txt",
+    "PdfSharp.dll", "PdfSharp.Shared.dll", "PdfSharp.System.dll", "PdfSharp.Cryptography.dll",
+    "Microsoft.Extensions.Logging.Abstractions.dll", "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
+    "System.Security.Cryptography.Pkcs.dll", "Licenses/AngouriMath.txt", "Licenses/ANTLR.txt",
+    "Licenses/GenericTensor.txt", "Licenses/HonkSharp.txt", "Licenses/Numbers.txt", "Licenses/PDFsharp.txt", "Licenses/DotNet.txt"
+  ]
+}

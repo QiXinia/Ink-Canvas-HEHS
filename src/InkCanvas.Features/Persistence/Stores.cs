@@ -22,34 +22,67 @@ public sealed class SettingsStore
     public string Directory { get; }
 
     public string SettingsPath => Path.Combine(Directory, "Settings.json");
+    public string BackupPath => SettingsPath + ".bak";
+    public string LastError { get; private set; }
+    public bool RecoveredFromBackup { get; private set; }
+    public DateTime? LastSavedUtc => File.Exists(SettingsPath) ? File.GetLastWriteTimeUtc(SettingsPath) : null;
+    private readonly object _gate = new();
+    private string _savedJson;
+    private bool _protectBackup;
 
     public AppSettings Load()
     {
-        try
+        lock (_gate)
         {
-            if (!File.Exists(SettingsPath)) return new AppSettings();
-            var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, Options) ?? new AppSettings();
-        }
-        catch
-        {
-            // A corrupt settings file must never stop the app from starting.
+            RecoveredFromBackup = false;
+            foreach (string path in new[] { SettingsPath, BackupPath })
+            {
+                try
+                {
+                    if (!File.Exists(path)) continue;
+                    var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path), Options);
+                    if (settings is null) continue;
+                    RecoveredFromBackup = path == BackupPath;
+                    _protectBackup = RecoveredFromBackup;
+                    _savedJson = RecoveredFromBackup ? null : JsonSerializer.Serialize(settings, Options);
+                    LastError = null;
+                    return settings;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { LastError = ex.Message; }
+            }
             return new AppSettings();
         }
     }
 
     public void Save(AppSettings settings)
     {
+        lock (_gate)
         try
         {
+            string json = JsonSerializer.Serialize(settings, Options);
+            if (json == _savedJson && File.Exists(SettingsPath)) return;
             System.IO.Directory.CreateDirectory(Directory);
-            var tmp = SettingsPath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(settings, Options));
-            File.Move(tmp, SettingsPath, overwrite: true);
+            string temporary = SettingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temporary, json);
+                bool preserveCurrent = File.Exists(SettingsPath) && !_protectBackup;
+                if (preserveCurrent)
+                {
+                    try { preserveCurrent = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath), Options) is not null; }
+                    catch (JsonException) { preserveCurrent = false; }
+                }
+                if (preserveCurrent)
+                    File.Replace(temporary, SettingsPath, BackupPath);
+                else File.Move(temporary, SettingsPath, overwrite: true);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            _savedJson = json; LastError = null;
+            _protectBackup = false;
         }
-        catch
+        catch (Exception ex)
         {
-            // Disk full / locked file: keep running with in-memory settings.
+            LastError = ex.Message;
         }
     }
 }
@@ -76,13 +109,21 @@ public static class InkFileStore
 
     private sealed class StrokeModel
     {
+        public Guid? Id { get; set; }
+        public InkWashBrushOptions InkWash { get; set; } = InkWashBrushOptions.Default;
+        public int InkWashSeed { get; set; }
+        public long? LayerOrder { get; set; }
         public uint Color { get; set; }
         public float Width { get; set; }
         public bool Highlighter { get; set; }
         public byte HighlighterAlpha { get; set; } = 96;
         public int Taper { get; set; }
+        public PenNib Nib { get; set; }
+        public float NibRotation { get; set; }
         public bool Shape { get; set; }
-        /// <summary>Rows of [x, y, pressure, width, timeMs].</summary>
+        public ShapeSource ShapeSource { get; set; }
+        public float[] ObjectFrame { get; set; }
+        /// <summary>Rows of [x, y, pressure, width, timeMs, tiltX, tiltY, hasPressure]. Older short rows remain valid.</summary>
         public List<float[]> Points { get; set; } = new();
     }
 
@@ -93,15 +134,25 @@ public static class InkFileStore
         {
             var sm = new StrokeModel
             {
+                Id = s.Id,
+                InkWash = s.Attributes.InkWash,
+                InkWashSeed = s.Attributes.InkWashSeed,
+                LayerOrder = s.LayerOrder,
                 Color = s.Attributes.Color.PackedArgb,
                 Width = s.Attributes.BaseWidth,
                 Highlighter = s.Attributes.IsHighlighter,
                 HighlighterAlpha = s.Attributes.HighlighterAlpha,
                 Taper = (int)s.TaperKind,
+                Nib = s.Attributes.Nib,
+                NibRotation = s.Attributes.NibRotation,
                 Shape = s.IsRecognizedShape,
+                ShapeSource = s.ShapeSource,
+                ObjectFrame = s.ExportObjectFrame(),
             };
             foreach (var p in s.Points)
-                sm.Points.Add(new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs });
+                sm.Points.Add(p.HasPressure || p.TiltX != 0 || p.TiltY != 0
+                    ? new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs, p.TiltX, p.TiltY, p.HasPressure ? 1f : 0f }
+                    : new[] { p.X, p.Y, p.Pressure, p.Width, p.TimeMs });
             model.Strokes.Add(sm);
         }
 
@@ -126,15 +177,22 @@ public static class InkFileStore
                 IsHighlighter = sm.Highlighter,
                 HighlighterAlpha = sm.HighlighterAlpha,
                 TaperKind = (TaperKind)sm.Taper,
+                Nib = Enum.IsDefined(sm.Nib) ? sm.Nib : PenNib.Round,
+                NibRotation = float.IsFinite(sm.NibRotation) ? sm.NibRotation : 0,
+                InkWash = sm.InkWash.Normalize(),
+                InkWashSeed = sm.InkWashSeed,
             };
-            var stroke = new InkStroke(attrs) { IsRecognizedShape = sm.Shape };
+            var stroke = new InkStroke(attrs) { Id = sm.Id ?? Guid.NewGuid(), IsRecognizedShape = sm.Shape, LayerOrder = sm.LayerOrder, ShapeSource = sm.ShapeSource };
             // Restore stored widths verbatim: re-running the taper here would change history.
             stroke.RestorePoints(sm.Points
                 .Where(r => r.Length >= 4)
-                .Select(r => new InkPoint(r[0], r[1], r[2], r[3], r.Length > 4 ? r[4] : 0f)));
+                .Select(r => new InkPoint(r[0], r[1], r[2], r[3], r.Length > 4 ? r[4] : 0f,
+                    r.Length > 7 && r[7] > 0, r.Length > 5 ? r[5] : 0, r.Length > 6 ? r[6] : 0)));
             stroke.Complete();
+            stroke.ImportObjectFrame(sm.ObjectFrame);
             result.Add(stroke);
         }
+        ShapeSource.ShareDefinitions(result);
         return result;
     }
 }
@@ -180,11 +238,23 @@ public sealed class AutoSaveService
         {
             string root = Settings.AutoSavedStrokesLocation;
             if (string.IsNullOrWhiteSpace(root) || !System.IO.Directory.Exists(root)) return 0;
+            root = Path.GetFullPath(root);
+            if (root.TrimEnd(Path.DirectorySeparatorChar) == Path.GetPathRoot(root)?.TrimEnd(Path.DirectorySeparatorChar)) return 0;
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) return 0;
             var cutoff = DateTime.Now.AddDays(-Math.Max(1, Settings.AutoDelSavedFilesDaysThreshold));
-            foreach (var file in System.IO.Directory.EnumerateFiles(root, "*" + InkFileStore.Extension, SearchOption.AllDirectories))
+            var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+            foreach (var file in System.IO.Directory.EnumerateFiles(root, "*", options))
             {
                 try
                 {
+                    string extension = Path.GetExtension(file);
+                    bool snapshot = extension.Equals(InkFileStore.Extension, StringComparison.OrdinalIgnoreCase);
+                    string relative = Path.GetRelativePath(root, file);
+                    bool screenshot = extension.Equals(".png", StringComparison.OrdinalIgnoreCase)
+                        && (relative.StartsWith("Auto Saved - PPT Screenshots" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                            || relative.StartsWith("Screenshots" + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                                && Path.GetFileName(file).StartsWith("Screenshot-", StringComparison.OrdinalIgnoreCase));
+                    if (!snapshot && !screenshot) continue;
                     if (File.GetLastWriteTime(file) < cutoff) { File.Delete(file); removed++; }
                 }
                 catch { /* individual file may be locked */ }

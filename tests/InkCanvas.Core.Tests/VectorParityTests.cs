@@ -866,6 +866,10 @@ public sealed class VectorParityTests
                 Highlighter = s.Attributes.IsHighlighter,
                 HighlighterAlpha = (int)s.Attributes.HighlighterAlpha,
                 Taper = (int)s.Attributes.TaperKind,
+                Nib = (int)s.Attributes.Nib,
+                NibRotation = (double)s.Attributes.NibRotation,
+                s.LayerOrder,
+                s.ShapeSource,
                 Shape = s.IsRecognizedShape,
 
                 Points = s.Points.Select(p => new double[]
@@ -990,6 +994,21 @@ public sealed class VectorParityTests
         }
     }
 
+    [Fact]
+    public async Task ControllerVectorsMatch()
+    {
+        using var doc = Load("controller.json");
+        foreach (var c in doc.RootElement.GetProperty("cases").EnumerateArray())
+        {
+            var actual = ControllerVectorRunner.Run(c.GetProperty("input")[0]);
+            var error = await Record.ExceptionAsync(async () =>
+            {
+                AssertNear(c.GetProperty("expected"), Node(actual), c.GetProperty("tolerance").GetDouble());
+                await Task.CompletedTask;
+            });
+            Assert.True(error is null, $"Controller case {c.GetProperty("id").GetString()} failed. {error?.Message}");
+        }
+    }
 
     private static InkStroke BuildStrokeFromPoints(JsonElement points, float baseWidth)
     {
@@ -1101,6 +1120,8 @@ public sealed class VectorParityTests
             var expected = JsonNode.Parse(c.GetProperty("expected").GetRawText())!;
             // 旧向量未包含后续新增的配置节点（如 classroom）；逐字段比较，忽略新增字段。
             AssertNear(expected, actual, 0);
+            // The retired WPF stylus-gesture switch is intentionally absent from WinUI settings.
+            expected["gesture"]?.AsObject().Remove("isEnableStylusGesture");
         }
     }
 
@@ -1171,7 +1192,6 @@ public sealed class VectorParityTests
     }
 }
 
-#if false
 /// <summary>
 /// Replays controller.json scenarios with the real C# controller.
 /// Kept in the test assembly so the vector expected values are independently re-driven.
@@ -1456,4 +1476,3 @@ internal static class ControllerVectorRunner
     private static double[] Arr(Matrix3x2 m) =>
         new double[] { m.M11, m.M12, m.M21, m.M22, m.M31, m.M32 };
 }
-#endif

@@ -99,6 +99,20 @@
       ],
       "expected": 0,
       "tolerance": 0
+    },
+    {
+      "id": "quick-palette-natural-style",
+      "fn": "quickTaperStyleForIndex",
+      "input": [3],
+      "expected": 5,
+      "tolerance": 0
+    },
+    {
+      "id": "natural-style-kind",
+      "fn": "taperKindForIndex",
+      "input": [5],
+      "expected": 5,
+      "tolerance": 0
     }
   ]
 }

@@ -42,6 +42,8 @@ public sealed class PptNavigationWindow : Window
     private bool _counterVisible = true;
     private bool _closed;
     private XamlRoot _trackedRoot;
+    private IntPtr _showWindow;
+    private bool _windowedShow;
 
     public PptNavigationWindow(PptNavigationPlacement placement, IShellActions shell, int theme)
     {
@@ -101,7 +103,9 @@ public sealed class PptNavigationWindow : Window
         _root.PointerExited += (_, _) => _root.Opacity = IdleOpacity;
         Content = _root;
 
-        WindowChrome.MakeBorderless(this, topmost: true);
+        // noActivate keeps focus on the slideshow; the explicit WS_EX_NOACTIVATE below keeps the
+        // panel out of alt-tab the way the WPF child panels were.
+        WindowChrome.MakeBorderless(this, topmost: true, noActivate: true);
         WindowChrome.ApplyTheme(this, theme);
         NativeMethods.AddExStyle(WindowChrome.GetHwnd(this), NativeMethods.WS_EX_NOACTIVATE);
         Closed += OnClosed;
@@ -144,10 +148,13 @@ public sealed class PptNavigationWindow : Window
 
     /// <summary>
     /// Positions the panel inside <paramref name="showBounds"/> (the slideshow window) and
-    /// refreshes the slide counter. A default/invalid rectangle falls back to the work area.
+    /// refreshes the slide counter. A default/invalid rectangle falls back to the work area of
+    /// the monitor that hosts the show window, so multi-monitor and DPI tracking stay correct.
     /// </summary>
     public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible, ShowWindowInfo showBounds)
     {
+        _showWindow = snapshot?.WindowHandle ?? IntPtr.Zero;
+        _windowedShow = snapshot?.IsWindowedShow == true;
         _counter.Visibility = counterVisible ? Visibility.Visible : Visibility.Collapsed;
         _counterVisible = counterVisible;
         _showBounds = showBounds;
@@ -163,6 +170,7 @@ public sealed class PptNavigationWindow : Window
 
     private void SetVisible(bool visible)
     {
+        if (NativeMethods.IsWindowVisible(WindowChrome.GetHwnd(this)) == visible) return;
         if (visible) NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_SHOWNOACTIVATE);
         else NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_HIDE);
     }
@@ -236,12 +244,28 @@ public sealed class PptNavigationWindow : Window
 
     private void Place(bool counterVisible)
     {
-        var work = Platform.System.ScreenService.WorkArea;
-        ScreenBox box = _showBounds.Width > 0 && _showBounds.Height > 0
-            ? new ScreenBox(_showBounds.X, _showBounds.Y, _showBounds.Width, _showBounds.Height)
-            : new ScreenBox(work.X, work.Y, work.Width, work.Height);
+        // Follow the monitor that hosts the slideshow window; IntPtr.Zero resolves to the
+        // nearest/primary monitor, which keeps the constructor call safe before any show.
+        var monitor = Platform.System.ScreenService.FromWindow(_showWindow);
+        var work = monitor.WorkArea;
+        ScreenBox box;
+        if (_showBounds.Width > 0 && _showBounds.Height > 0)
+        {
+            box = new ScreenBox(_showBounds.X, _showBounds.Y, _showBounds.Width, _showBounds.Height);
+        }
+        else if (_windowedShow && _showWindow != IntPtr.Zero)
+        {
+            var client = WindowChrome.GetClientBounds(_showWindow).FitInside(work);
+            box = new ScreenBox(client.X, client.Y, client.Width, client.Height);
+        }
+        else
+        {
+            box = new ScreenBox(work.X, work.Y, work.Width, work.Height);
+        }
 
-        double dpi = WindowChrome.GetDpiScale(this);
+        double dpi = _showWindow != IntPtr.Zero && monitor.DpiScale > 0
+            ? monitor.DpiScale
+            : WindowChrome.GetDpiScale(this);
         NavigationPlacementResult placement = NavigationLayout.Place(Corner, box, dpi, counterVisible);
 
         bool vertical = IsVertical;

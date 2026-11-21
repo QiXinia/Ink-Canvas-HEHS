@@ -32,8 +32,8 @@
 
 - `IsCompressPicturesUploaded` 图片上传压缩；`IsShowCursor` 光标；`HideStrokeWhenSelecting` 在所有选择/鼠标态的完整原行为；`HyperbolaAsymptoteOption` 图形生成选项。
 - `AutoSwitchTwoFingerGesture` 自动切换；完整选区/画布变换中心交互。
-- `IsEnableDisPlayFloatBarText`、彩色工具栏、按钮背景透明、退出/橡皮/隐藏/左右/手指切换按钮显隐、笔尖模式切换器；画板独立缩放。
-- 静默更新 UI 时间选择与自动静默安装策略；启动折叠的完整复原行为。
+- `IsEnableDisPlayFloatBarText`、彩色工具栏、按钮背景透明、工具栏按钮显隐、笔尖模式切换器；画板独立缩放。
+- 静默更新 UI 时间选择与自动静默安装策略；「开机时默认收纳」的进程启动恢复状态尚未接入。
 - PPT 的 `IsNoClearStrokeOnSelectWhenInPowerPoint` 规则及 `IsEnableTwoFingerGestureInPresentationMode` 门控仍未按 WPF 所有状态逐条接线；页码/导航面板、WPS COM 与切页墨迹缓存已接入，但**未经行为验证**。
 - 自动收纳的全部厂商/进程识别仅有一部分；ignore-desktop-annotation、轻白板、鸿合/文香/中原等识别项未完整移植。
 - 自动查杀进程、退出书写模式自动清屏、旧存档清理的完整调度、关闭前确认、目录浏览器、触摸尺寸测量 UI。

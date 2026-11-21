@@ -1,0 +1,9 @@
+{
+  "Id": "inkcanvas.screen-tracking",
+  "Name": "屏幕内容跟随",
+  "Version": "1.0.2",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.ScreenTracking.dll",
+  "EntryType": "InkCanvas.Modules.ScreenTracking.ScreenTrackingModule",
+  "PackageFiles": ["Interop.UIAutomationClient.dll", "UIAutomation-Interop.txt"]
+}

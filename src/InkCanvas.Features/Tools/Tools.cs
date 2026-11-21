@@ -77,53 +77,7 @@ public sealed class CountdownTimer : IDisposable
     public void Dispose() => _timer.Dispose();
 }
 
-/// <summary>Random name/number picker for classroom use.</summary>
-public sealed class LotteryService
-{
-    private readonly HashSet<int> _used = new();
-    private Random _random = new();
-
-    public List<string> Names { get; } = new();
-
-    public int PeopleCount { get; set; } = 60;
-
-    public bool NoRepeat { get; set; }
-
-    public IReadOnlyCollection<int> Used => _used;
-
-    public void Reseed(int seed) => _random = new Random(seed);
-
-    public void Reset() => _used.Clear();
-
-    /// <summary>Returns the picked display text, or null when the pool is exhausted.</summary>
-    public string Pick()
-    {
-        int poolSize = Names.Count > 0 ? Names.Count : Math.Max(1, PeopleCount);
-        if (NoRepeat && _used.Count >= poolSize) return null;
-
-        int index;
-        int guard = 0;
-        do
-        {
-            index = _random.Next(poolSize);
-            guard++;
-        } while (NoRepeat && _used.Contains(index) && guard < poolSize * 8);
-
-        if (NoRepeat) _used.Add(index);
-        return Names.Count > 0 ? Names[index] : (index + 1).ToString();
-    }
-
-    public void LoadNames(IEnumerable<string> names)
-    {
-        Names.Clear();
-        foreach (var n in names)
-        {
-            var trimmed = n?.Trim();
-            if (!string.IsNullOrEmpty(trimmed)) Names.Add(trimmed);
-        }
-        _used.Clear();
-    }
-}
+public sealed record LotteryDraw(DateTimeOffset Time, IReadOnlyList<string> Names);
 
 /// <summary>Screen capture to PNG, used by the screenshot tool and PPT auto-save.</summary>
 public static class ScreenshotService
@@ -131,30 +85,48 @@ public static class ScreenshotService
     public static (byte[] bgra, int width, int height) Capture(int x, int y, int width, int height)
     {
         if (width <= 0 || height <= 0) return (Array.Empty<byte>(), 0, 0);
-
-        IntPtr screenDc = NativeMethods.GetDC(IntPtr.Zero);
-        IntPtr memDc = NativeMethods.CreateCompatibleDC(screenDc);
-        IntPtr bmp = NativeMethods.CreateCompatibleBitmap(screenDc, width, height);
-        IntPtr old = NativeMethods.SelectObject(memDc, bmp);
-        NativeMethods.BitBlt(memDc, 0, 0, width, height, screenDc, x, y, 0x00CC0020 /* SRCCOPY */);
-
-        var bi = new NativeMethods.BITMAPINFO
+        var pixels = new byte[checked(width * height * 4)];
+        IntPtr screenDc = IntPtr.Zero, memDc = IntPtr.Zero, bmp = IntPtr.Zero, old = IntPtr.Zero;
+        try
         {
-            biSize = Marshal.SizeOf<NativeMethods.BITMAPINFO>(),
-            biWidth = width,
-            biHeight = -height,
-            biPlanes = 1,
-            biBitCount = 32,
-            biCompression = 0,
-        };
-        var pixels = new byte[width * height * 4];
-        NativeMethods.GetDIBits(memDc, bmp, 0, (uint)height, pixels, ref bi, 0);
+            screenDc = NativeMethods.GetDC(IntPtr.Zero);
+            if (screenDc == IntPtr.Zero) throw new InvalidOperationException("无法访问桌面截图表面。");
+            memDc = NativeMethods.CreateCompatibleDC(screenDc);
+            if (memDc == IntPtr.Zero) throw new InvalidOperationException("无法创建截图设备上下文。");
+            bmp = NativeMethods.CreateCompatibleBitmap(screenDc, width, height);
+            if (bmp == IntPtr.Zero) throw new InvalidOperationException("无法分配截图位图。");
+            var selected = NativeMethods.SelectObject(memDc, bmp);
+            if (selected == IntPtr.Zero || selected == new IntPtr(-1)) throw new InvalidOperationException("无法初始化截图位图。");
+            old = selected;
+            // CAPTUREBLT includes the transparent layered annotation window on every monitor.
+            if (!NativeMethods.BitBlt(memDc, 0, 0, width, height, screenDc, x, y, 0x00CC0020 | 0x40000000))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "无法读取桌面截图。");
 
-        NativeMethods.SelectObject(memDc, old);
-        NativeMethods.DeleteObject(bmp);
-        NativeMethods.DeleteDC(memDc);
-        NativeMethods.ReleaseDC(IntPtr.Zero, screenDc);
-        return (pixels, width, height);
+            // GetDIBits requires the bitmap to be deselected from its device context.
+            NativeMethods.SelectObject(memDc, old);
+            old = IntPtr.Zero;
+            var bi = new NativeMethods.BITMAPINFO
+            {
+                biSize = Marshal.SizeOf<NativeMethods.BITMAPINFO>(),
+                biWidth = width,
+                biHeight = -height,
+                biPlanes = 1,
+                biBitCount = 32,
+                biCompression = 0,
+            };
+            if (NativeMethods.GetDIBits(memDc, bmp, 0, (uint)height, pixels, ref bi, 0) != height)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "截图像素读取不完整。");
+            // GDI's unused fourth byte is not an alpha channel. The desktop image is opaque.
+            for (int index = 3; index < pixels.Length; index += 4) pixels[index] = 255;
+            return (pixels, width, height);
+        }
+        finally
+        {
+            if (old != IntPtr.Zero) NativeMethods.SelectObject(memDc, old);
+            if (bmp != IntPtr.Zero) NativeMethods.DeleteObject(bmp);
+            if (memDc != IntPtr.Zero) NativeMethods.DeleteDC(memDc);
+            if (screenDc != IntPtr.Zero) NativeMethods.ReleaseDC(IntPtr.Zero, screenDc);
+        }
     }
 
     public static async Task SavePngAsync(string path, byte[] bgra, int width, int height)

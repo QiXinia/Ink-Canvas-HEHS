@@ -83,6 +83,8 @@ export interface ISelectionElement {
 /**
  * C# OverlayPointer 的 ArkTS 等价物（视图 DIP）。
  * 宿主必须完成：ns→ms 时间戳、pressure 0→0.5 回退、source/sourceTool→Kind、接触宽高、鼠标过滤。
+ * TiltX/TiltY 为手写笔硬件倾角（度），无硬件数据时传 0；HasPressure=true 表示 Pressure 为
+ * 手写笔真实压感（sourceTool=Pen 且 pressure>0），宽度管线据此启用压感调制。
  */
 export class PointerSample {
   Id: number;
@@ -95,6 +97,9 @@ export class PointerSample {
   TimeMs: number;
   Shift: boolean;
   Control: boolean;
+  TiltX: number;
+  TiltY: number;
+  HasPressure: boolean;
 
   constructor(
     id: number,
@@ -106,7 +111,10 @@ export class PointerSample {
     kind: number = PointerKind.Pen,
     timeMs: number = 0,
     shift: boolean = false,
-    control: boolean = false
+    control: boolean = false,
+    tiltX: number = 0,
+    tiltY: number = 0,
+    hasPressure: boolean = false
   ) {
     this.Id = id;
     this.X = x;
@@ -118,6 +126,9 @@ export class PointerSample {
     this.TimeMs = timeMs;
     this.Shift = shift;
     this.Control = control;
+    this.TiltX = tiltX;
+    this.TiltY = tiltY;
+    this.HasPressure = hasPressure;
   }
 }
 

@@ -15,28 +15,15 @@ namespace InkCanvas.Controls.Animation;
 /// </summary>
 public static class Motion
 {
-    private static bool? _cachedEnabled;
-    private static DateTime _cachedAt;
+    private static readonly Lazy<Windows.UI.ViewManagement.UISettings> Settings = new(() => new());
 
-    /// <summary>System "show animations" preference, re-read at most once every 5 s.</summary>
+    /// <summary>Read the current system preference so disabling animations takes effect immediately.</summary>
     public static bool AnimationsEnabled
     {
         get
         {
-            var now = DateTime.UtcNow;
-            if (_cachedEnabled is null || (now - _cachedAt).TotalSeconds > 5)
-            {
-                try
-                {
-                    _cachedEnabled = new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
-                }
-                catch
-                {
-                    _cachedEnabled = true;
-                }
-                _cachedAt = now;
-            }
-            return _cachedEnabled.Value;
+            try { return Settings.Value.AnimationsEnabled; }
+            catch { return true; }
         }
     }
 
@@ -69,9 +56,14 @@ public static class Motion
     }
 
     /// <summary>Fade + rise entrance, used when a panel or window content appears.</summary>
-    public static void PlayEntrance(UIElement element, float offsetPx = 12f)
+    public static void PlayEntrance(UIElement element, float offsetPx = 12f) => PlayEntrance(element, offsetPx, 0);
+
+    public static void PlayEntrance(UIElement element, float offsetPx, int delayMilliseconds)
     {
         if (element is null || !AnimationsEnabled) return;
+        // Offset belongs to XAML layout. Animating it to zero discards the element's arranged
+        // position, moving centred/inset content outside its window. Translation is additive.
+        ElementCompositionPreview.SetIsTranslationEnabled(element, true);
         var visual = ElementCompositionPreview.GetElementVisual(element);
         var compositor = visual.Compositor;
 
@@ -79,15 +71,17 @@ public static class Motion
         fade.InsertKeyFrame(0f, 0f);
         fade.InsertKeyFrame(1f, 1f);
         fade.Duration = Normal;
+        fade.DelayTime = TimeSpan.FromMilliseconds(Math.Max(0, delayMilliseconds));
 
         var rise = compositor.CreateVector3KeyFrameAnimation();
         rise.InsertKeyFrame(0f, new Vector3(0, offsetPx, 0));
         rise.InsertKeyFrame(1f, Vector3.Zero);
         rise.Duration = Normal;
-        rise.Target = "Offset";
+        rise.DelayTime = fade.DelayTime;
+        rise.Target = "Translation";
 
         visual.StartAnimation("Opacity", fade);
-        visual.StartAnimation("Offset", rise);
+        visual.StartAnimation("Translation", rise);
     }
 
     /// <summary>Spring-like scale pulse for selection changes on the floating bar.</summary>

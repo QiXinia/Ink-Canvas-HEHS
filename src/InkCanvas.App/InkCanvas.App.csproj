@@ -16,11 +16,16 @@
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>false</SelfContained>
     <ApplicationIcon>Assets\InkCanvas.ico</ApplicationIcon>
-    <Version>3.3.0</Version>
+    <Version>3.7.5</Version>
     <Product>Ink Canvas (WinUI 3)</Product>
+    <IncludeScreenTrackingModule Condition="'$(IncludeScreenTrackingModule)' == ''">true</IncludeScreenTrackingModule>
+    <IncludePdfModule Condition="'$(IncludePdfModule)' == ''">true</IncludePdfModule>
+    <IncludeAnalyticGeometryModule Condition="'$(IncludeAnalyticGeometryModule)' == ''">true</IncludeAnalyticGeometryModule>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\InkCanvas.UpdateHost\InkCanvas.UpdateHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="$(Win2DVersion)" />
+    <PackageReference Include="PhotoSauce.NativeCodecs.Libwebp" Version="1.6.0-preview1" />
     <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="$(WindowsAppSdkVersion)" />
     <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="1.8.260803002" />
@@ -33,9 +38,19 @@
     <ProjectReference Include="..\InkCanvas.Ink\InkCanvas.Ink.csproj" />
     <ProjectReference Include="..\InkCanvas.Controls\InkCanvas.Controls.csproj" />
     <ProjectReference Include="..\InkCanvas.Features\InkCanvas.Features.csproj" />
+    <ProjectReference Include="..\InkCanvas.Extensions\InkCanvas.Extensions.csproj" />
+    <ProjectReference Include="..\InkCanvas.Host.Contracts\InkCanvas.Host.Contracts.csproj" />
+    <ProjectReference Include="..\InkCanvas.Modules.ScreenTracking\InkCanvas.Modules.ScreenTracking.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeScreenTrackingModule)' == 'true'" />
+    <ProjectReference Include="..\InkCanvas.Modules.Pdf\InkCanvas.Modules.Pdf.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludePdfModule)' == 'true'" />
+    <ProjectReference Include="..\InkCanvas.Modules.AnalyticGeometry\InkCanvas.Modules.AnalyticGeometry.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
+    <ProjectReference Include="..\InkCanvas.PluginHost\InkCanvas.PluginHost.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Assets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\**\*.*" Exclude="Assets\SegoeFluentIcons.ttf;Assets\SegoeMDL2Assets.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Update="Assets\Board\*.png" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Required icon font: ship it with both build and publish outputs, never rely on an OS font. -->
+    <Content Include="Assets\SegoeFluentIcons.ttf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\SegoeMDL2Assets.ttf" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\CHANGELOG.md" Link="CHANGELOG.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
@@ -46,12 +61,60 @@
     "Cannot find a resource with the given key", and the shell throws on first window.
     Copy it explicitly so the published folder actually runs.
   -->
+  <!--
+    Unpackaged publish does not copy loose XBF / cross-assembly XAML resource folders either.
+    Without App.xbf the App.InitializeComponent throws XamlParseException at startup; without
+    InkCanvas.Controls/Themes the token dictionary lookup fails on the first window.
+  -->
+  <Target Name="CopyXamlResourcesToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <_LooseXbf Include="$(OutDir)App.xbf" />
+      <_CtrlXamlRes Include="$(OutDir)InkCanvas.Controls\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_LooseXbf)" DestinationFolder="$(PublishDir)" Condition="Exists('$(OutDir)App.xbf')" />
+    <Copy SourceFiles="@(_CtrlXamlRes)" DestinationFolder="$(PublishDir)InkCanvas.Controls\%(RecursiveDir)" />
+  </Target>
   <Target Name="CopyAppPriToPublish" AfterTargets="Publish">
     <Copy SourceFiles="$(OutDir)$(TargetName).pri"
           DestinationFolder="$(PublishDir)"
           Condition="Exists('$(OutDir)$(TargetName).pri')" />
     <Warning Text="App resource index $(TargetName).pri was not found; the published app may fail to resolve theme resources."
              Condition="!Exists('$(OutDir)$(TargetName).pri')" />
+  </Target>
+  <Target Name="CopyExtensionPackages" AfterTargets="Build;Publish">
+    <PropertyGroup>
+      <_ExtensionOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.ScreenTracking\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_ExtensionOutput>
+      <_WorkerOutput>$(MSBuildProjectDirectory)\..\InkCanvas.PluginHost\bin\$(Platform)\$(Configuration)\net10.0\$(RuntimeIdentifier)\</_WorkerOutput>
+      <_UpdaterOutput>$(MSBuildProjectDirectory)\..\InkCanvas.UpdateHost\bin\$(Platform)\$(Configuration)\net10.0\$(RuntimeIdentifier)\</_UpdaterOutput>
+      <_PdfOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.Pdf\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_PdfOutput>
+      <_GeometryOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.AnalyticGeometry\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_GeometryOutput>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ModuleFiles Include="$(_ExtensionOutput)InkCanvas.Modules.ScreenTracking.dll;$(_ExtensionOutput)InkCanvas.Modules.ScreenTracking.deps.json;$(_ExtensionOutput)Interop.UIAutomationClient.dll;$(_ExtensionOutput)module.json;$(_ExtensionOutput)UIAutomation-Interop.txt" Condition="'$(IncludeScreenTrackingModule)' == 'true'" />
+      <_WorkerFiles Include="$(_WorkerOutput)*.dll;$(_WorkerOutput)*.exe;$(_WorkerOutput)*.json" />
+      <_UpdaterFiles Include="$(_UpdaterOutput)*.dll;$(_UpdaterOutput)*.exe;$(_UpdaterOutput)*.json" />
+      <_PdfFiles Include="$(_PdfOutput)InkCanvas.Modules.Pdf.dll;$(_PdfOutput)InkCanvas.Modules.Pdf.deps.json;$(_PdfOutput)InkCanvas.Pdf.dll;$(_PdfOutput)PdfSharp*.dll;$(_PdfOutput)UglyToad.PdfPig*.dll;$(_PdfOutput)Microsoft.Extensions.*.dll;$(_PdfOutput)System.Security.Cryptography.Pkcs.dll;$(_PdfOutput)module.json" Condition="'$(IncludePdfModule)' == 'true'" />
+      <_PdfLicenses Include="$(_PdfOutput)Licenses\*.txt" Condition="'$(IncludePdfModule)' == 'true'" />
+      <_PdfFiles Include="$(_PdfOutput)Clipper2Lib.dll" Condition="'$(IncludePdfModule)' == 'true'" />
+      <_GeometryFiles Include="$(_GeometryOutput)InkCanvas.Modules.AnalyticGeometry.dll;$(_GeometryOutput)InkCanvas.Modules.AnalyticGeometry.deps.json;$(_GeometryOutput)InkCanvas.AnalyticGeometry.dll;$(_GeometryOutput)module.json" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
+      <_GeometryFiles Include="$(_GeometryOutput)AngouriMath.dll;$(_GeometryOutput)Antlr4.Runtime.Standard.dll;$(_GeometryOutput)GenericTensor.dll;$(_GeometryOutput)HonkSharp.dll;$(_GeometryOutput)Numbers.dll;$(_GeometryOutput)PdfSharp.dll;$(_GeometryOutput)PdfSharp.Shared.dll;$(_GeometryOutput)PdfSharp.System.dll;$(_GeometryOutput)PdfSharp.Cryptography.dll;$(_GeometryOutput)Microsoft.Extensions.Logging.Abstractions.dll;$(_GeometryOutput)Microsoft.Extensions.DependencyInjection.Abstractions.dll;$(_GeometryOutput)System.Security.Cryptography.Pkcs.dll" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
+      <_GeometryLicenses Include="$(_GeometryOutput)Licenses\*.txt" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
+      <_GeometryFiles Include="$(_GeometryOutput)Jint.dll;$(_GeometryOutput)Acornima.dll" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ModuleFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.screen-tracking\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_WorkerFiles)" DestinationFolder="$(OutDir)PluginHost\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_UpdaterFiles)" DestinationFolder="$(OutDir)UpdateHost\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_PdfFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.pdf\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_PdfLicenses)" DestinationFolder="$(OutDir)Modules\inkcanvas.pdf\Licenses\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_GeometryFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.analytic-geometry\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_GeometryLicenses)" DestinationFolder="$(OutDir)Modules\inkcanvas.analytic-geometry\Licenses\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_ModuleFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.screen-tracking\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_WorkerFiles)" DestinationFolder="$(PublishDir)PluginHost\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_UpdaterFiles)" DestinationFolder="$(PublishDir)UpdateHost\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_PdfFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.pdf\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_PdfLicenses)" DestinationFolder="$(PublishDir)Modules\inkcanvas.pdf\Licenses\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_GeometryFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.analytic-geometry\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <Copy SourceFiles="@(_GeometryLicenses)" DestinationFolder="$(PublishDir)Modules\inkcanvas.analytic-geometry\Licenses\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
   </Target>
   <!--
     The self-contained Windows App SDK runtime payload ships components this app never uses:

@@ -29,6 +29,10 @@ public static class NativeMethods
 
     // ---- messages ----
     public const int WM_DESTROY = 0x0002;
+    public const int WM_MOUSEACTIVATE = 0x0021;
+    public const int WM_POINTERACTIVATE = 0x024B;
+    public const int MA_NOACTIVATE = 3;
+    public const int PA_NOACTIVATE = 3;
     public const int WM_NCLBUTTONDOWN = 0x00A1;
     public const int HTCAPTION = 2;
     public const int WM_MOUSEMOVE = 0x0200;
@@ -136,11 +140,18 @@ public static class NativeMethods
 
     [DllImport("user32.dll")] public static extern bool GetPointerInfo(uint id, out POINTER_INFO info);
     [DllImport("user32.dll")] public static extern bool GetPointerPenInfo(uint id, out POINTER_PEN_INFO info);
+    [DllImport("user32.dll")] public static extern bool GetPointerPenInfoHistory(uint id, ref uint count,
+        [Out] POINTER_PEN_INFO[] info);
+    [DllImport("user32.dll")] public static extern bool GetPointerTouchInfoHistory(uint id, ref uint count,
+        [Out] POINTER_TOUCH_INFO[] info);
     [DllImport("user32.dll")] public static extern bool GetPointerTouchInfo(uint id, out POINTER_TOUCH_INFO info);
     [DllImport("user32.dll")] public static extern bool EnableMouseInPointer(bool enable);
     [DllImport("user32.dll")] public static extern bool IsMouseInPointerEnabled();
     [DllImport("user32.dll")] public static extern IntPtr SetCapture(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] public static extern IntPtr GetCapture();
+    [DllImport("user32.dll")] public static extern short GetKeyState(int key);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT pt);
 
     // ---- window management ----
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -160,6 +171,8 @@ public static class NativeMethods
         int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int width, int height, bool repaint);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint command);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -182,9 +195,9 @@ public static class NativeMethods
     [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
     [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr dc);
-    [DllImport("gdi32.dll")] public static extern bool BitBlt(IntPtr dst, int xd, int yd, int w, int h,
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern bool BitBlt(IntPtr dst, int xd, int yd, int w, int h,
         IntPtr src, int xs, int ys, int rop);
-    [DllImport("gdi32.dll")] public static extern int GetDIBits(IntPtr dc, IntPtr bmp, uint start, uint lines,
+    [DllImport("gdi32.dll", SetLastError = true)] public static extern int GetDIBits(IntPtr dc, IntPtr bmp, uint start, uint lines,
         byte[] bits, ref BITMAPINFO bi, uint usage);
     [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
 

@@ -63,6 +63,7 @@ switch ($Task) {
             '-o', (Join-Path $repo 'artifacts\app'), '--nologo') + $extra)
         $size = (Get-ChildItem (Join-Path $repo 'artifacts\app') -Recurse -File | Measure-Object Length -Sum).Sum
         Write-Host ("Published: {0:N1} MB" -f ($size / 1MB))
+        & (Join-Path $repo 'tools\prune-builds.ps1')
     }
     'run' {
         Invoke-Dotnet @('build', $appProject, '-c', $Configuration, '-p:Platform=x64', '--nologo')

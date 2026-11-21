@@ -32,6 +32,7 @@ public class TaperTests
     [InlineData(TaperKind.None)]
     [InlineData(TaperKind.Tail)]
     [InlineData(TaperKind.Velocity)]
+    [InlineData(TaperKind.Natural)]
     public void LastLiveFrameEqualsCommittedGeometry(TaperKind kind)
     {
         var s = NewStroke(kind);
@@ -54,6 +55,7 @@ public class TaperTests
     [InlineData(TaperKind.None)]
     [InlineData(TaperKind.Tail)]
     [InlineData(TaperKind.Velocity)]
+    [InlineData(TaperKind.Natural)]
     public void NoPointEverGetsNarrower(TaperKind kind)
     {
         var s = NewStroke(kind);

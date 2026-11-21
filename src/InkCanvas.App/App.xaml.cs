@@ -6,18 +6,170 @@ namespace InkCanvas.App;
 public partial class App : Application
 {
     private ShellController _shell;
+    private Diagnostics.ActivationHost _activationHost;
 
     public App()
     {
         InitializeComponent();
         UnhandledException += OnUnhandledException;
+        Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().ShutdownCompleted += (_, _) =>
+            Core.Diagnostics.FileLog.WriteLogToFile("Application dispatcher shutdown completed");
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            Core.Diagnostics.FileLog.WriteLogToFile("ProcessExit");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            Core.Diagnostics.FileLog.WriteLogToFile($"AppDomain unhandled: {e.ExceptionObject}", Core.Diagnostics.LogType.Error);
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var inkWashCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--inkwashcheck=", StringComparison.OrdinalIgnoreCase));
+        if (inkWashCheck is not null) { _ = Diagnostics.InkWashRegression.Run(inkWashCheck["--inkwashcheck=".Length..]); return; }
+        var penContrastCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pencontrastcheck=", StringComparison.OrdinalIgnoreCase));
+        if (penContrastCheck is not null) { _ = Diagnostics.PenContrastRegression.Run(penContrastCheck["--pencontrastcheck=".Length..]); return; }
+        var settingsActivationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--settingsactivationcheck=", StringComparison.OrdinalIgnoreCase));
+        if (settingsActivationCheck is not null) { _ = Diagnostics.SettingsActivationRegression.Run(settingsActivationCheck["--settingsactivationcheck=".Length..]); return; }
+        var updateUiCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updateuicheck=", StringComparison.OrdinalIgnoreCase));
+        if (updateUiCheck is not null) { _ = Diagnostics.UpdateUiRegression.Run(updateUiCheck["--updateuicheck=".Length..]); return; }
+        var moduleToolbarCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--moduletoolbarcheck=", StringComparison.OrdinalIgnoreCase));
+        if (moduleToolbarCheck is not null) { _ = Diagnostics.ModuleToolbarRegression.Run(moduleToolbarCheck["--moduletoolbarcheck=".Length..]); return; }
+        var storageCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--storagecheck=", StringComparison.OrdinalIgnoreCase));
+        if (storageCheck is not null) { _ = Diagnostics.StorageUpdateRegression.Run(storageCheck["--storagecheck=".Length..]); return; }
+        var pptCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pptcheck=", StringComparison.OrdinalIgnoreCase));
+        if (pptCheck is not null) { _ = Diagnostics.PptRegression.Run(pptCheck["--pptcheck=".Length..]); return; }
+        var updateSourceCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updatesourcecheck=", StringComparison.OrdinalIgnoreCase));
+        if (updateSourceCheck is not null) { _ = Diagnostics.UpdateSourceRegression.Run(updateSourceCheck["--updatesourcecheck=".Length..]); return; }
+        var toolbarAnimationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--toolbaranimationcheck=", StringComparison.OrdinalIgnoreCase));
+        if (toolbarAnimationCheck is not null) { _ = Diagnostics.ToolbarAnimationRegression.Run(toolbarAnimationCheck["--toolbaranimationcheck=".Length..]); return; }
+        var lotteryCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--lotterycheck=", StringComparison.OrdinalIgnoreCase));
+        if (lotteryCheck is not null) { _ = Diagnostics.LotteryRegression.Run(lotteryCheck["--lotterycheck=".Length..]); return; }
+        var selectionTouchCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--selectiontouchcheck=", StringComparison.OrdinalIgnoreCase));
+        if (selectionTouchCheck is not null) { _ = Diagnostics.SelectionTouchRegression.Run(selectionTouchCheck["--selectiontouchcheck=".Length..]); return; }
+        var themeCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--themecheck=", StringComparison.OrdinalIgnoreCase));
+        if (themeCheck is not null) { _ = Diagnostics.ChromeThemeRegression.Run(themeCheck["--themecheck=".Length..]); return; }
+        var desktopVideoCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--desktopvideocheck=", StringComparison.OrdinalIgnoreCase));
+        if (desktopVideoCheck is not null) { _ = Diagnostics.DesktopVideoRegression.Run(desktopVideoCheck["--desktopvideocheck=".Length..]); return; }
+        var settingsFeatureCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--settingsfeaturescheck=", StringComparison.OrdinalIgnoreCase));
+        if (settingsFeatureCheck is not null) { _ = Diagnostics.SettingsFeatureRegression.Run(settingsFeatureCheck["--settingsfeaturescheck=".Length..]); return; }
+        var memoryCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--memorycheck=", StringComparison.OrdinalIgnoreCase));
+        if (memoryCheck is not null) { _ = Diagnostics.MemoryRegression.Run(memoryCheck[14..]); return; }
+        var shadowCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--shadowcheck=", StringComparison.OrdinalIgnoreCase));
+        if (shadowCheck is not null) { _ = Diagnostics.ShadowRegression.Run(shadowCheck[14..]); return; }
+        var popupPerformanceCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--popupperfcheck=", StringComparison.OrdinalIgnoreCase));
+        var optionPanelsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--optionpanelscheck=", StringComparison.OrdinalIgnoreCase));
+        if (optionPanelsCheck is not null) { _ = Diagnostics.OptionPanelsRegression.Run(optionPanelsCheck["--optionpanelscheck=".Length..]); return; }
+        if (popupPerformanceCheck is not null) { _ = Diagnostics.PopupPerformanceRegression.Run(popupPerformanceCheck["--popupperfcheck=".Length..]); return; }
+        var popupCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--popupcheck=", StringComparison.OrdinalIgnoreCase));
+        if (popupCheck is not null) { _ = Diagnostics.PopupRegression.Run(popupCheck[13..]); return; }
+        var mirrorCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updatemirrorcheck=", StringComparison.OrdinalIgnoreCase));
+        if (mirrorCheck is not null) { _ = Diagnostics.UpdateRegression.Run(mirrorCheck[20..], mirrorOnly: true); return; }
+        var updateCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updatecheck=", StringComparison.OrdinalIgnoreCase));
+        if (updateCheck is not null) { _ = Diagnostics.UpdateRegression.Run(updateCheck[14..]); return; }
+        var imageImportCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--imageimportcheck=", StringComparison.OrdinalIgnoreCase));
+        if (imageImportCheck is not null) { _ = Diagnostics.ImageImportRegression.Run(imageImportCheck[19..]); return; }
+        var displayCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--displaycheck=", StringComparison.OrdinalIgnoreCase));
+        if (displayCheck is not null) { _ = Diagnostics.DisplayRegression.Run(displayCheck[15..]); return; }
+        var boardStorageCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--boardstoragecheck=", StringComparison.OrdinalIgnoreCase));
+        if (boardStorageCheck is not null) { _ = Diagnostics.BoardStorageRegression.Run(boardStorageCheck.Substring("--boardstoragecheck=".Length)); return; }
+        var boardPageCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--boardpagecheck=", StringComparison.OrdinalIgnoreCase));
+        if (boardPageCheck is not null) { _ = Diagnostics.BoardPageRegression.Run(boardPageCheck["--boardpagecheck=".Length..]); return; }
+        var pageManagementCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pagemanagementcheck=", StringComparison.OrdinalIgnoreCase));
+        if (pageManagementCheck is not null) { _ = Diagnostics.BoardManagementRegression.Run(pageManagementCheck["--pagemanagementcheck=".Length..]); return; }
+        var editableShapeCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--editableshapecheck=", StringComparison.OrdinalIgnoreCase));
+        if (editableShapeCheck is not null) { _ = Diagnostics.EditableShapeRegression.Run(editableShapeCheck["--editableshapecheck=".Length..]); return; }
+        var shortcutCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--shortcutcheck=", StringComparison.OrdinalIgnoreCase));
+        if (shortcutCheck is not null) { _ = Diagnostics.ShortcutRegression.Run(shortcutCheck["--shortcutcheck=".Length..]); return; }
+        var geometryCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--geometrycheck=", StringComparison.OrdinalIgnoreCase));
+        if (geometryCheck is not null) { _ = Diagnostics.GeometryRegression.Run(geometryCheck[16..]); return; }
+        var pdfCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pdfcheck=", StringComparison.OrdinalIgnoreCase));
+        if (pdfCheck is not null) { _ = Diagnostics.PdfRegression.Run(pdfCheck[11..]); return; }
+        var extensionsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--extensionscheck=", StringComparison.OrdinalIgnoreCase));
+        if (extensionsCheck is not null)
+        {
+            _ = Diagnostics.ExtensionsRegression.Run(extensionsCheck.Substring("--extensionscheck=".Length));
+            return;
+        }
+        var screenFollowCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--screenfollowcheck=", StringComparison.OrdinalIgnoreCase));
+        if (screenFollowCheck is not null)
+        {
+            _ = Diagnostics.ScreenTrackingRegression.Run(screenFollowCheck.Substring("--screenfollowcheck=".Length));
+            return;
+        }
+        var classroomDesignCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--classroomdesigncheck=", StringComparison.OrdinalIgnoreCase));
+        if (classroomDesignCheck is not null)
+        {
+            _ = Diagnostics.ClassroomWindowRegression.Run(classroomDesignCheck.Substring("--classroomdesigncheck=".Length), exitApplication: true);
+            return;
+        }
+        var mediaFormatsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--mediaformatscheck=", StringComparison.OrdinalIgnoreCase));
+        if (mediaFormatsCheck is not null)
+        {
+            _ = Diagnostics.MediaFormatsRegression.Run(mediaFormatsCheck.Substring("--mediaformatscheck=".Length));
+            return;
+        }
+        var layerOrderCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--layerscheck=", StringComparison.OrdinalIgnoreCase));
+        if (layerOrderCheck is not null)
+        {
+            _ = Diagnostics.LayerOrderRegression.Run(layerOrderCheck.Substring("--layerscheck=".Length));
+            return;
+        }
+        var imageObjectsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--imageobjectscheck=", StringComparison.OrdinalIgnoreCase));
+        if (imageObjectsCheck is not null)
+        {
+            _ = Diagnostics.ImageObjectsRegression.Run(imageObjectsCheck.Substring("--imageobjectscheck=".Length));
+            return;
+        }
+        var shapeToolsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--shapetoolscheck=", StringComparison.OrdinalIgnoreCase));
+        if (shapeToolsCheck is not null)
+        {
+            _ = Diagnostics.ShapeToolsRegression.Run(shapeToolsCheck.Substring("--shapetoolscheck=".Length));
+            return;
+        }
+        var boardPopupCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--boardpopupcheck=", StringComparison.OrdinalIgnoreCase));
+        if (boardPopupCheck is not null)
+        {
+            _ = Diagnostics.BoardPopupRegression.Run(boardPopupCheck.Substring("--boardpopupcheck=".Length));
+            return;
+        }
+        var workspaceCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--workspacecheck=", StringComparison.OrdinalIgnoreCase));
+        if (workspaceCheck is not null)
+        {
+            _ = Diagnostics.WorkspaceRegression.Run(workspaceCheck.Substring("--workspacecheck=".Length));
+            return;
+        }
+        var eraserPreviewCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--eraserpreviewcheck=", StringComparison.OrdinalIgnoreCase));
+        if (eraserPreviewCheck is not null)
+        {
+            _ = Diagnostics.EraserPreviewRegression.Run(eraserPreviewCheck.Substring("--eraserpreviewcheck=".Length));
+            return;
+        }
+        var penOptionsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--penoptionscheck=", StringComparison.OrdinalIgnoreCase));
+        if (penOptionsCheck is not null)
+        {
+            _ = Diagnostics.PenOptionsRegression.Run(penOptionsCheck.Substring("--penoptionscheck=".Length));
+            return;
+        }
+        var settingsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--settingscheck=", StringComparison.OrdinalIgnoreCase));
+        if (settingsCheck is not null)
+        {
+            _ = Diagnostics.SettingsRegression.Run(settingsCheck.Substring("--settingscheck=".Length));
+            return;
+        }
+        var activationHost = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--activationhost=", StringComparison.OrdinalIgnoreCase));
+        if (activationHost is not null)
+        {
+            _activationHost = new Diagnostics.ActivationHost(activationHost.Substring("--activationhost=".Length));
+            return;
+        }
         var services = new AppServices();
         _shell = new ShellController(services);
         _shell.Start();
+        var pdfArgument = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault(a => a.StartsWith("--pdf=", StringComparison.OrdinalIgnoreCase)
+            || !a.StartsWith("--") && Path.GetExtension(a).Equals(".pdf", StringComparison.OrdinalIgnoreCase));
+        if (pdfArgument is not null)
+        {
+            string pdfPath = pdfArgument.StartsWith("--pdf=", StringComparison.OrdinalIgnoreCase) ? pdfArgument[6..] : pdfArgument;
+            _ = _shell.OpenPdfAsync(pdfPath);
+        }
 
         // "--board" opens straight into the blackboard, mirroring the original launcher switches.
         foreach (var a in Environment.GetCommandLineArgs())
@@ -35,6 +187,7 @@ public partial class App : Application
             .FirstOrDefault(a => a.StartsWith("--diag=", StringComparison.OrdinalIgnoreCase));
         if (diag is not null)
         {
+            Ink.Rendering.OverlayInkPresenter.LatencyLogEnabled = true;
             string path = diag.Substring("--diag=".Length);
             var t = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
             t.Interval = TimeSpan.FromMilliseconds(700);
@@ -57,6 +210,145 @@ public partial class App : Application
             t.Start();
         }
 
+        var open = Environment.GetCommandLineArgs()
+            .FirstOrDefault(a => a.StartsWith("--open=", StringComparison.OrdinalIgnoreCase));
+        if (open is not null)
+        {
+            var kinds = new Queue<string>(open.Substring("--open=".Length).Split(','));
+            var t0 = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            t0.Interval = TimeSpan.FromMilliseconds(1100);
+            t0.Tick += (_, _) =>
+            {
+                if (kinds.Count == 0) { t0.Stop(); return; }
+                var k = kinds.Dequeue();
+                {
+                    switch (k.Trim())
+                    {
+                        case "settings": _shell.OpenSettings(); break;
+                        case "countdown": _shell.OpenTimer(); break;
+                        case "lottery": _shell.OpenLottery(); break;
+                        case "guide": _shell.OpenGuide(); break;
+                        case "replay": _shell.OpenReplay(); break;
+                        case "pen": _shell.OpenPenPalette(false); break;
+                        case "highlighter": _shell.OpenPenPalette(true); break;
+                        case "shapes": _shell.OpenShapePicker(); break;
+                        case "board": _shell.ToggleBoard(); break;
+                    }
+                }
+            };
+            t0.Start();
+        }
+
+        var shot = Environment.GetCommandLineArgs()
+            .FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase));
+        if (shot is not null)
+        {
+            string dir = shot.Substring("--shot=".Length);
+            Directory.CreateDirectory(dir);
+            // Render each window shortly after it activates: RenderTargetBitmap on a
+            // non-foreground WinUI window can hang, so every window captures itself.
+            void Hook(Microsoft.UI.Xaml.Window w)
+            {
+                w.Activated += async (_, _) =>
+                {
+                    await System.Threading.Tasks.Task.Delay(700);
+                    try
+                    {
+                        if (w.Content is not FrameworkElement fe || fe.XamlRoot is null) return;
+                        var rtb = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
+                        await rtb.RenderAsync(fe);
+                        var pixels = await rtb.GetPixelsAsync();
+                        var byteArr = new byte[pixels.Length];
+                        Windows.Storage.Streams.DataReader.FromBuffer(pixels).ReadBytes(byteArr);
+                        var ras = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+                        var enc = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(
+                            Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, ras);
+                        enc.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8,
+                            Windows.Graphics.Imaging.BitmapAlphaMode.Premultiplied,
+                            (uint)rtb.PixelWidth, (uint)rtb.PixelHeight, 96, 96, byteArr);
+                        await enc.FlushAsync();
+                        ras.Seek(0);
+                        string name = string.Join("_", (w.Title ?? "window").Split(Path.GetInvalidFileNameChars()));
+                        using var fs = File.Create(Path.Combine(dir, name + ".png"));
+                        await System.IO.WindowsRuntimeStreamExtensions.AsStreamForRead(ras).CopyToAsync(fs);
+                    }
+                    catch { }
+                };
+            }
+            foreach (var w in _shell.OpenWindows) Hook(w);
+            _shell.WindowOpened += w => Hook(w);
+        }
+
+
+
+        var activationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--activationcheck=", StringComparison.OrdinalIgnoreCase));
+        if (activationCheck is not null)
+        {
+            var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(1); timer.IsRepeating = false;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                await Diagnostics.ActivationRegression.Run(_shell, activationCheck.Substring("--activationcheck=".Length));
+            };
+            timer.Start();
+        }
+
+        var classroomCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--classroomcheck=", StringComparison.OrdinalIgnoreCase));
+        if (classroomCheck is not null)
+        {
+            var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(1); timer.IsRepeating = false;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                await Diagnostics.ClassroomWindowRegression.Run(classroomCheck.Substring("--classroomcheck=".Length));
+            };
+            timer.Start();
+        }
+
+        var interactionCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--interactioncheck=", StringComparison.OrdinalIgnoreCase));
+        if (interactionCheck is not null)
+        {
+            var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(1); timer.IsRepeating = false;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                await Diagnostics.InteractionRegression.Run(interactionCheck.Substring("--interactioncheck=".Length));
+            };
+            timer.Start();
+        }
+
+        var writingCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--writingcheck=", StringComparison.OrdinalIgnoreCase));
+        if (writingCheck is not null)
+        {
+            var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(1); timer.IsRepeating = false;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                try { await Diagnostics.WritingPerformance.Run(writingCheck.Substring("--writingcheck=".Length)); }
+                finally { _shell.Dispose(); Application.Current.Exit(); }
+            };
+            timer.Start();
+        }
+
+        var performanceCheck = Environment.GetCommandLineArgs()
+            .FirstOrDefault(a => a.StartsWith("--perfcheck=", StringComparison.OrdinalIgnoreCase));
+        if (performanceCheck is not null)
+        {
+            var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
+            timer.Interval = TimeSpan.FromSeconds(2);
+            timer.IsRepeating = false;
+            timer.Tick += async (_, _) =>
+            {
+                timer.Stop();
+                await Diagnostics.PerformanceCheck.Run(_shell, performanceCheck.Substring("--perfcheck=".Length));
+            };
+            timer.Start();
+        }
+
         var selfTest = Environment.GetCommandLineArgs()
             .FirstOrDefault(a => a.StartsWith("--selftest=", StringComparison.OrdinalIgnoreCase));
         if (selfTest is not null)
@@ -66,10 +358,10 @@ public partial class App : Application
             var timer = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread().CreateTimer();
             timer.Interval = TimeSpan.FromMilliseconds(1200);
             timer.IsRepeating = false;
-            timer.Tick += (_, _) =>
+            timer.Tick += async (_, _) =>
             {
                 timer.Stop();
-                Diagnostics.SelfTest.Run(_shell, dir);
+                await Diagnostics.SelfTest.Run(_shell, dir);
             };
             timer.Start();
         }

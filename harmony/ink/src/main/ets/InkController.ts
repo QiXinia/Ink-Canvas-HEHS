@@ -5,8 +5,7 @@
 // 边界：
 // - 不 import ArkUI/@kit；只依赖 @inkcanvas/core 与本模块 ControllerTypes。
 // - 宿主通过 ControllerOptions 注入文档、重绘回调、时间源与手掌决策器（core PalmRejector）。
-// - 未移植（Phase B2/B3 范围外，见报告）：Lasso 擦、SelectedElements/SelectionFrame 元素、
-//   TransformSelectionUndoable。双曲线渐近线去留与 C# 一致由 kind 决定
+// - 双曲线渐近线去留与 C# 一致由 kind 决定
 //   （hasHyperbolaAsymptotes）；HyperbolaAsymptoteOption/AskRemoveAsymptotes 仅保留为
 //   兼容宿主的旧 API 字段，提交路径不再读取。
 // - 选区 Move/Rotate 拖拽与选区双指手势延迟写点：期间以 SelectionPreviewTransform
@@ -17,8 +16,9 @@
 //   与 C# 一致；GesturesTargetSelection 非 Select 工具路径两侧均为逐 move 单元（C# 631 同款）。
 // - 两步体完成后尊重 StickyShape；一般图形仅在生成结果非空时回笔（C# 934/962/971）。
 // - 单笔提交 Invalidated 两次（CommitStrokes 内一次 + Up 尾部一次）——与 C# OnPointerUp 完全一致。
-// - 未移植（待 G2/G3 轮）：SelectedElements/SelectionFrame 元素、
-//   TransformSelectionUndoable、落点圆点动画（ConfirmTap 已收拢为单点，动画状态未建）。
+// - G2 元素选区（SelectedElements，:489）、SelectionFrame 定向帧（selectionFrameSummary :2337 起）、
+//   TransformSelectionUndoable（:2715）均已落地；仅落点圆点动画未建
+//   （ConfirmTap 已收拢为单点，动画状态未建）。
 // - G1 套索擦已移植：LassoGeometry（core/selection，向量互认）+ 视图 DIP 路径 +
 //   4096 抽稀 + even/odd 命中 + 恢复保叠放序（insertRange）。
 const LINE_HOLD_MS = 450;
@@ -215,7 +215,16 @@ function transformStroke(stroke: InkStroke, m: Matrix3x2, scaleWidth: boolean): 
   for (let i = 0; i < stroke.Points.length; i++) {
     const point = stroke.Points[i];
     const transformed = transformPointByMatrix(m, point.X, point.Y);
-    nextPoints.push(new InkPoint(transformed.X, transformed.Y, point.Pressure, point.Width * widthScale, point.TimeMs));
+    nextPoints.push(new InkPoint(
+      transformed.X,
+      transformed.Y,
+      point.Pressure,
+      point.Width * widthScale,
+      point.TimeMs,
+      point.TiltX,
+      point.TiltY,
+      point.HasPressure
+    ));
   }
   stroke.restorePoints(nextPoints);
   stroke.Attributes.BaseWidth *= widthScale;
@@ -694,7 +703,26 @@ export class InkController {
   }
 
   get ShapePreview(): InkStroke[] {
-    return this._shapePreview;
+    // 对齐 LiveStrokes 的克隆封装，避免外部持有内部数组引用被意外改写。
+    return this._shapePreview.slice();
+  }
+
+  /** 框选橡皮筋（视图 DIP 矩形 [left, top, right, bottom]）；空矩形返回 null。
+   *  仅供渲染层读取，命中与选择口径仍由 updateMarquee/hitTestRect 负责，本 getter 不参与判断。 */
+  get MarqueeBounds(): number[] | null {
+    if (this._marqueeBounds.isEmpty()) {
+      return null;
+    }
+    const left = this._marqueeBounds.Left;
+    const top = this._marqueeBounds.Top;
+    const right = this._marqueeBounds.Right;
+    const bottom = this._marqueeBounds.Bottom;
+    // NaN 矩形会因 Rect.isEmpty 的 NaN<=0=false 漏判，导致渲染层每帧全屏重绘；四分量有限性校验兜底。
+    if (!Number.isFinite(left) || !Number.isFinite(top) ||
+        !Number.isFinite(right) || !Number.isFinite(bottom)) {
+      return null;
+    }
+    return [left, top, right, bottom];
   }
 
   /** 切换目标文档（画板页/课件页/批注）：清空历史与活动状态，避免跨文档撤销污染。 */
@@ -836,6 +864,26 @@ export class InkController {
     this._manipulator.AllowRotation = rotate;
     this._selectionManipulator.AllowZoom = zoom;
     this._selectionManipulator.AllowTranslate = translate;
+  }
+
+  /** 测试版缩放阻尼：1 = 旧行为，0.85–0.9 有轻微回弹感。 */
+  get ZoomDamping(): number {
+    return this._manipulator.ZoomDamping;
+  }
+
+  set ZoomDamping(value: number) {
+    this._manipulator.ZoomDamping = value;
+    this._selectionManipulator.ZoomDamping = value;
+  }
+
+  /** 双指间距死区（DIP）。 */
+  get ZoomDeadZone(): number {
+    return this._manipulator.ZoomDeadZone;
+  }
+
+  set ZoomDeadZone(value: number) {
+    this._manipulator.ZoomDeadZone = value;
+    this._selectionManipulator.ZoomDeadZone = value;
   }
 
   // ---- 指针路由 ----------------------------------------------------------
@@ -1098,7 +1146,7 @@ export class InkController {
       // 宽度在点到达时结算，绝不在抬笔后重算；模拟压感笔锋用相对时间。
       const startTime = this._strokeStartTimes.get(p.Id);
       const time = startTime !== undefined ? p.TimeMs - startTime : this.pointerTime(p);
-      stroke.addPoint(world.X, world.Y, p.Pressure, time);
+      stroke.addPoint(world.X, world.Y, p.Pressure, time, p.TiltX, p.TiltY, p.HasPressure);
       this.markGeometry(stroke);
       this.invalidate();
     }
@@ -1431,7 +1479,15 @@ export class InkController {
     if (relativeTime) {
       this._strokeStartTimes.set(p.Id, p.TimeMs);
     }
-    stroke.addPoint(world.X, world.Y, p.Pressure, relativeTime ? 0 : this.pointerTime(p));
+    stroke.addPoint(
+      world.X,
+      world.Y,
+      p.Pressure,
+      relativeTime ? 0 : this.pointerTime(p),
+      p.TiltX,
+      p.TiltY,
+      p.HasPressure
+    );
     this._lineEndpoints.set(p.Id, { X: p.X, Y: p.Y, Since: p.TimeMs });
     if (!this._live.has(p.Id)) {
       this._liveIds.push(p.Id);
@@ -2732,6 +2788,8 @@ export class InkController {
   Clear(): void {
     this.CancelLassoErase();
     this.ClearSelection();
+    // 清空时一并清除形状预览，避免空文档早退路径残留预览上屏。
+    this._shapePreview = [];
     if (this.Document.Count === 0) {
       return;
     }
@@ -2898,6 +2956,10 @@ export class InkController {
     this._shapeDragStart.clear();
     this._stepPending = [];
     this._shapePreview = [];
+    this._isMarqueeSelecting = false;
+    this._marqueeBounds = Rect.empty();
+    this._marqueeInitialStrokes = [];
+    this._marqueeInitialElements = [];
   }
 
   // ---- 内部事件/集合辅助 -------------------------------------------------

@@ -11,6 +11,7 @@ import {
   PEN_WIDTH_MIN,
   PEN_WIDTH_STEP,
   packedSwatch,
+  quickTaperStyleForIndex,
   snap,
   taperKindForIndex,
   toStoredPenWidth
@@ -148,15 +149,15 @@ export struct PenPalette {
         .fontColor(this.tokens().textPrimary)
         .margin({ right: 10 * this.uiScale })
       Row({ space: 6 * this.uiScale }) {
-        ForEach(['点集', '速率', '关闭'], (label: string, index: number) => {
+        ForEach(['点集', '速率', '关闭', '自然'], (label: string, index: number) => {
           Text(label)
             .fontSize(13 * this.uiScale)
-            .fontColor(this.taperIndex === index ? Color.White : this.tokens().textPrimary)
-            .backgroundColor(this.taperIndex === index ? this.tokens().accent : Color.Transparent)
+            .fontColor(this.taperIndex === quickTaperStyleForIndex(index) ? Color.White : this.tokens().textPrimary)
+            .backgroundColor(this.taperIndex === quickTaperStyleForIndex(index) ? this.tokens().accent : Color.Transparent)
             .borderRadius(4 * this.uiScale)
             .padding({ left: 8 * this.uiScale, right: 8 * this.uiScale, top: 4 * this.uiScale, bottom: 4 * this.uiScale })
             .onClick(() => {
-              this.onTaper(taperKindForIndex(index));
+              this.onTaper(taperKindForIndex(quickTaperStyleForIndex(index)));
             })
         }, (label: string) => label)
       }

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Version>1.0.0</Version>
+    <Description>Versioned module and out-of-process plugin contracts for InkCanvas.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup><None Update="README.md" Pack="true" PackagePath="/" /></ItemGroup>
+</Project>

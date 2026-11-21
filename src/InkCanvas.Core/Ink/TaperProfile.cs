@@ -10,6 +10,12 @@ public enum TaperKind
 
     /// <summary>Width driven by drawing speed (fast = thinner).</summary>
     Velocity = 2,
+
+    SmoothPen = 3,
+    SoftPen = 4,
+    Natural = 5,
+    Calligraphy = 6,
+    InkWash = 7,
 }
 
 /// <summary>
@@ -38,6 +44,7 @@ public abstract class TaperProfile
     /// <param name="tipIndex">Index of the point that just arrived.</param>
     /// <param name="baseWidth">Full stroke width.</param>
     public abstract void Apply(Span<InkPoint> points, int tipIndex, float baseWidth);
+    public virtual int StablePointCount(int count) => count;
 
     /// <summary>Monotonic width assignment: never shrink an already-drawn point.</summary>
     protected static void Settle(ref float slot, float candidate)
@@ -45,10 +52,14 @@ public abstract class TaperProfile
         if (candidate > slot) slot = candidate;
     }
 
+    protected static float PressureWidth(in InkPoint point, float width)
+        => point.HasPressure ? width * (.25f + 1.5f * Math.Clamp(point.Pressure, 0, 1)) : width;
+
     public static TaperProfile Create(TaperKind kind) => kind switch
     {
         TaperKind.None => new NoneTaper(),
         TaperKind.Velocity => new VelocityTaper(),
+        TaperKind.SmoothPen or TaperKind.SoftPen or TaperKind.Natural or TaperKind.Calligraphy or TaperKind.InkWash => new SimulatedPressureTaper(kind),
         _ => new TailTaper(),
     };
 }
@@ -58,7 +69,7 @@ public sealed class NoneTaper : TaperProfile
     public override TaperKind Kind => TaperKind.None;
 
     public override void Apply(Span<InkPoint> points, int tipIndex, float baseWidth)
-        => Settle(ref points[tipIndex].Width, baseWidth);
+        => Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth));
 }
 
 /// <summary>
@@ -79,6 +90,7 @@ public sealed class TailTaper : TaperProfile
 
     /// <summary>Width ratio at the very tip. Original pressure 0.1 against 0.5 baseline.</summary>
     public float TipRatio { get; init; } = 0.2f;
+    public override int StablePointCount(int count) => Math.Max(0, count - Math.Max(2, TailPoints));
 
     public override void Apply(Span<InkPoint> points, int tipIndex, float baseWidth)
     {
@@ -89,14 +101,14 @@ public sealed class TailTaper : TaperProfile
             float distance = tipIndex - j;                       // 0 at the tip
             float t = distance / (float)(n - 1);                  // 0 at tip -> 1 at window edge
             float ratio = TipRatio + (1f - TipRatio) * t;         // thin at tip, full behind it
-            Settle(ref points[j].Width, baseWidth * ratio);
+            Settle(ref points[j].Width, PressureWidth(points[j], baseWidth) * ratio);
         }
 
         if (tipIndex < HeadPoints)
         {
             float t = (tipIndex + 1) / (float)(HeadPoints + 1);
             float ratio = TipRatio + (1f - TipRatio) * t;
-            Settle(ref points[tipIndex].Width, baseWidth * ratio);
+            Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth) * ratio);
         }
     }
 }
@@ -129,7 +141,7 @@ public sealed class VelocityTaper : TaperProfile
 
         // Original pressure baseline is 0.5, so 0.5 maps to the full base width.
         float ratio = Math.Clamp(pressure / 0.5f, 0.15f, 1.8f);
-        Settle(ref points[tipIndex].Width, baseWidth * ratio);
+        Settle(ref points[tipIndex].Width, PressureWidth(points[tipIndex], baseWidth) * ratio);
     }
 
     private static float Dist(in InkPoint a, in InkPoint b)

@@ -9,6 +9,12 @@ namespace InkCanvas.Controls.Controls;
 /// <summary>
 /// An icon button that meets the touch contract: at least a 40x40 hit target, no hover-only
 /// affordance, a visible selected state, and Composition-driven press feedback.
+/// <para>
+/// Opt-in WPF floating-bar styling: <see cref="Label"/> adds the 8px caption under the icon,
+/// <see cref="SelectionBackground"/> / <see cref="ContentForeground"/> / <see cref="HoverBackground"/>
+/// replace the token brushes with the exact upstream FloatBar palette. Defaults keep the
+/// original token look so other windows (replay transport) are unaffected.
+/// </para>
 /// </summary>
 public sealed class TouchIconButton : Button
 {
@@ -18,12 +24,24 @@ public sealed class TouchIconButton : Button
 
     public static readonly DependencyProperty GlyphProperty = DependencyProperty.Register(
         nameof(Glyph), typeof(string), typeof(TouchIconButton),
-        new PropertyMetadata("", OnGlyphChanged));
+        new PropertyMetadata("", OnGlyphChanged));
 
     private readonly FontIcon _icon;
     private readonly TextBlock _aiText;
+    private readonly Viewbox _glyphHost;
+    private readonly Border _contentBorder;
+    private readonly List<FontIcon> _icons = new();
+    private TextBlock _label;
+    private UIElement _customContent;
     private Grid _customIcon;
+    private StackPanel _lastStack;
+    private Grid _lastIconArea;
     private Microsoft.UI.Xaml.Shapes.Path _customIconOutline;
+    private string _labelText;
+    private bool _showLabel = true;
+    private double _labelFontSize = 11;
+    private double _iconAreaHeight = double.NaN;
+    private Thickness _labelMargin = new(0, -1, 0, 0);
 
     public TouchIconButton()
     {
@@ -35,17 +53,44 @@ public sealed class TouchIconButton : Button
         Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         HorizontalAlignment = HorizontalAlignment.Center;
         VerticalAlignment = VerticalAlignment.Center;
+        // Center the content cell explicitly rather than relying on the Button template's
+        // default content alignment, so the icon stays centered at every configured size.
+        HorizontalContentAlignment = HorizontalAlignment.Center;
+        VerticalContentAlignment = VerticalAlignment.Center;
 
         _icon = new FontIcon
         {
             FontFamily = new FontFamily("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons"),
             FontSize = 20,
+            IsTextScaleFactorEnabled = false,
             // Apply the current value explicitly: assigning a value equal to the DP default
             // does not raise the change callback, which would leave the icon blank.
             Glyph = Glyph,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
         };
-        _aiText = AiGlyph.CreateLabel(AiGlyph.ButtonLabelSize);
-        Content = _icon;
+_aiText = AiGlyph.CreateLabel(AiGlyph.ButtonLabelSize);
+        _glyphHost = new Viewbox
+        {
+            Child = _icon,
+            Width = 24,
+            Height = 24,
+            Stretch = Stretch.Uniform,
+            StretchDirection = StretchDirection.DownOnly,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _icons.Add(_icon);
+        _contentBorder = new Border
+        {
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            CornerRadius = new CornerRadius(4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        Content = _contentBorder;
+        RebuildContent();
+
 
         PointerPressed += (_, _) => { if (Motion.AnimationsEnabled) Motion.Pulse(this, 0.92f); };
         Loaded += (_, _) =>
@@ -71,7 +116,13 @@ public sealed class TouchIconButton : Button
     public double IconSize
     {
         get => _icon.FontSize;
-        set => _icon.FontSize = value;
+        set
+        {
+            _icon.FontSize = value;
+            // Keep the complete glyph line box inside the icon cell, including its descender.
+            _glyphHost.Width = Math.Ceiling(value + 4);
+            _glyphHost.Height = Math.Ceiling(value + 4);
+        }
     }
 
     /// <summary>Override for glyphs that live outside Segoe Fluent Icons (e.g. geometric shapes).</summary>
@@ -79,6 +130,79 @@ public sealed class TouchIconButton : Button
     {
         get => _icon.FontFamily.Source;
         set => _icon.FontFamily = new FontFamily(value);
+    }
+
+    /// <summary>Caption under the icon (WPF FloatBarSelectIconTextBlock). Null = icon only.</summary>
+    public string Label
+    {
+        get => _labelText;
+        set { _labelText = value; RebuildContent(); ApplyVisualState(); }
+    }
+
+    /// <summary>IsEnableDisPlayFloatBarText gate for the caption.</summary>
+    public bool ShowLabel
+    {
+        get => _showLabel;
+        set { _showLabel = value; if (_label is not null) _label.Visibility = value ? Visibility.Visible : Visibility.Collapsed; }
+    }
+
+    public double LabelFontSize
+    {
+        get => _labelFontSize;
+        // Stored so a later RebuildContent (IconAreaHeight/LabelMargin change) keeps the size.
+        set { _labelFontSize = value; if (_label is not null) _label.FontSize = value; }
+    }
+
+    /// <summary>
+    /// Fixed height of the icon area above the caption (WPF FloatBar buttons use a 22-DIP
+    /// FontIcon box with the 8pt caption below, inside the 32-DIP cell). NaN = let the icon
+    /// measure naturally. A fixed area keeps the icon centered on the same point whether the
+    /// caption is visible or collapsed, and stops font line-box height from shifting layout.
+    /// </summary>
+    public double IconAreaHeight
+    {
+        get => _iconAreaHeight;
+        set { _iconAreaHeight = value; RebuildContent(); ApplyVisualState(); }
+    }
+
+    /// <summary>Caption margin (WPF bar: 1,-1,0,0; gesture button: 0,-2,0,-1).</summary>
+    public Thickness LabelMargin
+    {
+        get => _labelMargin;
+        set { _labelMargin = value; RebuildContent(); ApplyVisualState(); }
+    }
+
+    /// <summary>Exact FloatBarForeground; when set overrides the token foreground in both states.</summary>
+    public Brush ContentForeground { get; set; }
+
+    /// <summary>WPF check-box-background selection wash; when set the button body stays transparent.</summary>
+    public Brush SelectionBackground { get; set; }
+
+    /// <summary>Corner radius of the selection wash / content border.</summary>
+    public double SelectionCornerRadius
+    {
+        get => _contentBorder.CornerRadius.TopLeft;
+        set => _contentBorder.CornerRadius = new CornerRadius(value);
+    }
+
+    /// <summary>FloatBarButton hover/pressed brushes, injected as per-instance template resources.</summary>
+    public Brush HoverBackground { get; set; }
+    public Brush PressedBackground { get; set; }
+
+    /// <summary>Replace the icon with custom content (composite glyphs, vector pictograms).</summary>
+    public void SetContent(UIElement content)
+    {
+        _customContent = content;
+        RebuildContent();
+        ApplyVisualState();
+    }
+
+    /// <summary>Register an extra FontIcon so theme/selection foreground reaches it.</summary>
+    public void AddFontIcon(FontIcon icon)
+    {
+        icon.IsTextScaleFactorEnabled = false;
+        _icons.Add(icon);
+        ApplyVisualState();
     }
 
     /// <summary>Use a native vector mouse-pointer pictogram instead of a font glyph.</summary>
@@ -117,8 +241,64 @@ public sealed class TouchIconButton : Button
         };
         _customIcon = new Grid { Width = 24, Height = 24 };
         _customIcon.Children.Add(_customIconOutline);
-        Content = _customIcon;
-        ApplyVisualState();
+        SetContent(_customIcon);
+    }
+
+    private void RebuildContent()
+    {
+        UIElement body = _customContent ?? IconBody();
+        // WinUI does not set FrameworkElement.Parent inside unrooted trees, so Parent-based
+        // detaching misses the real owner. Clear the containers we own explicitly instead:
+        // the body may sit in _contentBorder, the previous icon area, or the caption stack.
+        if (_lastIconArea is not null)
+        {
+            _lastIconArea.Children.Clear();
+            _lastIconArea = null;
+        }
+        if (_lastStack is not null)
+        {
+            _lastStack.Children.Clear();
+            _lastStack = null;
+        }
+        _contentBorder.Child = null;
+        if (_labelText is null)
+        {
+            _label = null;
+            _contentBorder.Child = body;
+            return;
+        }
+        _label = new TextBlock
+        {
+            Text = _labelText,
+            FontSize = _labelFontSize,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Visibility = _showLabel ? Visibility.Visible : Visibility.Collapsed,
+            Margin = LabelMargin,
+        };
+        var stack = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (!double.IsNaN(IconAreaHeight) && IconAreaHeight > 0)
+        {
+            // WPF centers the icon inside a fixed icon area with the caption below; the whole
+            // stack is centered in the cell, so the caption never shifts the icon sideways and
+            // hiding the caption re-centers the icon exactly on the cell center.
+            var area = new Grid { Height = IconAreaHeight };
+            area.Children.Add(body);
+            stack.Children.Add(area);
+            _lastIconArea = area;
+        }
+        else
+        {
+            stack.Children.Add(body);
+        }
+        stack.Children.Add(_label);
+        _contentBorder.Child = stack;
+        _lastStack = stack;
     }
 
     private static void OnIsSelectedChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -134,37 +314,63 @@ public sealed class TouchIconButton : Button
     private void UpdateContent()
     {
         // A vector pictogram (pass-through toggle) owns the content; leave it untouched.
-        if (_customIcon is not null) return;
+        if (_customContent is not null) return;
 
         if (Glyph == Glyphs.Ai)
         {
-            Content = _aiText;
-            ApplyIconForeground();
+            RebuildContent();
+            ApplyVisualState();
             return;
         }
 
         _icon.Glyph = Glyph ?? string.Empty;
-        Content = _icon;
+        RebuildContent();
+        ApplyVisualState();
     }
 
-    private void ApplyIconForeground()
+    /// <summary>
+    /// AI 标记走统一资源层（<see cref="AiGlyph"/>），普通图标仍用 FontIcon；
+    /// 两者的度量盒一致，切换不会改变按钮尺寸或点击区。
+    /// </summary>
+    private UIElement IconBody() => Glyph == Glyphs.Ai ? _aiText : _glyphHost;
+
+
+    /// <summary>Re-apply foreground/selection after theme brush properties change.</summary>
+    public void RefreshVisual() => ApplyVisualState();
+
+    /// <summary>Push hover/pressed/foreground template resources for the WPF FloatBarButtonStyle.</summary>
+    public void ApplyHoverResources(Brush foreground)
     {
-        var brush = ThemeBrushes.Resolve(this, IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush");
-        _icon.Foreground = brush;
-        _aiText.Foreground = brush;
+        if (HoverBackground is not null) Resources["ButtonBackgroundPointerOver"] = HoverBackground;
+        if (PressedBackground is not null) Resources["ButtonBackgroundPressed"] = PressedBackground;
+        Resources["ButtonBackgroundDisabled"] = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        Resources["ButtonForegroundPointerOver"] = foreground;
+        Resources["ButtonForegroundPressed"] = foreground;
+        Resources["ButtonForegroundDisabled"] = foreground;
     }
 
     private void ApplyVisualState()
     {
-        if (IsSelected)
-            Background = ThemeBrushes.Resolve(this, "IcAccentSoftBrush");
+        Brush fg = ContentForeground
+            ?? ThemeBrushes.Resolve(this, IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush");
+        foreach (var icon in _icons) icon.Foreground = fg;
+        if (_label is not null) _label.Foreground = fg;
+        _aiText.Foreground = fg;
+
+        if (SelectionBackground is not null)
+        {
+            // WPF paints the selection wash behind the icon stack; the button body keeps its
+            // own (transparent or solid) background and hover comes from template resources.
+            _contentBorder.Background = IsSelected
+                ? SelectionBackground
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        }
         else
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-
-        ApplyIconForeground();
-
-        if (_customIconOutline is not null)
-            _customIconOutline.Stroke = ThemeBrushes.Resolve(
-                this, IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush");
+        {
+            Background = IsSelected
+                ? ThemeBrushes.Resolve(this, "IcAccentSoftBrush")
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        }
+        if (_customIconOutline is not null) _customIconOutline.Stroke = fg;
     }
 }

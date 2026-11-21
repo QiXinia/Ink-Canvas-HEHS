@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace InkCanvas.Core.Selection;
 
-public enum SelectionHandle { None, Move, TopLeft, TopRight, BottomRight, BottomLeft, Rotate }
+public enum SelectionHandle { None, Move, TopLeft, TopRight, BottomRight, BottomLeft, Rotate, Top, Right, Bottom, Left }
 
 /// <summary>Hit-testing and drag maths for the selection box. Pure, so it is unit-testable.</summary>
 public static class SelectionGeometry
@@ -69,7 +69,9 @@ public static class SelectionGeometry
                     var anchor = OppositeCorner(handle, bounds);
                     float sx = Ratio(from.X - anchor.X, to.X - anchor.X);
                     float sy = Ratio(from.Y - anchor.Y, to.Y - anchor.Y);
-                    if (keepAspect)
+                    if (handle is SelectionHandle.Top or SelectionHandle.Bottom) sx = 1;
+                    if (handle is SelectionHandle.Left or SelectionHandle.Right) sy = 1;
+                    if (keepAspect && handle is not (SelectionHandle.Top or SelectionHandle.Bottom or SelectionHandle.Left or SelectionHandle.Right))
                     {
                         float uniform = MathF.Max(sx, sy);
                         sx = sy = uniform;
@@ -95,6 +97,10 @@ public static class SelectionGeometry
         SelectionHandle.TopRight => new Vector2(b.Left, b.Bottom),
         SelectionHandle.BottomRight => new Vector2(b.Left, b.Top),
         SelectionHandle.BottomLeft => new Vector2(b.Right, b.Top),
+        SelectionHandle.Top => new Vector2(b.Center.X, b.Bottom),
+        SelectionHandle.Right => new Vector2(b.Left, b.Center.Y),
+        SelectionHandle.Bottom => new Vector2(b.Center.X, b.Top),
+        SelectionHandle.Left => new Vector2(b.Right, b.Center.Y),
         _ => b.Center,
     };
 }

@@ -1,107 +1,158 @@
-using InkCanvas.App.Services;
+﻿using InkCanvas.App.Services;
 using InkCanvas.Controls.Animation;
 using InkCanvas.Controls.Controls;
+using InkCanvas.Controls.Theming;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
 namespace InkCanvas.App.Views;
 
-/// <summary>
-/// A scrollable text window used for both the operating guide and the change log.
-/// Renders a small subset of Markdown (headings, bullets, plain paragraphs) — enough for
-/// documentation without pulling in a Markdown dependency.
-/// </summary>
+/// <summary>Guide and release notes with left navigation and a shared WinUI title bar.</summary>
 public sealed class InfoWindow : Window
 {
+    private static readonly FontFamily IconFont = new("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons");
+    private readonly List<Action<int>> _themed = new();
+    private bool _entranceShown;
+    private MinSizeHook _minSize;
+
+    /// <summary>Release notes displayed in a scrollable workspace.</summary>
     public InfoWindow(string title, string markdown, int theme)
     {
         Title = title;
 
-        var body = new StackPanel { Spacing = 8, Padding = new Thickness(24) };
-        foreach (var raw in markdown.ReplaceLineEndings("\n").Split('\n'))
-        {
-            var line = raw.TrimEnd();
-            if (line.Length == 0) { body.Children.Add(new Border { Height = 6 }); continue; }
+        var body = new MarkdownView(theme) { Padding = new Thickness(24) };
+        string version = typeof(InfoWindow).Assembly.GetName().Version?.ToString(3) ?? "3.7.3";
+        body.SetMarkdown(markdown, new Uri("https://github.com/QiXinia/Ink-Canvas-HEHS/blob/v" + version + "/"));
 
-            if (line.StartsWith("### "))
-                body.Children.Add(Heading(line[4..], 15, Microsoft.UI.Text.FontWeights.SemiBold));
-            else if (line.StartsWith("## "))
-                body.Children.Add(Heading(line[3..], 18, Microsoft.UI.Text.FontWeights.SemiBold));
-            else if (line.StartsWith("# "))
-                body.Children.Add(Heading(line[2..], 22, Microsoft.UI.Text.FontWeights.Bold));
-            else if (line.StartsWith("- ") || line.StartsWith("* "))
-                body.Children.Add(Paragraph("•  " + line[2..]));
-            else
-                body.Children.Add(Paragraph(line));
-        }
-
-        var scroll = new ScrollViewer
-        {
-            Content = body,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        };
-
-        var close = new TouchIconButton { Glyph = Glyphs.Close };
-        ToolTipService.SetToolTip(close, "关闭");
-        close.Click += (_, _) => Close();
-
-        var headerText = new TextBlock
-        {
-            Text = title,
-            FontSize = 20,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        var headerGrid = new Grid();
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(headerText, 0);
-        Grid.SetColumn(close, 1);
-        headerGrid.Children.Add(headerText);
-        headerGrid.Children.Add(close);
-
-        var header = new Border
-        {
-            Padding = new Thickness(24, 14, 16, 10),
-            BorderBrush = (Brush)Application.Current.Resources["IcStrokeBrush"],
-            BorderThickness = new Thickness(0, 0, 0, 1),
-            Child = headerGrid,
-        };
-
-        var root = new Grid { Background = (Brush)Application.Current.Resources["IcSurfaceBrush"] };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        Grid.SetRow(header, 0);
-        Grid.SetRow(scroll, 1);
-        root.Children.Add(header);
-        root.Children.Add(scroll);
-        Content = root;
-
-        WindowChrome.MakeBorderless(this, topmost: false, resizable: true);
-        WindowChrome.CenterOnPrimary(this, 720, 760);
-        WindowChrome.ApplyTheme(this, theme);
-        Activated += (_, _) => Motion.PlayEntrance(body, 16f);
+        var workspace = new WindowWorkspace { IsTitleBarAutoPaddingEnabled = false };
+        workspace.AddPage("版本更新", "", () => body);
+        workspace.SelectPage("版本更新");
+        FinishChrome(workspace, theme, 980, 680);
     }
 
-    private static TextBlock Heading(string text, double size, Windows.UI.Text.FontWeight weight) => new()
+    /// <summary>Guide pages preserve the original keyboard shortcuts.</summary>
+    private InfoWindow(int theme)
     {
-        Text = text,
-        FontSize = size,
-        FontWeight = weight,
-        TextWrapping = TextWrapping.Wrap,
-        Margin = new Thickness(0, 8, 0, 2),
-    };
+        Title = "Ink Canvas Artistry 使用指南";
 
-    private static TextBlock Paragraph(string text) => new()
+        var rows = new StackPanel();
+        // The exact 12 WPF rows: key, second key, global badge, description.
+        AddRow(rows, "Ctrl", "Z", false, " ——  撤销");
+        AddRow(rows, "Ctrl", "Y", false, " ——  重做");
+        AddRow(rows, "Ctrl", "E", false, " ——  清屏");
+        AddRow(rows, "Alt", "C", true, " ——  截屏（Capture）", extraTop: true);
+        AddRow(rows, "Alt", "V", true, " ——  显示/隐藏 笑脸右侧工具栏（Visibility）");
+        AddRow(rows, "Alt", "D", true, " ——  切换至批注模式 / 显示或关闭调色板（Draw）");
+        AddRow(rows, "Alt", "Q", true, " ——  退出批注模式（Quit）");
+        AddRow(rows, "Alt", "B", true, " ——  进入/退出 画板（Board）");
+        AddRow(rows, "Alt", "S", false, " ——  切换至选择模式（Select）");
+        AddRow(rows, "Alt", "E", false, " ——  切换至面积擦/墨迹擦功能（Eraser）");
+        AddRow(rows, "Alt", "L", false, " ——  切换至单次直线绘制功能（Line）");
+        AddRow(rows, "Shift", "Esc", true, " ——  退出 PPT 放映");
+        rows.Children.Add(Paragraph("撤销、重做、清屏与工具快捷键仅在书写或选择状态下生效。鼠标模式和输入框中的按键由当前应用或输入框处理。"));
+
+        var workspace = new WindowWorkspace { IsTitleBarAutoPaddingEnabled = false };
+        workspace.AddPage("快捷键", "", () => rows);
+        workspace.AddPage("书写与选择", "", () => new StackPanel { Spacing = 16, Children =
+        {
+            Paragraph("选择画笔或荧光笔即可书写，再次点击工具可调整颜色、粗细、笔尖与笔锋。"),
+            Paragraph("使用选择工具拖出选框。选中后可拖动移动，使用边角控制柄缩放，拖动顶部旋转柄旋转。"),
+            Paragraph("选择菜单提供克隆、样式、变换与删除。开启克隆模式后，每次拖动会保留原对象并产生副本。"),
+            Paragraph("双指可平移和缩放画布。手势选项可控制双指操作与手掌防误触。"),
+        } });
+        workspace.SelectPage("快捷键");
+        FinishChrome(workspace, theme, 1000, 680);
+    }
+
+    private void FinishChrome(FrameworkElement content, int theme, int widthDip, int heightDip)
     {
-        Text = text,
-        TextWrapping = TextWrapping.Wrap,
-        FontSize = 14,
-    };
+        var root = new Grid { Background = PopupBrushes.WindowSurface(theme) };
+        root.Children.Add(content);
+        Content = root;
+        WindowChrome.MakeStandard(this, widthDip, heightDip);
+        WindowFrame.Attach(this, root);
+        _minSize = new MinSizeHook(this, 540, 360);
+        WindowChrome.ApplyTheme(this, theme);
+        ApplyPalette(theme);
+        root.ActualThemeChanged += (_, _) =>
+        {
+            int resolved = root.ActualTheme == ElementTheme.Dark ? 2 : 1;
+            root.Background = PopupBrushes.WindowSurface(resolved);
+            ApplyPalette(resolved);
+        };
+        root.Loaded += (_, _) =>
+        {
+            if (_entranceShown) return;
+            _entranceShown = true;
+            Motion.PlayEntrance(content, 10f);
+        };
+        Closed += (_, _) => { _minSize?.Dispose(); _minSize = null; };
+    }
 
-    public static InfoWindow OpenGuide(int theme) => new("操作指南", GuideText, theme);
+    private void AddRow(StackPanel parent, string key, string second, bool global, string description, bool extraTop = false)
+    {
+        var row = new Grid { MinHeight = 44, ColumnSpacing = 12, Margin = new Thickness(0, extraTop ? 12 : 4, 0, 4) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(140) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var shortcut = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+        shortcut.Children.Add(Keycap(key));
+        shortcut.Children.Add(new TextBlock { Text = "+", VerticalAlignment = VerticalAlignment.Center });
+        shortcut.Children.Add(Keycap(second));
+        row.Children.Add(shortcut);
+        if (global)
+        {
+            var text = new TextBlock { Text = "全局快捷键", FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            var badge = new Border { Padding = new Thickness(8, 4, 8, 4), CornerRadius = new CornerRadius(4),
+                HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Child = text };
+            _themed.Add(theme => { badge.Background = PopupBrushes.BadgeBackground(theme); text.Foreground = PopupBrushes.BadgeForeground(theme); });
+            Grid.SetColumn(badge, 1);
+            row.Children.Add(badge);
+        }
+        var label = new TextBlock { Text = description.Trim(' ', '—'), FontSize = 14,
+            TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        ThemeFg(label);
+        Grid.SetColumn(label, 2);
+        row.Children.Add(label);
+        parent.Children.Add(row);
+    }
+
+    private Border Keycap(string key)
+    {
+        var text = new TextBlock { Text = key, FontSize = 14, VerticalAlignment = VerticalAlignment.Center };
+        ThemeFg(text);
+        var cap = new Border { Padding = new Thickness(8, 4, 8, 4), BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4), Child = text };
+        _themed.Add(theme => cap.BorderBrush = PopupBrushes.Border(theme));
+        return cap;
+    }
+
+    private TextBlock Paragraph(string text)
+    {
+        var tb = new TextBlock
+        {
+            Text = text,
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 14,
+        };
+        ThemeFg(tb);
+        return tb;
+    }
+
+    private void ThemeSurface(Border border)
+        => _themed.Add(t => { border.Background = PopupBrushes.Surface(t); border.BorderBrush = PopupBrushes.Border(t); });
+
+    private void ThemeFg(TextBlock text) => _themed.Add(t => text.Foreground = PopupBrushes.Foreground(t));
+
+    private void ThemeIcon(FontIcon icon) => _themed.Add(t => icon.Foreground = PopupBrushes.Foreground(t));
+
+    private void ApplyPalette(int theme)
+    {
+        foreach (var apply in _themed) apply(theme);
+    }
+
+    public static InfoWindow OpenGuide(int theme) => new(theme);
 
     public static InfoWindow OpenChangeLog(int theme)
     {
@@ -115,43 +166,6 @@ public sealed class InfoWindow : Window
         {
             text = "无法读取更新日志。";
         }
-        return new InfoWindow("更新日志", text, theme);
+        return new InfoWindow("版本更新 - Ink Canvas Artistry", text, theme);
     }
-
-    private const string GuideText = """
-    # Ink Canvas · WinUI 3 操作指南
-
-    ## 三种模式
-    - 屏幕画笔：透明覆盖层铺满主屏，可在任意窗口上书写。点工具栏的锁形按钮进入「穿透模式」，鼠标/触摸会落到下方程序。
-    - 画板：点显示器图标打开黑板/白板，支持多页、方格与横线纸。
-    - 幻灯片：检测到 PowerPoint / WPS 放映后，工具栏自动出现翻页按钮。
-
-    ## 工具
-    - 画笔 / 荧光笔：点按钮弹出调色板，可选颜色、粗细与笔迹风格。
-    - 笔迹风格：「笔锋」笔尖收细、「速度笔锋」快写变细、「均匀线条」等宽。
-    - 橡皮擦：按笔画擦除；手掌/手背接触面积够大时自动当作区域橡皮。
-    - 选择：点笔画选中，拖动内部移动、拖四角缩放、拖上方圆点旋转。选中后工具栏出现删除按钮。
-    - 图形：直线、虚线、箭头、圆与椭圆、双曲线、抛物线、坐标系、圆柱圆锥长方体等。
-
-    ## 触摸与手势
-    - 所有可点目标不小于 40×40 像素。
-    - 双指平移 / 缩放 / 旋转；在设置里可分别开关。
-    - 勾选「双指手势作用于选区」后，有选区时手势只变换选区。
-    - 笔优先：压感笔在书写时，手指不会画出墨迹。
-
-    ## 快捷键
-    - Ctrl+Z 撤销，Ctrl+Y 重做
-    - Alt+1 画笔，Alt+E 橡皮
-    - Ctrl+Shift+C 清空
-
-    ## 其它功能
-    - 倒计时、抽奖（可导入 txt/csv 名单、可不重复）
-    - 截图保存到「图片\\InkCanvas」
-    - 墨迹回放：按绘制顺序重放当前墨迹，可调速与拖动进度
-    - 设置里可检查更新、开关边缘手势抑制、开机自启
-
-    ## 已知限制
-    - 旧版 WPF 的 .isf 墨迹存档无法读取，新格式为 .icink。
-    - 设置文件 Settings.json 与旧版键名兼容，可直接沿用。
-    """;
 }

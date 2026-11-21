@@ -56,6 +56,10 @@ export class InkScene {
   Committed: DrawCommand[] = [];
   Active: DrawCommand | null = null;
   Selection: SelectionOverlay | null = null;
+  // F3：形状拖动预览（世界坐标，与 Active 同款描边，叠在 Live 之后）；默认空数组，存量调用方不受影响。
+  Preview: DrawCommand[] = [];
+  // F3：框选橡皮筋（视图 DIP [left, top, right, bottom]）；无橡皮筋时为 null。
+  Marquee: number[] | null = null;
   DocumentVersion: number = 0;
   View: number[] = [1, 0, 0, 1, 0, 0];
 }

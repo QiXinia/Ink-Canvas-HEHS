@@ -6,21 +6,21 @@
       "id": "pen-pressure",
       "fn": "normalizePointer",
       "input": [{ "Id": 7, "X": 12, "Y": 34, "Pressure": 0.4, "TiltX": 10, "TiltY": -5, "ContactWidth": 0, "ContactHeight": 0, "TimestampNs": 16000000, "Source": 2, "SourceTool": 2 }],
-      "expected": { "Id": 7, "X": 12, "Y": 34, "Pressure": 0.4, "TiltX": 10, "TiltY": -5, "ContactWidth": 0, "ContactHeight": 0, "TimeMs": 16, "Kind": 0 },
+      "expected": { "Id": 7, "X": 12, "Y": 34, "Pressure": 0.4, "TiltX": 10, "TiltY": -5, "ContactWidth": 0, "ContactHeight": 0, "TimeMs": 16, "Kind": 0, "HasPressure": true },
       "tolerance": 1e-6
     },
     {
       "id": "finger-zero-pressure",
       "fn": "normalizePointer",
       "input": [{ "Id": 3, "X": 1, "Y": 2, "Pressure": 0, "TiltX": 0, "TiltY": 0, "ContactWidth": 8, "ContactHeight": 9, "TimestampNs": 500000, "Source": 2, "SourceTool": 1 }],
-      "expected": { "Id": 3, "X": 1, "Y": 2, "Pressure": 0.5, "TiltX": 0, "TiltY": 0, "ContactWidth": 8, "ContactHeight": 9, "TimeMs": 0.5, "Kind": 1 },
+      "expected": { "Id": 3, "X": 1, "Y": 2, "Pressure": 0.5, "TiltX": 0, "TiltY": 0, "ContactWidth": 8, "ContactHeight": 9, "TimeMs": 0.5, "Kind": 1, "HasPressure": false },
       "tolerance": 1e-6
     },
     {
       "id": "mouse-left",
       "fn": "normalizePointer",
       "input": [{ "Id": 1, "X": 5, "Y": 6, "Pressure": 1, "TiltX": 0, "TiltY": 0, "ContactWidth": 0, "ContactHeight": 0, "TimestampNs": 2000000, "Source": 1, "SourceTool": 1 }],
-      "expected": { "Id": 1, "X": 5, "Y": 6, "Pressure": 1, "TiltX": 0, "TiltY": 0, "ContactWidth": 0, "ContactHeight": 0, "TimeMs": 2, "Kind": 2 },
+      "expected": { "Id": 1, "X": 5, "Y": 6, "Pressure": 1, "TiltX": 0, "TiltY": 0, "ContactWidth": 0, "ContactHeight": 0, "TimeMs": 2, "Kind": 2, "HasPressure": false },
       "tolerance": 1e-6
     },
     { "id": "kind-touchpad", "fn": "pointerKind", "input": [2, 4], "expected": 2, "tolerance": 0 },

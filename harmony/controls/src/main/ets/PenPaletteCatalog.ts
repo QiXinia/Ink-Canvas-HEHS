@@ -74,6 +74,11 @@ export function taperKindForIndex(index: number): number {
   return toTaperKind(index);
 }
 
+// The compact palette exposes styles 0/1/2/5; its fourth button is Natural, not SmoothPen.
+export function quickTaperStyleForIndex(index: number): number {
+  return index === 3 ? 5 : index;
+}
+
 export function packedSwatch(swatch: Swatch): number {
   return (((255 << 24) | (swatch.R << 16) | (swatch.G << 8) | swatch.B) >>> 0);
 }

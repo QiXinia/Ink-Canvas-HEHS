@@ -1,5 +1,13 @@
 # PPT / WPS port: parity and integration
 
+## WinUI 3 presentation fixes, 2026-11-20
+
+The floating toolbar saves its physical desktop position before presentation controls change its size. Fullscreen shows dock it at the bottom centre of the presentation display. Reading View and windowed shows use the visible client area of the PowerPoint window. Exiting restores the saved desktop position, fitted to the available work area. Manual placement during the show, folding, DPI changes and removed displays use the existing window placement path.
+
+PowerPoint events now queue a dispatcher refresh for show begin, page change, show end and window activation. Reading View retains an 80 ms polling fallback. Page replacement uses one document notification inside a presenter scene update. Only consumers of transition snapshots receive cloned transition data. A retained COM identity prevents Office proxy recreation from repeatedly reloading an unchanged page. Temporary rejected COM calls retain the previous snapshot. Navigation avoids activating the slideshow window, and navigation panels are shown only when their visibility changes.
+
+The current build passed 777 domain tests, including regression checks for recreated Office proxies and per-slide ink restoration. Real PowerPoint Reading View checks passed for window discovery, bottom-centred placement, folding, position restoration, page-specific ink and single-frame replacement of 1,200 strokes. One run measured 21.3 ms for external navigation and 39.6 ms for restoring the populated page. Idle ink retained the same presented frame. Earlier fullscreen checks passed for placement, restoration, stable ink and atomic switching, with 38.2 ms external navigation and 56.6 ms page restoration. Later automated fullscreen launches returned PowerPoint error `0x80004005`, also reproduced from PowerShell outside Ink Canvas, so the final fullscreen launch sequence could not be reverified. Mixed-DPI hardware and WPS were not exercised in this round. Reports are under `artifacts/ppt-integration-reading`, `artifacts/ppt-integration-check-13` and `artifacts/ppt-integration-tests`.
+
 Source checked for this port: upstream commit `8b2c95b`, chiefly `Ink Canvas/MainWindow_cs/MW_PPT.cs`, `MW_Timer.cs`, `MW_Settings.cs`, `MW_SettingsToLoad.cs`, `MW_Screenshot.cs`, and `Resources/Settings.cs`. This is an adapter-layer port, not a complete migration of the WPF window behavior: the C# feature layer cannot safely reproduce WPF window actions, settings UI, dialogs, animations, screenshots or legacy ISF files by itself.
 
 ## Surface added
@@ -59,7 +67,7 @@ The host owns visible effects but this migration now wires the main ones: slides
 
 | Upstream behavior | Port status |
 |---|---|
-| Find active PowerPoint / WPS COM process; retry from a host poll loop | Late-bound ROT attachment for PowerPoint and `KWPP.Application`; WPS opt-out; explicit UI-STA ownership and managed snapshot-change/failure events. Polling remains host-owned; COM event subscriptions are not installed. |
+| Find active PowerPoint / WPS COM process; retry from a host poll loop | Late-bound ROT attachment for PowerPoint and `KWPP.Application`; WPS opt-out; explicit UI-STA ownership and managed snapshot-change/failure events. The host owns fallback polling and dispatcher refreshes. The adapter subscribes to show begin, next slide, show end and window activation events. |
 | Read active presentation/selected slide, with slideshow-view fallback | Snapshot reads editing view or active slideshow window and reports presentation identity, window, slide ID, index, show position, dimensions, and state. Per-property failures are guarded; details inventory includes hidden and timing properties. |
 | Slideshow begin/slide change/end UI behavior | `PptInkSession` reports begin/slide/end transitions; `ShellController` switches toolbar mode, replaces current overlay ink and clears its selection/history at transitions. Board pages are not used as the slideshow ink store. WPF Storyboard timing/folding/color transitions are replaced with WinUI window/layout updates. |
 | Existing slideshow control and start/end | Next/previous/end and presentation-settings/first/current slide starts, plus one-based `GoToSlide`. Current-slide start uses the Office `SlideShowFromCurrent` command where available; its fallback temporarily applies a slide range and restores settings. No installer/update actions copied. |

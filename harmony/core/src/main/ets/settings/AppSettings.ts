@@ -56,6 +56,8 @@ export interface GestureSettings {
   isEnableTwoFingerRotation: boolean;
   isEnableTwoFingerRotationOnSelection: boolean;
   matrixTransformCenterPoint: number;
+  // 手写笔手势（双击/轻捏）切换工具开关；默认开启。
+  isEnableStylusGesture: boolean;
 }
 
 export interface PowerPointSettings {
@@ -237,7 +239,8 @@ export function createDefaultSettings(): AppSettings {
       AutoSwitchTwoFingerGesture: true,
       isEnableTwoFingerRotation: false,
       isEnableTwoFingerRotationOnSelection: false,
-      matrixTransformCenterPoint: 0
+      matrixTransformCenterPoint: 0,
+      isEnableStylusGesture: true
     },
     inkToShape: {
       isInkToShapeEnabled: true
@@ -360,6 +363,7 @@ export function resetToRecommendation(settings: AppSettings): void {
   settings.gesture.isEnableTwoFingerRotation = false;
   settings.gesture.isEnableTwoFingerRotationOnSelection = true;
   settings.gesture.isEnableMultiTouchMode = true;
+  settings.gesture.isEnableStylusGesture = true;
 
   settings.inkToShape.isInkToShapeEnabled = true;
 

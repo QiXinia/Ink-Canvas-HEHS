@@ -1,37 +1,38 @@
-# Whiteboard port notes
+# 白板 WPF 对照与验证
 
-This port replaces the reconstructed WinUI board shell in `src/InkCanvas.App/Views/BoardWindow.cs` and extends `src/InkCanvas.Features/Board/BoardService.cs`. Upstream behavior and layout references are from commit `8b2c95b` in the original WPF tree.
+本轮直接读取仓库历史 `8b2c95b` 的 WPF 源码进行对照。现有 PowerPoint 风格旋转、克隆模式和套索擦是用户已要求的扩展，在白板中继续保留。
 
-## Source evidence
+| 原版证据 | WinUI 实现与行为 |
+|---|---|
+| `MainWindow.xaml` 的三个 BlackboardSide 容器 | 三个 55 DIP 底栏、页码、上一页、末页加页、独立加页与退出。宽屏保持原位置；空间不足时页导航与工具分两行，并按窗口宽度调整缩放，避免互相覆盖。 |
+| `BoardPenPalette` | 白板「墨迹」打开合并面板，含笔锋、粗细、笔尖模式、墨迹识别、九色普通笔、明暗色板切换、六色荧光笔和不透明度。桌面菜单继续独立。 |
+| `Resources/Styles/Light-Board.xaml` / `Dark-Board.xaml` | 白板和黑板使用原版背景、边框、前景及标题色；弹出面板随白板 UI 缩放，重复点击或落笔收起。 |
+| `BoardBorderTools` | 保留 3×3 工具入口及视频展台/Desmos 启动器，捆绑原版 PNG 图标；视频插入、文件、纸型、清屏、删页、窗口模式等入口继续可用。 |
+| `MW_BoardControls.cs` | 每页独立墨迹、对象和撤销历史；最多 99 页；末页下一页变为加页；在中间加页会插入；切页延续当前颜色、工具、笔宽、橡皮模式；选择和未完成套索随切页清理。 |
+| `MW_FloatBarIcons.cs` 的选择/单指拖动 | 再次点击「选择」全选；Ctrl+A 全选，Delete 删除，Escape 取消套索/选择；更多中可进入单指拖动画布和复位画布。单指拖动改变视口，不改墨迹数据或撤销历史。 |
+| `MW_SelectionGestures.cs` 的衍至新页 | 所有选中墨迹、图片和视频一起复制到新页，副本具有独立标识；一次撤销移除整组副本。大文件字节复用，几何变换独立。 |
+| `MW_SelectionGestures.cs` 的存为图片 | 导出全部选中图片、墨迹与可获取的视频帧，保留对象变换和原版 bounds+10 的尺寸规则；修复图片解码格式不符合 Win2D 要求而被跳过的问题。 |
+| `MW_ElementsControls.cs` | 图片与视频按当前可视画布中心放置；大图开启压缩时实际生成不大于 1920×1080 的图像；旋转/缩放/平移画布中的插入位置正确。 |
+| 媒体插入与显示 | 文件选择包含 Windows 已安装的图像解码格式、ICO、JPEG XR、WebP 和 SVG/SVGZ。栅格格式规范化为 PNG 或 JPEG，SVG 保留矢量源；WebP 使用随应用发布的 libwebp。AVIF/HEIF 等需要目标 Windows 图像扩展，SVG 渲染遵循 Win2D SVG 1.1 子集。白板视频复用媒体数据、源比例和缩略图，对象移动与层级更新不重建播放实例。 |
+| `MW_BoardIcons.cs` 的清屏 | 保留切回画笔后清屏；整页墨迹、图片、视频合并为一个撤销单元，恢复时保持对象顺序。 |
+| `MW_Save&OpenStrokes.cs` 的持久化 | `.icink` 保存/载入页面或整板，包含全部媒体；修复仅含视频页走纯墨迹存档而丢失视频；保留荧光笔透明度与旋转方向。保存/载入不额外复制完整媒体字节。 |
 
-- `Ink Canvas/MainWindow.xaml` lines 797–990: page strip at lower left, centered tool strip, left-side previous/next/add/exit affordances, page indicator; the bottom row is 55 DIP in the WPF layout.
-- `Ink Canvas/MainWindow.xaml` lines 1260–1325, 1888–2015, 2288–2360: selection, pen, area eraser, stroke eraser, shape, undo and redo control groups.
-- `Ink Canvas/MainWindow.xaml` lines 2790–2865: right-side add-page action.
-- `Ink Canvas/MainWindow_cs/MW_BoardControls.cs`: independent page history snapshots; previous/next/add/delete page logic; maximum 99 pages; next at the last page adds one; index display and navigation limits.
-- `Ink Canvas/MainWindow_cs/MW_BoardIcons.cs`: black/white switching, area/stroke eraser modes and shape/palette interactions.
-- `Ink Canvas/MainWindow_cs/MW_ElementsControls.cs` and `Ink Canvas/Helpers/InkCanvasElementsHelper.cs`: embedded image insertion, center/scale on insertion, selectable/movable/resizable elements and element history. The original also supports media; the current WinUI ink controller and this port intentionally do not claim media support.
-- `Ink Canvas/MainWindow_cs/MW_Save&OpenStrokes.cs`: original save/open includes strokes plus canvas children; WPF ISF archives are not the WinUI `.icink` wire format.
-- `LICENSE`: GNU GPL v3. This port does not remove, change or replace the existing license.
+白板打开时，Ctrl+Z/Y、Ctrl+E、Alt+E、Alt+S、Alt+L、Alt+D 作用于当前白板页。回放优先使用选中墨迹；截图对应的墨迹自动保存也使用当前页。切页、关闭画板和落笔会收起对应的工具面板。
 
-## Implemented / adapted
+本轮修正主题切换的工具按钮误亮，按钮的底色由明确的选中/悬停/按下/禁用状态绘制。手势面板使用固定内容宽度，普通开关保持原生尺寸，中心点选项与枚举一一对应；开启多指书写时双指选项禁用，关闭多指书写后恢复原设置。
 
-- Preserves left/page, center/tools and right/actions groups in a dock at the bottom. Windowed view uses the new `WindowChrome.AddTitleBar` helper; fullscreen switches to the same board content without the title strip.
-- Per-page `InkController`, including independent ink document, undo/redo and transform. Upstream page count ceiling is 99; next at the final page creates a page, while navigating back only visits existing pages. Deleting the last page clears it instead of reaching zero pages.
-- Page navigation count, add/delete/previous/next affordances and disabled state.
-- Selection, pen, highlighter, whole-stroke eraser, shape catalogue, undo/redo, black/white/grid/lined backgrounds, background scale and grid spacing controls. They call current controller/service functionality; shape/erase semantics are described accurately for the existing engine.
-- Save/open current page and entire board via `.icink`. Existing single-page InkFileStore documents continue to read; new board packages use a versioned JSON envelope stored with the `.icink` extension. A legacy single-page `.icink` can be opened as a board.
-- Raster images are embedded per page and selectable, moveable, aspect-preserving resizable, deleteable and included in page-level undo and the board package. Coordinates and dimensions are DIP-based.
-- Destructive clear, page delete and replacement-open actions ask for confirmation.
-- Existing `BoardWindow(AppServices, IShellActions)` binds the board's current controller into the floating toolbar; `CurrentPageChanged` fires after surface rebind. Closing the board via the board window restores screen overlay and floating-bar controller.
+「播放墨迹」在当前页面直接播放选中墨迹（未选中时播放全部墨迹），图片、视频与其他内容保留。独立浮动控制栏可从标题拖动，支持播放/暂停、重新播放、拖动进度、速度和关闭；回放结束或退出恢复完整原稿，修改工具、编辑内容、切页或关闭画板会结束回放。播放不会改写文档或撤销历史；暂停和播放完成后停止回放定时器。
 
-## Deliberate gaps / adaptation notes
+## 验证
 
-- This is a functional WinUI reconstruction, not a pixel-identical WPF XAML/resource/animation recreation. Board surface style and spacing use current WinUI tokens, and actions are labelled text rather than the original vector/font icon artwork.
-- The legacy pen flyout exposes colors, width presets and taper. It does not port all legacy highlighter alpha controls, palette geometry, nib-mode toggles, gesture-mode toggles, platform-specific stylus classifier options, launch-EasiCamera/Desmos shortcuts, timers, random selection, screenshot, replay, settings, or guide entrypoints. These require APIs or dependencies outside the owned files; no inert/fake feature controls are exposed.
-- Eraser behavior is the current controller's whole-stroke hit erasure. It is not WPF's partial point erasure. Media-element insertion is not implemented; image insert/display/selection transform is.
-- `.isf` compatibility is not added. The project explicitly documents the migration break and current `.icink` format in `src/InkCanvas.Features/Persistence/Stores.cs` and `src/InkCanvas.App/Views/SettingsWindow.cs`; old archives are not presented as supported.
-- A single global board background and grid spacing are retained, like the legacy `Settings.Canvas.UsingWhiteboard`; per-page ink and images are independent.
+2026-11-18：Release 编译通过，194 项单元测试通过。运行时自检覆盖分页状态、混合对象操作、主题反复切换、黑白手势面板布局/设置联动、原地回放与原稿恢复，以及既有旋转、克隆、套索擦。新预览与检查记录位于 `artifacts/playback-writing-release/`。快速书写缓存的像素一致性与性能见 [PERFORMANCE.md](PERFORMANCE.md)。完整自检中原有桌面工具栏透明回退检查仍失败，不能将其报告为全部通过。
 
-## Verification
+窗口检查覆盖 50% / 100% / 150% 白板 UI 缩放下的底栏不越界、不重叠；黑白双栏墨迹面板结构与颜色选择；多选图片 PNG 导出的像素命中。自检生成白板、黑白墨迹选项及更多菜单预览，均保存在 `artifacts/board-release-check/`。
 
-Per user instruction, behavioral/UI verification and hardware checks were skipped. The integrated Release solution compile passed with zero warnings/errors. No board workflow or drag/drop UI was exercised in this pass.
+## 尚未覆盖
+
+- 旧 `.isf/.icstk/.icart` 读取仍未接入，当前存档格式为 `.icink`。
+- WinUI 与 WPF 的文字度量、系统弹出动画和窗口合成存在差异，未认证全界面逐像素一致。
+- 当前桌面会话无法注入真实鼠标输入，该项记录为 `available: false`；触摸/压感笔、媒体解码/视频帧捕获、跨屏 DPI 与 Office/WPS 需要目标设备复核。
+
+源码主要位于 `Views/BoardWindow.cs`、`Controls/BoardPenPalette.cs` 与 `Features/Board/BoardService.cs`；回归位于 `Diagnostics/BoardFeatureRegression.cs` 和 `Diagnostics/BoardWindowRegression.cs`。

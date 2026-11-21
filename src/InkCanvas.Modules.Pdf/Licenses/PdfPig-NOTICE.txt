@@ -1,0 +1,7 @@
+PdfPig 0.1.16
+https://github.com/UglyToad/PdfPig/tree/v0.1.16
+
+Distributed under the Apache License, Version 2.0.
+The complete upstream LICENSE, including the PDFBox, FontBox and Adobe component
+notices, is included alongside this file as PdfPig.txt. Upstream v0.1.16 does not
+provide a separate root NOTICE file.

@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup><InternalsVisibleTo Include="InkCanvas" /></ItemGroup>
   <PropertyGroup>
     <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>

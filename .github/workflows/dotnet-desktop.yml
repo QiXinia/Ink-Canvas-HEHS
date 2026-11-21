@@ -26,6 +26,9 @@ jobs:
       - name: Test
         run: dotnet test tests/InkCanvas.Core.Tests/InkCanvas.Core.Tests.csproj -c Release -p:Platform=x64 --no-build
 
+      - name: Test legacy import plugin
+        run: dotnet test tests/InkCanvas.LegacyImport.Tests/InkCanvas.LegacyImport.Tests.csproj -c Release -p:Platform=x64 --no-build
+
       - name: Publish
         run: dotnet publish src/InkCanvas.App/InkCanvas.App.csproj -c Release -p:Platform=x64 -o artifacts/app
 

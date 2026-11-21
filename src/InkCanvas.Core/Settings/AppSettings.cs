@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace InkCanvas.Core.Settings;
@@ -23,6 +23,8 @@ public sealed class AppSettings
 
     /// <summary>旧版实验特性开关；保留节点以保证旧 Settings.json 读入后不丢字段。</summary>
     [JsonPropertyName("experimental")] public ExperimentalSettings Experimental { get; set; } = new();
+    [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
+    [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
 
     private AiSettings _ai = new();
 
@@ -49,6 +51,155 @@ public sealed class AppSettings
 
     public AppSettings Clone() =>
         JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(this)) ?? new AppSettings();
+
+    /// <summary>
+    /// 1:1 port of upstream SetSettingsToRecommendation() (MW_Settings.cs): the "重置设置"
+    /// default set. Mutates in place instead of replacing the instance so live references
+    /// held by services (AutoSaveService's Automation, Palm's Advanced) stay valid; the
+    /// caller re-applies and saves afterwards. Upstream keeps the auto-delete configuration
+    /// across a reset, and fields it does not list fall back to the constructor defaults
+    /// (which match upstream Settings.cs).
+    /// </summary>
+    public void ResetToRecommendation()
+    {
+        bool autoDelSavedFiles = Automation.AutoDelSavedFiles;
+        int autoDelDaysThreshold = Automation.AutoDelSavedFilesDaysThreshold;
+
+        Advanced.IsSpecialScreen = true;
+        Advanced.IsQuadIR = false;
+        Advanced.TouchMultiplier = 0.3;
+        Advanced.NibModeBoundsWidth = 5;
+        Advanced.FingerModeBoundsWidth = 20;
+        Advanced.NibModeBoundsWidthThresholdValue = 2.5;
+        Advanced.FingerModeBoundsWidthThresholdValue = 2.5;
+        Advanced.NibModeBoundsWidthEraserSize = 0.8;
+        Advanced.FingerModeBoundsWidthEraserSize = 0.8;
+        Advanced.IsLogEnabled = true;
+        Advanced.IsSecondConfimeWhenShutdownApp = false;
+        Advanced.IsEnableEdgeGestureUtil = false;
+
+        Appearance.IsEnableDisPlayFloatBarText = false;
+        Appearance.IsEnableDisPlayNibModeToggler = false;
+        Appearance.IsColorfulViewboxFloatingBar = false;
+        Appearance.FloatingBarScale = 100.0;
+        Appearance.BlackboardScale = 100.0;
+        Appearance.FloatingBarBottomMargin = 100.0; // upstream constructor default
+        Appearance.IsTransparentButtonBackground = true;
+        Appearance.IsShowExitButton = true;
+        Appearance.IsShowEraserButton = true;
+        Appearance.IsShowHideControlButton = false;
+        Appearance.IsShowLRSwitchButton = false;
+        Appearance.IsShowModeFingerToggleSwitch = true;
+        Appearance.Theme = 0;
+
+        Automation.IsAutoFoldInEasiNote = true;
+        Automation.IsAutoFoldInEasiNoteIgnoreDesktopAnno = true;
+        Automation.IsAutoFoldInEasiCamera = true;
+        Automation.IsAutoFoldInEasiNote3C = false;
+        Automation.IsAutoFoldInSeewoPincoTeacher = false;
+        Automation.IsAutoFoldInHiteTouchPro = false;
+        Automation.IsAutoFoldInHiteCamera = false;
+        Automation.IsAutoFoldInWxBoardMain = false;
+        Automation.IsAutoFoldInOldZyBoard = false;
+        Automation.IsAutoFoldInMSWhiteboard = false;
+        Automation.IsAutoFoldInPPTSlideShow = false;
+        Automation.IsAutoKillPptService = false;
+        Automation.IsAutoKillEasiNote = false;
+        Automation.IsSaveScreenshotsInDateFolders = false;
+        Automation.IsAutoSaveStrokesAtScreenshot = true;
+        Automation.IsAutoSaveStrokesAtClear = true;
+        Automation.IsAutoClearWhenExitingWritingMode = false;
+        Automation.MinimumAutomationStrokeNumber = 0;
+        Automation.AutoSavedStrokesLocation = @"D:\Ink Canvas"; // upstream constructor default
+        Automation.AutoDelSavedFiles = autoDelSavedFiles;
+        Automation.AutoDelSavedFilesDaysThreshold = autoDelDaysThreshold;
+
+        PowerPoint.IsShowPPTNavigationBottom = false;
+        PowerPoint.IsShowPPTNavigationSides = true; // upstream constructor default
+        PowerPoint.IsShowBottomPPTNavigationPanel = true;
+        PowerPoint.IsShowSidePPTNavigationPanel = true;
+        PowerPoint.PowerPointSupport = true;
+        PowerPoint.IsShowCanvasAtNewSlideShow = true;
+        PowerPoint.IsNoClearStrokeOnSelectWhenInPowerPoint = true;
+        PowerPoint.IsShowStrokeOnSelectInPowerPoint = false;
+        PowerPoint.IsAutoSaveStrokesInPowerPoint = true;
+        PowerPoint.IsAutoSaveScreenShotInPowerPoint = true;
+        PowerPoint.IsNotifyPreviousPage = false;
+        PowerPoint.IsNotifyHiddenPage = false;
+        PowerPoint.IsNotifyAutoPlayPresentation = true;
+        PowerPoint.IsEnableTwoFingerGestureInPresentationMode = false;
+        PowerPoint.IsEnableFingerGestureSlideShowControl = false;
+        PowerPoint.IsSupportWPS = true;
+
+        Canvas.InkWidth = 2.5;
+        Canvas.HighlighterWidth = null;
+        Canvas.InkAlpha = 80;
+        Canvas.IsCompressPicturesUploaded = false; // upstream constructor default
+        Canvas.IsShowCursor = false;
+        Canvas.InkStyle = 0;
+        Canvas.PenNib = Ink.PenNib.Round;
+        Canvas.InkWashWidth = 30;
+        Canvas.InkWash = Ink.InkWashBrushOptions.Default;
+        Canvas.PenColor = null;
+        Canvas.HighlighterColor = null;
+        Canvas.ShapeKind = null;
+        Canvas.EraserSize = 1;
+        Canvas.EraserType = 0;
+        Canvas.HideStrokeWhenSelecting = false;
+        Canvas.UsingWhiteboard = false;
+
+        Gesture.MatrixTransformCenterPoint = MatrixTransformCenterPointOptions.CanvasCenterPoint;
+        Gesture.AutoSwitchTwoFingerGesture = true;
+        Gesture.IsEnableTwoFingerTranslate = true;
+        Gesture.IsEnableTwoFingerZoom = false;
+        Gesture.IsEnableTwoFingerRotation = false;
+        Gesture.IsEnableTwoFingerRotationOnSelection = true;
+        Gesture.IsEnableMultiTouchMode = true; // upstream constructor default
+
+        InkToShape.IsInkToShapeEnabled = true;
+        InkToShape = new();
+        Canvas.UseHardwarePressure = true;
+        Canvas.UsePenTilt = true;
+        Gesture.PenHasPriority = true;
+        Gesture.PalmErases = true;
+
+        Startup.IsEnableNibMode = false;
+        Startup.IsAutoUpdate = true;
+        Startup.IsAutoUpdateWithSilence = true;
+        Startup.AutoUpdateWithSilenceStartTime = "18:20";
+        Startup.AutoUpdateWithSilenceEndTime = "07:40";
+        Startup.IsFoldAtStartup = false;
+        Display = new();
+
+        Rand.PeopleCount = 60; // upstream constructor default
+        Rand.IsNotRepeatName = false;
+        Rand.SamplingMode = LotterySamplingMode.SoftCooldown;
+        Rand.CooldownHalfLifeDays = 10;
+        Rand.CooldownPenaltyStrength = 1;
+        Experimental = new ExperimentalSettings();
+    }
+}
+
+public sealed class StorageSettings
+{
+    public bool AutomaticallyCleanCache { get; set; } = true;
+    public int UpdateCacheDays { get; set; } = 7;
+}
+
+/// <summary>
+/// 旧版实验特性开关。迁移后未参与实际逻辑，但原样读写，避免旧 Settings.json 字段丢失。
+/// </summary>
+public sealed class ExperimentalSettings
+{
+    [JsonPropertyName("ScreenContentTracking")] public bool ScreenContentTracking { get; set; }
+    [JsonPropertyName("FollowScroll")] public bool FollowScroll { get; set; } = true;
+    [JsonPropertyName("FollowZoom")] public bool FollowZoom { get; set; } = true;
+    [JsonPropertyName("MaskFixedRegions")] public bool MaskFixedRegions { get; set; } = true;
+    [JsonPropertyName("RememberPages")] public bool RememberPages { get; set; } = true;
+    [JsonPropertyName("PreserveUnchangedRegions")] public bool PreserveUnchangedRegions { get; set; } = true;
+    [JsonPropertyName("Word")] public bool Word { get; set; } = true;
+    [JsonPropertyName("PowerPoint")] public bool PowerPoint { get; set; } = true;
+    [JsonPropertyName("Edge")] public bool Edge { get; set; } = true;
 }
 
 /// <summary>第一轮功能区开关，供后续新功能按需回退；默认全部开启。</summary>
@@ -85,23 +236,31 @@ public enum OptionalOperation { Yes, No, Ask }
 
 public sealed class CanvasSettings
 {
+    public double InkWashWidth { get; set; } = 30;
+    public Ink.InkWashBrushOptions InkWash { get; set; } = Ink.InkWashBrushOptions.Default;
+    public bool UseHardwarePressure { get; set; } = true;
+    public bool UsePenTilt { get; set; } = true;
     [JsonPropertyName("inkWidth")] public double InkWidth { get; set; } = 2.5;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("highlighterWidth")] public double? HighlighterWidth { get; set; }
     [JsonPropertyName("inkAlpha")] public int InkAlpha { get; set; } = 140;
     [JsonPropertyName("isCompressPicturesUploaded")] public bool IsCompressPicturesUploaded { get; set; }
     [JsonPropertyName("isShowCursor")] public bool IsShowCursor { get; set; }
 
-    /// <summary>0 = nib taper, 1 = velocity taper, 2 = uniform. Maps to <see cref="Ink.TaperKind"/>.</summary>
+    /// <summary>Persisted pen-style index, mapped by <see cref="OriginalMenuCatalog.ToTaperKind"/>.</summary>
     [JsonPropertyName("inkStyle")] public int InkStyle { get; set; }
+    [JsonPropertyName("penNib")] public Ink.PenNib PenNib { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("penColor")] public uint? PenColor { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("highlighterColor")] public uint? HighlighterColor { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("shapeKind")] public Shapes.ShapeKind? ShapeKind { get; set; }
 
-    /// <summary>旧版笔尖类型（0 默认）；仅用于读写兼容，不改变当前绘制实现。</summary>
-    [JsonPropertyName("penNib")] public int PenNib { get; set; }
-
-    /// <summary>旧版荧光笔宽度；为空表示旧文件未提供。</summary>
-    [JsonPropertyName("highlighterWidth")] public double? HighlighterWidth { get; set; }
 
     [JsonPropertyName("eraserSize")] public int EraserSize { get; set; } = 2;
 
-    /// <summary>0 = toggle by icon, 1 = area eraser, 2 = stroke eraser.</summary>
+    /// <summary>0 = legacy default, 1 = area eraser, 2 = stroke eraser, 3 = lasso eraser.</summary>
     [JsonPropertyName("eraserType")] public int EraserType { get; set; }
 
     [JsonPropertyName("hideStrokeWhenSelecting")] public bool HideStrokeWhenSelecting { get; set; } = true;
@@ -118,6 +277,8 @@ public enum MatrixTransformCenterPointOptions
 
 public sealed class GestureSettings
 {
+    public bool PenHasPriority { get; set; } = true;
+    public bool PalmErases { get; set; } = true;
     [JsonPropertyName("isEnableMultiTouchMode")] public bool IsEnableMultiTouchMode { get; set; } = true;
     [JsonPropertyName("isEnableTwoFingerZoom")] public bool IsEnableTwoFingerZoom { get; set; } = true;
     [JsonPropertyName("isEnableTwoFingerTranslate")] public bool IsEnableTwoFingerTranslate { get; set; } = true;
@@ -125,6 +286,9 @@ public sealed class GestureSettings
     [JsonPropertyName("isEnableTwoFingerRotation")] public bool IsEnableTwoFingerRotation { get; set; }
     [JsonPropertyName("isEnableTwoFingerRotationOnSelection")] public bool IsEnableTwoFingerRotationOnSelection { get; set; }
     [JsonPropertyName("matrixTransformCenterPoint")] public MatrixTransformCenterPointOptions MatrixTransformCenterPoint { get; set; } = MatrixTransformCenterPointOptions.CanvasCenterPoint;
+
+    /// <summary>旧版手写笔手势开关；保留持久化键以兼容 parity 向量与旧 Settings.json。</summary>
+    [JsonPropertyName("isEnableStylusGesture")] public bool IsEnableStylusGesture { get; set; } = true;
 
     [JsonIgnore]
     public bool IsEnableTwoFingerGesture => IsEnableTwoFingerZoom || IsEnableTwoFingerTranslate || IsEnableTwoFingerRotation;
@@ -141,6 +305,12 @@ public sealed class StartupSettings
     [JsonPropertyName("isAutoUpdateWithSilenceEndTime")] public string AutoUpdateWithSilenceEndTime { get; set; } = "00:00";
     [JsonPropertyName("isEnableNibMode")] public bool IsEnableNibMode { get; set; }
     [JsonPropertyName("isFoldAtStartup")] public bool IsFoldAtStartup { get; set; }
+}
+
+public sealed class DisplaySettings
+{
+    [JsonPropertyName("allDisplays")] public bool AllDisplays { get; set; } = true;
+    [JsonPropertyName("enabledDevices")] public List<string> EnabledDevices { get; set; } = new();
 }
 
 public sealed class AppearanceSettings
@@ -233,27 +403,48 @@ public sealed class AdvancedSettings
 public sealed class InkToShapeSettings
 {
     [JsonPropertyName("isInkToShapeEnabled")] public bool IsInkToShapeEnabled { get; set; } = true;
+    public int HoldMilliseconds { get; set; } = 450;
+    public bool AutoAlign { get; set; } = true;
+    public double AlignmentAngle { get; set; } = 5;
+    public bool RecognizePolygons { get; set; } = true;
+    public bool RecognizeRoundShapes { get; set; } = true;
+    public bool RecognizeCube { get; set; } = true;
+    public bool RecognizeAxes { get; set; } = true;
 }
 
 public sealed class RandSettings
 {
+    private LotterySamplingMode _samplingMode;
+    private double _halfLifeDays = 10, _penaltyStrength = 1;
     [JsonPropertyName("peopleCount")] public int PeopleCount { get; set; } = 60;
-    [JsonPropertyName("isNotRepeatName")] public bool IsNotRepeatName { get; set; }
-}
-/// <summary>
-/// 旧版实验特性开关。迁移后未参与实际逻辑，但原样读写，避免旧 Settings.json 字段丢失。
-/// </summary>
-public sealed class ExperimentalSettings
-{
-    [JsonPropertyName("ScreenContentTracking")] public bool ScreenContentTracking { get; set; }
-    [JsonPropertyName("FollowScroll")] public bool FollowScroll { get; set; } = true;
-    [JsonPropertyName("FollowZoom")] public bool FollowZoom { get; set; } = true;
-    [JsonPropertyName("MaskFixedRegions")] public bool MaskFixedRegions { get; set; } = true;
-    [JsonPropertyName("RememberPages")] public bool RememberPages { get; set; } = true;
-    [JsonPropertyName("PreserveUnchangedRegions")] public bool PreserveUnchangedRegions { get; set; } = true;
-    [JsonPropertyName("Word")] public bool Word { get; set; } = true;
-    [JsonPropertyName("PowerPoint")] public bool PowerPoint { get; set; } = true;
-    [JsonPropertyName("Edge")] public bool Edge { get; set; } = true;
+    [JsonPropertyName("isNotRepeatName")]
+    public bool IsNotRepeatName
+    {
+        get => SamplingMode == LotterySamplingMode.RoundWithoutReplacement;
+        set
+        {
+            if (value) _samplingMode = LotterySamplingMode.RoundWithoutReplacement;
+            else if (_samplingMode == LotterySamplingMode.RoundWithoutReplacement) _samplingMode = LotterySamplingMode.SoftCooldown;
+        }
+    }
+    [JsonPropertyName("samplingMode")]
+    public LotterySamplingMode SamplingMode
+    {
+        get => _samplingMode;
+        set => _samplingMode = Enum.IsDefined(value) ? value : LotterySamplingMode.SoftCooldown;
+    }
+    [JsonPropertyName("cooldownHalfLifeDays")]
+    public double CooldownHalfLifeDays
+    {
+        get => _halfLifeDays;
+        set => _halfLifeDays = double.IsFinite(value) ? Math.Clamp(value, .25, 3650) : 10;
+    }
+    [JsonPropertyName("cooldownPenaltyStrength")]
+    public double CooldownPenaltyStrength
+    {
+        get => _penaltyStrength;
+        set => _penaltyStrength = double.IsFinite(value) ? Math.Clamp(value, .1, 10) : 1;
+    }
 }
 
 /// <summary>课堂工具箱配置：场景预设、倒计时与常用参数；新字段只追加。</summary>
@@ -285,3 +476,5 @@ public sealed class ClassroomSettings
     [JsonPropertyName("magnifierX")] public int MagnifierX { get; set; } = int.MinValue;
     [JsonPropertyName("magnifierY")] public int MagnifierY { get; set; } = int.MinValue;
 }
+
+public enum LotterySamplingMode { SoftCooldown, Uniform, RoundWithoutReplacement }

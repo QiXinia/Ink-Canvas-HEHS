@@ -1,0 +1,72 @@
+{
+  "id": "two-finger-damping",
+  "entry": "harmony/core/src/main/ets/ink/TwoFingerManipulator.ts",
+  "cases": [
+    {
+      "id": "damped-pinch",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": false, "allowRotation": false, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [1, 0, 0, 1, 0, 0], 0, 0,
+        [{ "AX": -5, "AY": 0, "BX": 5, "BY": 0 }, { "AX": -10, "AY": 0, "BX": 10, "BY": 0 }]
+      ],
+      "expected": { "changed": [false, true], "final": [1.8403753, 0, 0, 1.8403753, 0, 0] },
+      "tolerance": 0.0001
+    },
+    {
+      "id": "damped-pinch-upper-limit",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": false, "allowRotation": false, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [7, 0, 0, 7, 0, 0], 0, 0,
+        [{ "AX": -5, "AY": 0, "BX": 5, "BY": 0 }, { "AX": -10, "AY": 0, "BX": 10, "BY": 0 }]
+      ],
+      "expected": { "changed": [false, true], "final": [8, 0, 0, 8, 0, 0] },
+      "tolerance": 0.0001
+    },
+    {
+      "id": "damped-pinch-lower-limit",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": false, "allowRotation": false, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [0.3, 0, 0, 0.3, 0, 0], 0, 0,
+        [{ "AX": -50, "AY": 0, "BX": 50, "BY": 0 }, { "AX": -5, "AY": 0, "BX": 5, "BY": 0 }]
+      ],
+      "expected": { "changed": [false, true], "final": [0.2, 0, 0, 0.2, 0, 0] },
+      "tolerance": 0.0001
+    },
+    {
+      "id": "dead-zone-preserves-translation",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": true, "allowRotation": true, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [1, 0, 0, 1, 0, 0], 0, 0,
+        [{ "AX": 0, "AY": 0, "BX": 1, "BY": 0 }, { "AX": 1, "AY": 1, "BX": 2, "BY": 1 }]
+      ],
+      "expected": { "changed": [false, true], "final": [1, 0, 0, 1, 1, 1] },
+      "tolerance": 0.0001
+    },
+    {
+      "id": "dead-zone-suppresses-zoom-and-rotation",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": false, "allowRotation": true, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [1, 0, 0, 1, 0, 0], 0, 0,
+        [{ "AX": 0, "AY": 0, "BX": 1, "BY": 0 }, { "AX": 0, "AY": 0, "BX": 0, "BY": 1 }]
+      ],
+      "expected": { "changed": [false, false], "final": [1, 0, 0, 1, 0, 0] },
+      "tolerance": 0.0001
+    },
+    {
+      "id": "damped-pinch-roundtrip",
+      "fn": "simulateTwoFinger",
+      "input": [
+        { "allowZoom": true, "allowTranslate": false, "allowRotation": false, "minScale": 0.2, "maxScale": 8, "zoomDamping": 0.88, "zoomDeadZone": 2 },
+        [1, 0, 0, 1, 0, 0], 0, 0,
+        [{ "AX": -5, "AY": 0, "BX": 5, "BY": 0 }, { "AX": -10, "AY": 0, "BX": 10, "BY": 0 }, { "AX": -5, "AY": 0, "BX": 5, "BY": 0 }]
+      ],
+      "expected": { "changed": [false, true, true], "final": [1, 0, 0, 1, 0, 0] },
+      "tolerance": 0.0001
+    }
+  ]
+}

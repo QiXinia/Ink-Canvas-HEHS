@@ -139,7 +139,8 @@ const DEF_GESTURE = new SectionDef('gesture', [
   new FieldDef('AutoSwitchTwoFingerGesture', BOOL),
   new FieldDef('isEnableTwoFingerRotation', BOOL),
   new FieldDef('isEnableTwoFingerRotationOnSelection', BOOL),
-  new FieldDef('matrixTransformCenterPoint', INT)
+  new FieldDef('matrixTransformCenterPoint', INT),
+  new FieldDef('isEnableStylusGesture', BOOL)
 ]);
 
 const DEF_INK_TO_SHAPE = new SectionDef('inkToShape', [

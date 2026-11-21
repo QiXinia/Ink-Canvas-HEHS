@@ -1,6 +1,8 @@
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Selection;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Geometry;
+using Microsoft.Graphics.Canvas.Text;
 using System.Numerics;
 
 namespace InkCanvas.Ink.Rendering;
@@ -17,6 +19,11 @@ namespace InkCanvas.Ink.Rendering;
 public sealed class InkSceneRenderer : IDisposable
 {
     public StrokeRenderer Strokes { get; } = new();
+    private readonly StrokeRenderer _extensionStrokes = new();
+    public ImageSceneRenderer Images { get; }
+
+    public InkSceneRenderer() : this(0) { }
+    public InkSceneRenderer(uint maximumImageDimension) => Images = new() { MaximumDecodeDimension = maximumImageDimension };
 
     public bool ShowSelectionOutline { get; set; } = true;
 
@@ -25,11 +32,17 @@ public sealed class InkSceneRenderer : IDisposable
     {
         if (controller is null) return;
         var view = transformOverride ?? controller.ViewTransform;
-        foreach (var stroke in controller.Document.Strokes)
-            Strokes.Draw(session, stroke, view);
+        Images.Retain(controller);
+        foreach (var item in controller.DrawingObjects) DrawObject(session, controller, item, view);
 
-        if (ShowSelectionOutline && controller.Selection.Count > 0)
-            DrawSelection(session, controller, view);
+    }
+
+    public void DrawObject(CanvasDrawingSession session, InkController controller, DrawingObject item, Matrix3x2 view)
+    {
+        if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image) Images.Draw(session, image, view);
+        if (item.Stroke is { } stroke && controller.Playback?.Includes(stroke) != true && !controller.IsAnimatingDot(stroke)
+            && !controller.IsRecognitionPreviewSource(stroke))
+            Strokes.Draw(session, stroke, controller.IsPreviewStroke(stroke) ? controller.SelectionPreviewTransform * view : view);
     }
 
     /// <summary>The in-progress stroke and shape preview: the only part that moves every frame.</summary>
@@ -41,10 +54,62 @@ public sealed class InkSceneRenderer : IDisposable
     {
         if (controller is null) return;
         var view = transformOverride ?? controller.ViewTransform;
+        if (controller.Playback is { } playback)
+        {
+            Strokes.RetainLive(playback.VisibleStrokes);
+            foreach (var stroke in playback.VisibleStrokes) Strokes.Draw(session, stroke, view);
+            return;
+        }
+        Strokes.RetainLive(controller.LiveStrokes);
         foreach (var stroke in controller.LiveStrokes)
-            Strokes.Draw(session, stroke, view);
+            if (!controller.IsRecognitionPreviewSource(stroke)) Strokes.Draw(session, stroke, view);
+        foreach (var stroke in controller.RecognitionPreview) Strokes.Draw(session, stroke, view);
         foreach (var stroke in controller.ShapePreview)
             Strokes.Draw(session, stroke, view);
+        _extensionStrokes.Retain(controller.ExtensionPreview);
+        foreach (var stroke in controller.ExtensionPreview)
+            _extensionStrokes.Draw(session, stroke, view);
+        foreach (var animation in controller.DotAnimations)
+            Strokes.Draw(session, animation.Preview, view);
+        if (controller.IsLassoErasing) DrawLasso(session, controller, view);
+        if (ShowSelectionOutline && controller.Tool == InkTool.Select) DrawSelection(session, controller, view);
+        if (controller.IsEraserPreviewVisible) DrawEraserPreview(session, controller, view);
+        if (controller.IsPenCursorVisible)
+        {
+            if (Matrix3x2.Invert(controller.ViewTransform, out var inverse))
+            {
+                var cursorView = inverse * view;
+                var center = Vector2.Transform(controller.PenCursorCenter, cursorView);
+                float radius = controller.PenCursorRadius * MathF.Sqrt(MathF.Abs(cursorView.GetDeterminant()));
+                session.DrawCircle(center, radius, Windows.UI.Color.FromArgb(230, 255, 255, 255), 2);
+                session.DrawCircle(center, radius, Windows.UI.Color.FromArgb(230, 30, 30, 30), 1);
+            }
+        }
+    }
+
+    /// <summary>Allows page hosts to show selection handles outside the clipped paper extent.</summary>
+    public void DrawSelectionOverlay(CanvasDrawingSession session, InkController controller)
+    {
+        if (controller?.Playback is null && controller?.Tool == InkTool.Select)
+            DrawSelection(session, controller, controller.ViewTransform);
+    }
+
+    private static void DrawEraserPreview(CanvasDrawingSession session, InkController controller, Matrix3x2 view)
+    {
+        float scale = MathF.Sqrt(MathF.Abs(view.GetDeterminant()));
+        if (scale < .0001f) return;
+        var previous = session.Transform;
+        try
+        {
+            session.Transform = view;
+            var center = controller.EraserPreviewCenter;
+            float radius = controller.EraserPreviewRadius;
+            session.FillCircle(center, radius, Windows.UI.Color.FromArgb(24, 255, 255, 255));
+            // Two contrasting outlines remain legible over dark ink, whiteboards and slides.
+            session.DrawCircle(center, radius, Windows.UI.Color.FromArgb(220, 0, 0, 0), 2.5f / scale);
+            session.DrawCircle(center, radius, Windows.UI.Color.FromArgb(240, 255, 255, 255), 1 / scale);
+        }
+        finally { session.Transform = previous; }
     }
 
     public void Draw(CanvasDrawingSession session, InkController controller)
@@ -53,39 +118,91 @@ public sealed class InkSceneRenderer : IDisposable
         DrawLive(session, controller);
     }
 
+    private static void DrawLasso(CanvasDrawingSession session, InkController controller, Matrix3x2 view)
+    {
+        var points = controller.LassoPath;
+        if (points.Count == 0 || !Matrix3x2.Invert(controller.ViewTransform, out var inverse)) return;
+        var transform = inverse * view;
+        float scale = MathF.Sqrt(MathF.Abs(transform.GetDeterminant()));
+        var color = Windows.UI.Color.FromArgb(255, 0, 120, 212);
+        if (points.Count == 1)
+        {
+            session.DrawCircle(Vector2.Transform(points[0], transform), 3 * scale, color, scale);
+            return;
+        }
+        using var builder = new CanvasPathBuilder(session);
+        builder.SetFilledRegionDetermination(CanvasFilledRegionDetermination.Alternate);
+        builder.BeginFigure(Vector2.Transform(points[0], transform));
+        for (int i = 1; i < points.Count; i++) builder.AddLine(Vector2.Transform(points[i], transform));
+        builder.EndFigure(CanvasFigureLoop.Closed);
+        using var geometry = CanvasGeometry.CreatePath(builder);
+        using var dashed = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
+        session.FillGeometry(geometry, Windows.UI.Color.FromArgb(35, 0, 120, 212));
+        session.DrawGeometry(geometry, color, 1.5f * scale, dashed);
+    }
+
     private static void DrawSelection(CanvasDrawingSession session, InkController controller, Matrix3x2 view)
     {
-        var bounds = controller.SelectionBounds;
-        if (bounds.IsEmpty) return;
-
-        var corners = new[]
-        {
-            Vector2.Transform(new Vector2(bounds.Left, bounds.Top), view),
-            Vector2.Transform(new Vector2(bounds.Right, bounds.Top), view),
-            Vector2.Transform(new Vector2(bounds.Right, bounds.Bottom), view),
-            Vector2.Transform(new Vector2(bounds.Left, bounds.Bottom), view),
-        };
-
+        if (!Matrix3x2.Invert(controller.ViewTransform, out var inverse)) return;
+        var screenToSurface = inverse * view;
+        float scale = MathF.Sqrt(MathF.Abs(screenToSurface.GetDeterminant()));
+        Vector2 Surface(Vector2 point) => Vector2.Transform(point, screenToSurface);
         var accent = Windows.UI.Color.FromArgb(255, 0, 120, 212);
         var fill = Windows.UI.Color.FromArgb(255, 255, 255, 255);
-
-        for (int i = 0; i < 4; i++)
-            session.DrawLine(corners[i], corners[(i + 1) % 4], accent, 1.5f);
-
-        // Corner scale handles.
-        foreach (var c in corners)
+        if (controller.IsMarqueeSelecting && !controller.MarqueeBounds.IsEmpty)
         {
-            session.FillCircle(c, 6f, fill);
-            session.DrawCircle(c, 6f, accent, 1.5f);
+            var bounds = controller.MarqueeBounds;
+            var topLeft = Surface(new Vector2(bounds.Left, bounds.Top));
+            var bottomRight = Surface(new Vector2(bounds.Right, bounds.Bottom));
+            session.FillRectangle(topLeft.X, topLeft.Y, bottomRight.X - topLeft.X, bottomRight.Y - topLeft.Y,
+                Windows.UI.Color.FromArgb(32, 0, 120, 212));
+            using var dash = new CanvasStrokeStyle { DashStyle = CanvasDashStyle.Dash };
+            session.DrawRectangle(topLeft.X, topLeft.Y, bottomRight.X - topLeft.X, bottomRight.Y - topLeft.Y, accent, scale, dash);
         }
-
-        // Rotate handle, joined to the top edge so its purpose is obvious.
+        if (!controller.HasSelection) return;
+        if (controller.ShapeControlPoints.Count > 0)
+        {
+            foreach (var control in controller.ShapeControlPoints)
+            {
+                var point = Surface(Vector2.Transform(control, controller.ViewTransform));
+                session.FillRectangle(point.X - 5 * scale, point.Y - 5 * scale, 10 * scale, 10 * scale, fill);
+                session.DrawRectangle(point.X - 5 * scale, point.Y - 5 * scale, 10 * scale, 10 * scale, accent, 1.5f * scale);
+            }
+            return;
+        }
+        var frame = controller.SelectionFrame;
+        var corners = frame.Corners(controller.ViewTransform).Select(Surface).ToArray();
+        for (int i = 0; i < 4; i++)
+            session.DrawLine(corners[i], corners[(i + 1) % 4], accent, scale);
+        foreach (var handle in frame.VisibleResizeHandles(controller.ViewTransform))
+        {
+            var point = Surface(frame.HandlePosition(handle, controller.ViewTransform));
+            session.FillCircle(point, 3.5f * scale, fill);
+            session.DrawCircle(point, 3.5f * scale, accent, scale);
+        }
         var topMid = (corners[0] + corners[1]) * 0.5f;
-        var worldRotate = SelectionGeometry.RotateHandlePosition(bounds);
-        var rotate = Vector2.Transform(worldRotate, view);
-        session.DrawLine(topMid, rotate, accent, 1.5f);
-        session.FillCircle(rotate, 7f, fill);
-        session.DrawCircle(rotate, 7f, accent, 1.5f);
+        var rotate = Surface(frame.HandlePosition(SelectionHandle.Rotate, controller.ViewTransform));
+        session.DrawLine(topMid, rotate, accent, scale);
+        session.FillCircle(rotate, 10 * scale, fill);
+        session.DrawCircle(rotate, 10 * scale, accent, scale);
+        // Circular arrow makes rotation distinct from the eight sizing handles.
+        var previous = rotate + new Vector2(MathF.Cos(-0.4f), MathF.Sin(-0.4f)) * 5.5f * scale;
+        for (int i = 1; i <= 14; i++)
+        {
+            float angle = -0.4f + i * 4.9f / 14;
+            var next = rotate + new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * 5.5f * scale;
+            session.DrawLine(previous, next, accent, 1.5f * scale);
+            previous = next;
+        }
+        session.DrawLine(previous, previous + new Vector2(-3, -1) * scale, accent, 1.5f * scale);
+        session.DrawLine(previous, previous + new Vector2(-1, 3) * scale, accent, 1.5f * scale);
+        if (controller.IsRotatingSelection)
+        {
+            using var format = new CanvasTextFormat { FontSize = 12 * scale };
+            session.FillRoundedRectangle(rotate.X + 15 * scale, rotate.Y - 12 * scale, 55 * scale, 24 * scale,
+                4 * scale, 4 * scale, accent);
+            session.DrawText($"{controller.SelectionRotationDegrees:0}°", rotate.X + 22 * scale, rotate.Y - 9 * scale, fill, format);
+        }
     }
 
     /// <summary>Drop cached geometry for strokes that were mutated in place.</summary>
@@ -94,5 +211,6 @@ public sealed class InkSceneRenderer : IDisposable
         foreach (var s in strokes) Strokes.Invalidate(s);
     }
 
-    public void Dispose() => Strokes.Dispose();
+    public void ReleaseResources() { Images.Clear(); Strokes.InvalidateAll(); _extensionStrokes.InvalidateAll(); }
+    public void Dispose() { Images.Dispose(); Strokes.Dispose(); _extensionStrokes.Dispose(); }
 }

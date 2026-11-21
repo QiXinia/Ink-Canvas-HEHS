@@ -33,6 +33,7 @@ export interface NormalizedPointer {
   ContactHeight: number;
   TimeMs: number;
   Kind: number;
+  HasPressure: boolean;
 }
 
 export function pointerKind(source: number, sourceTool: number): number {
@@ -57,7 +58,9 @@ export function normalizePointer(raw: RawTouchEvent): NormalizedPointer {
     ContactWidth: raw.ContactWidth,
     ContactHeight: raw.ContactHeight,
     TimeMs: raw.TimestampNs / 1000000,
-    Kind: pointerKind(raw.Source, raw.SourceTool)
+    Kind: pointerKind(raw.Source, raw.SourceTool),
+    // 仅手写笔（SourceTool.Pen=2）且硬件给出非零压感时才视为真实压感。
+    HasPressure: raw.SourceTool === 2 && raw.Pressure > 0
   };
 }
 

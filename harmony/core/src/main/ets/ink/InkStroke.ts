@@ -150,14 +150,22 @@ export class InkStroke {
     }
   }
 
-  addPoint(x: number, y: number, pressure: number = 0.5, timeMs: number = 0): void {
+  addPoint(
+    x: number,
+    y: number,
+    pressure: number = 0.5,
+    timeMs: number = 0,
+    tiltX: number = 0,
+    tiltY: number = 0,
+    hasPressure: boolean = false
+  ): void {
     if (this.filter !== null) {
       const filtered = this.filter.update(x, y, timeMs);
       x = filtered.X;
       y = filtered.Y;
     }
     // 宽度从 0 开始，让笔锋的单调 settle 规则可以抬升。
-    this.points.push(new InkPoint(x, y, pressure, 0, timeMs));
+    this.points.push(new InkPoint(x, y, pressure, 0, timeMs, tiltX, tiltY, hasPressure));
     this.taper.Apply(this.points, this.points.length - 1, this.Attributes.BaseWidth);
     this.cachedBounds = null;
     this.objectFrame = null;

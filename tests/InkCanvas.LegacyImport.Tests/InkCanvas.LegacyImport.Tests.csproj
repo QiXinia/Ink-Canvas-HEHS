@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <ProjectReference Include="../../src/InkCanvas.Extensions/InkCanvas.Extensions.csproj" />
+    <ProjectReference Include="../../src/InkCanvas.PluginHost/InkCanvas.PluginHost.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/InkCanvas.Plugins.LegacyImport/InkCanvas.Plugins.LegacyImport.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <Target Name="StageImportFixture" AfterTargets="Build">
+    <ItemGroup>
+      <_Plugin Include="$(MSBuildProjectDirectory)/../../src/InkCanvas.Plugins.LegacyImport/bin/$(Platform)/$(Configuration)/net10.0-windows/$(RuntimeIdentifier)/*" />
+      <_Host Include="$(MSBuildProjectDirectory)/../../src/InkCanvas.PluginHost/bin/$(Platform)/$(Configuration)/net10.0/$(RuntimeIdentifier)/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_Plugin)" DestinationFolder="$(OutDir)Packages/inkcanvas.legacy-import/" />
+    <Copy SourceFiles="@(_Host)" DestinationFolder="$(OutDir)PluginHost/" />
+  </Target>
+</Project>

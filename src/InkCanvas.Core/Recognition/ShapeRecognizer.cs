@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace InkCanvas.Core.Recognition;
 
-public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle }
+public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle, Parallelogram, Cube, CoordinateAxes }
 
 public readonly record struct RecognitionResult(
     RecognizedShape Shape,
@@ -28,7 +28,7 @@ public readonly record struct RecognitionResult(
 /// The decision boundaries are our own, so results will not match InkAnalyzer exactly.
 /// </para>
 /// </summary>
-public static class ShapeRecognizer
+public static partial class ShapeRecognizer
 {
     /// <summary>Minimum shape size in pixels; below this we do not guess.</summary>
     public const float MinSize = 40f;
@@ -52,7 +52,7 @@ public static class ShapeRecognizer
         var centroid = Centroid(pts);
 
         // Straight line first: a very anisotropic point cloud with tiny perpendicular spread.
-        if (TryLine(pts, out var lineResult)) return lineResult;
+        if (strokes.Count == 1 && TryLine(pts, out var lineResult)) return lineResult;
 
         bool closed = Vector2.Distance(pts[0], pts[^1]) < MathF.Max(12f, arc * 0.18f);
         if (!closed) return RecognitionResult.None;
@@ -119,6 +119,23 @@ public static class ShapeRecognizer
             if (t > max) max = t;
         }
         var corners = new[] { c + axis * min, c + axis * max };
+        float directLength = Vector2.Distance(pts[0], pts[^1]);
+        float pathLength = 0;
+        float maxDeviation = MathF.Max(2.5f, (max - min) * 0.02f);
+        foreach (var point in pts)
+            if (MathF.Abs((point.X - c.X) * axis.Y - (point.Y - c.Y) * axis.X) > maxDeviation) return false;
+        var lastProgress = pts[0];
+        for (int i = 1; i < pts.Count; i++)
+        {
+            float distance = Vector2.Distance(lastProgress, pts[i]);
+            // Stationary pen packets can jitter while the user holds the endpoint.
+            if (distance < 3) continue;
+            pathLength += distance;
+            lastProgress = pts[i];
+        }
+        pathLength += Vector2.Distance(lastProgress, pts[^1]);
+        // Hooks and a stroke drawn back over itself are handwriting, even if RMS spread is small.
+        if (pathLength <= 0 || directLength / pathLength < 0.97f) return false;
         result = new RecognitionResult(RecognizedShape.Line, c, 0, 0, 1f - spread / length, corners);
         return true;
     }

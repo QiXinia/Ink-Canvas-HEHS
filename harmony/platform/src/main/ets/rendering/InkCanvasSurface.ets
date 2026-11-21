@@ -1,4 +1,5 @@
-// 双层 Canvas 宿主：已提交层在下、活动层在上。平板与 2in1 使用同一组件。
+// 双层 Canvas 宿主：下层承载 OffscreenCanvas 离屏缓存位图上屏、上层绘制活动笔画/选区。
+// 组件结构保持不变，缓存与脏矩形策略全部封装在 CanvasInkRenderer 内。平板与 2in1 使用同一组件。
 import { CanvasInkRenderer } from './CanvasInkRenderer';
 
 @Component

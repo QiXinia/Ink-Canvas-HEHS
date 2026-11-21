@@ -13,7 +13,7 @@ public struct InkPoint
     public float X;
     public float Y;
 
-    /// <summary>Raw device pressure in [0,1]; 0.5 means "no pressure information".</summary>
+    /// <summary>Raw device pressure in [0,1]. HasPressure distinguishes hardware data from a fallback 0.5.</summary>
     public float Pressure;
 
     /// <summary>Final rendered width in device-independent pixels. Frozen once settled.</summary>
@@ -21,10 +21,15 @@ public struct InkPoint
 
     /// <summary>Milliseconds since stroke start.</summary>
     public float TimeMs;
+    public bool HasPressure;
+    public float TiltX;
+    public float TiltY;
 
-    public InkPoint(float x, float y, float pressure, float width, float timeMs)
+    public InkPoint(float x, float y, float pressure, float width, float timeMs,
+        bool hasPressure = false, float tiltX = 0, float tiltY = 0)
     {
         X = x; Y = y; Pressure = pressure; Width = width; TimeMs = timeMs;
+        HasPressure = hasPressure; TiltX = tiltX; TiltY = tiltY;
     }
 
     public readonly System.Numerics.Vector2 Position => new(X, Y);

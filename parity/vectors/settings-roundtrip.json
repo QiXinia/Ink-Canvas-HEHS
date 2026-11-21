@@ -98,7 +98,8 @@
           "AutoSwitchTwoFingerGesture": false,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 2
+          "matrixTransformCenterPoint": 2,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": false
@@ -225,7 +226,8 @@
           "AutoSwitchTwoFingerGesture": true,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 0
+          "matrixTransformCenterPoint": 0,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": true
@@ -352,7 +354,8 @@
           "AutoSwitchTwoFingerGesture": true,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 0
+          "matrixTransformCenterPoint": 0,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": true
@@ -479,7 +482,8 @@
           "AutoSwitchTwoFingerGesture": true,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 0
+          "matrixTransformCenterPoint": 0,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": true
@@ -607,7 +611,8 @@
           "AutoSwitchTwoFingerGesture": true,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 0
+          "matrixTransformCenterPoint": 0,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": true
@@ -734,7 +739,8 @@
           "AutoSwitchTwoFingerGesture": true,
           "isEnableTwoFingerRotation": false,
           "isEnableTwoFingerRotationOnSelection": false,
-          "matrixTransformCenterPoint": 0
+          "matrixTransformCenterPoint": 0,
+          "isEnableStylusGesture": true
         },
         "inkToShape": {
           "isInkToShapeEnabled": true

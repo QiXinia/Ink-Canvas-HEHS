@@ -19,5 +19,11 @@
     <ProjectReference Include="..\..\src\InkCanvas.Platform\InkCanvas.Platform.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Ink\InkCanvas.Ink.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Features\InkCanvas.Features.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Modules.ScreenTracking\InkCanvas.Modules.ScreenTracking.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Extensions\InkCanvas.Extensions.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Pdf\InkCanvas.Pdf.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.AnalyticGeometry\InkCanvas.AnalyticGeometry.csproj" />
+    <ProjectReference Include="..\InkCanvas.PluginFixture\InkCanvas.PluginFixture.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\..\src\InkCanvas.PluginHost\InkCanvas.PluginHost.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

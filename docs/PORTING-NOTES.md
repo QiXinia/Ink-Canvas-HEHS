@@ -1,5 +1,46 @@
 # 移植对照与验证状态
 
+## 多屏与透明度修复
+
+屏幕坐标统一使用物理像素，XAML 尺寸按目标显示器 DPI 换算。批注层覆盖虚拟桌面，并保持创建时的坐标缩放，避免跨屏时整份墨迹因 DPI 改变而伸缩。布局变化时调整视图平移以保留桌面位置，重建 DIB 和渲染缓存，撤销记录保留。
+
+工具栏初始落在鼠标所在屏幕，此后跟随用户摆放。工具栏与弹窗按工作区缩小和夹取，收纳按钮完整位于所属显示器内。白板与辅助窗口跟随来源窗口，PowerPoint 导航使用放映窗口所在屏幕。
+
+浮动工具栏与弹窗使用带主题底色的亚克力材质。系统透明效果关闭、远程桌面或材质不可用时，直接在 XAML 卡片上绘制不透明主题色。回退路径取消整窗 `WS_EX_LAYERED` 透明度，避免 WinUI 交换链与原生透明合成产生黑色底板。浅色工具栏回退为白色，高对比度使用系统背景色，深浅色切换和隐藏恢复会重建正确的卡片画刷。
+
+笑脸展开与折叠期间，原生窗口和 Viewbox 保持展开尺寸，按进度裁切实际卡片，结束后再调整最终窗口大小，减少逐帧重建交换链造成的闪烁。动画继续遵循系统动画开关。766 项域测试、42 项原生主题检查和 102 项展开折叠检查通过，覆盖三种模式和 50%、100%、200% 工具栏缩放。回退浅色截图保存在 `artifacts/floating-chrome-theme/toolbar-1.png`，报告分别为 `themes.json` 和 `artifacts/floating-chrome-animation/toolbar-animation.json`。当前环境可验证材质回退与原生布局，目标 Windows 11 设备的实际桌面合成表现仍需实机复核。
+
+新增 `--displaycheck=<输出目录>`，覆盖工具栏缩放、调色盘、收纳恢复、模式切换、透明度读回、模拟虚拟桌面尺寸与负坐标原点变更、像素重绘和撤销重做。当前机器仅有 1920×1080、100% 缩放显示器，真实混合 DPI、跨屏触摸和热插拔仍需目标设备复核。
+
+## 3.4.0 还原轮（真机部分验证）
+
+平台级根因与修复（均有真机证据，详见 CHANGELOG 3.4.0）：overlay 点击抬升Z带埋没chrome窗口、
+WinUI island 拖动三缺陷（HTCAPTION 无效/PointerMoved 停发/相对坐标）、构造期 DPI=0 致裁切、
+island 与 HWND 错位、Server 2025 composition interop DWM 死锁（永久移除，半透改 DesktopAcrylicBackdrop）、
+未root容器 Parent 不设置致重复父级 COMException、放置记录snap回 (100,100)。
+
+WPF 1:1：浮动栏 ViewboxFloatingBar 结构/顺序/刷色/独立矩形/面板独立弹窗；笔/荧光笔双菜单；
+图形所见即所得 24 矢量预览＋图钉/长按；形状语义（回笔/中心半径/吸附/两步体/等宽/克隆）＋21 单测；
+设置 440DIP 面板＋重置推荐；计时器/抽奖/指南/是否窗重建；热键 WPF 键位；画板三浮条＋选区面板＋橡皮两步。
+
+round 3 已落地：系统性裁切审计（所有窗在真实 DPI 下按工作区夹取、首激活延迟一 tick 落位、
+Kind-0 记录防重激活snap回）；调色盘/图形popup 移除 WPF 没有的标题栏（改 FloatBarTitleBackground 标题带、
+色选即关、Escape/外部点击/落笔收起、图钉跨开合持久）；色板/主题格改 Button（读屏+UIA）；
+图标居中（固定 22DIP 图标区＋caption 不位移）；触摸/压感反馈抑制（overlay+画板 SetWindowFeedbackSetting）、
+overlay 指针→present 全同步＋区域限定拷贝降延迟；PPT 200ms 放映轮询、导航面板折叠/画板门控、
+放映开始退画板+红笔、结束退画板、翻页先退画板、WPS wpp 进程守卫、导航面板几何/glyph/计数格式 1:1；
+画板元素（图片/视频）参与旋转/翻转/双指手势（累积 canvas 矩阵、单撤销单元）、选区面板精确 WPF 按钮集、
+存为图片精确 padding、衍至新页、插入居中缩放 1:1、视频刷新保留播放位置；多指书写语义修正
+（MultiTouchEnabled=true=多指书写且禁手势，WPF MW_TouchEvents 275-291）、选区手势枢轴读设置；
+收纳把手改露出 ~14DIP 小条＋纳入 Z 重压（修复收纳后点不到恢复）＋Button 语义；
+画板打开闪退修复（模板资源刷需克隆实例，COMException 0x800F0902）；指南 Shift 键帽不再换行。
+
+headless 自检钩子：`--shot=<dir>`（各窗激活后自渲染 RenderTargetBitmap PNG）、`--open=a,b,c`（逐窗间隔开启）。
+断开会话下 CopyFromScreen/PrintWindow 不可靠、输入注入被拒；UIA Invoke 可用于 Button。
+
+仍待目标设备复核：触摸/压感硬件、Win11 亚克力真半透（Server 回退不透明）、Office/WPS COM 实机、
+视频帧导出 best-effort、克隆上限提示与确认对话框为移植期刻意保留的安全 additions。
+
 ## 3.3.0 新增移植（行为未验证）
 
 按用户要求，本轮没有启动应用、没有接真实触摸屏/压感笔/PowerPoint/WPS；仅做 Release build compile-check。例外：为了修复同一笔自交镂空运行了 3 项纯几何回归测试（3/3 通过），但 Win2D 实际栅格化行为未测试。详细来源和差异见 `board-porting-notes.md`、`ppt-porting-notes.md`、`menu-porting-notes.md`。

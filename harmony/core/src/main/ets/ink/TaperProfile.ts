@@ -12,9 +12,20 @@ export interface TaperOptionsInput {
   TipRatio?: number;
 }
 
+// 真实手写笔压感到宽度的调制因子（鸿蒙 M-Pencil 平台增强，C# 端暂无对应能力）。
+// 设计约束：p=0.5（常规按压力度/中立点）必须返回 1.0，使硬件路径在中立按压下与速度笔锋
+// 完全重合；轻压收细、重压加粗，硬截断防止极端采样产生毛刺。仅在 InkPoint.HasPressure
+// 为 true 时由 settlePoint 施加，黄金向量与手指/鼠标路径逐位不变。
+export function pressureWidthFactor(pressure: number): number {
+  return clamp(0.5 + pressure, 0.35, 1.4);
+}
+
 export function settlePoint(points: InkPoint[], index: number, candidate: number): void {
-  if (candidate > points[index].Width) {
-    points[index].Width = candidate;
+  const target = points[index].HasPressure
+    ? candidate * pressureWidthFactor(points[index].Pressure)
+    : candidate;
+  if (target > points[index].Width) {
+    points[index].Width = target;
   }
 }
 
@@ -30,6 +41,15 @@ function distance(a: InkPoint, b: InkPoint): number {
 
 function smoothStep(value: number): number {
   return value * value * (3 - 2 * value);
+}
+
+// 设备真实压感因子：p=0.5（无压感设备/手指）为中性 1.0，因此上游黄金向量不变。
+// 0 -> 0.45x，0.5 -> 1.0x，1 -> 1.35x。
+function devicePressureScale(pressure: number): number {
+  if (pressure <= 0.5) {
+    return 0.45 + 0.55 * clamp(pressure / 0.5, 0, 1);
+  }
+  return 1 + 0.35 * clamp((pressure - 0.5) / 0.5, 0, 1);
 }
 
 export abstract class TaperProfile {
@@ -196,7 +216,7 @@ export class SimulatedPressureTaperProfile extends TaperProfile {
     this.ratio = tipIndex === 0 ? ratio : this.ratio + response * (ratio - this.ratio);
 
     if (this.kindValue === TaperKind.SmoothPen || this.kindValue === TaperKind.SoftPen) {
-      settlePoint(points, tipIndex, baseWidth * this.ratio);
+      settlePoint(points, tipIndex, baseWidth * this.ratio * devicePressureScale(current.Pressure));
       return;
     }
 
@@ -215,7 +235,7 @@ export class SimulatedPressureTaperProfile extends TaperProfile {
     for (let index = first; index <= tipIndex; index++) {
       const progress = clamp((this.distanceAcc - this.distances[index % this.distances.length]) / tailLength, 0, 1);
       const cubic = 1 - Math.pow(1 - progress, 3);
-      settlePoint(points, index, this.widths[index % this.widths.length] * (tipRatio + (1 - tipRatio) * cubic));
+      settlePoint(points, index, this.widths[index % this.widths.length] * (tipRatio + (1 - tipRatio) * cubic) * devicePressureScale(points[index].Pressure));
       if (progress >= 1) {
         this.stable = index + 1;
       }

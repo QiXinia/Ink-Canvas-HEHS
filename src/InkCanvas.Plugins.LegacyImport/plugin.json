@@ -1,0 +1,10 @@
+{
+  "Id": "inkcanvas.legacy-import",
+  "Name": "旧版白板文件导入",
+  "Version": "1.0.0",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Plugins.LegacyImport.dll",
+  "EntryType": "InkCanvas.Plugins.LegacyImport.LegacyImportPlugin",
+  "Capabilities": ["FileImport"],
+  "ImportExtensions": [".isf", ".icstk", ".icart"]
+}
