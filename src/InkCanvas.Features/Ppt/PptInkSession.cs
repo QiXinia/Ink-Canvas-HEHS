@@ -1,3 +1,4 @@
+using InkCanvas.Core.Diagnostics;
 using InkCanvas.Core.Ink;
 
 namespace InkCanvas.Features.Ppt;
@@ -9,18 +10,26 @@ namespace InkCanvas.Features.Ppt;
 /// </summary>
 public sealed class PptInkSession : IDisposable
 {
+    private const int SlideCacheCapacity = 8;
+
     private readonly PptInteropService _interop;
     private readonly IPptInkStore _store;
     private readonly Dictionary<int, List<InkStroke>> _slides = new();
     private readonly Dictionary<int, int> _slideIndexes = new();
+    private readonly SlideInkCache _inkCache = new(SlideCacheCapacity);
+    private readonly SlideSwitchGate _prefetchGate = new();
     private PptSnapshot _last = PptSnapshot.Detached;
     private PptPresentationInfo _loadedPresentation;
     private string _noticeIdentity;
     private bool _showActive;
     private bool _disposed;
     private int? _lastSlideIndex;
+    private int? _lastSlideId;
     private int? _lastShowPosition;
     private bool _legacyFilesDetected;
+    private bool _offerInkMappingReview;
+    private string _inkMappingSummary;
+    private string _backupDirectory;
     private DateTime _suppressTransitionScreenshotUntilUtc;
 
     public PptInkSession(PptInteropService interop, IPptInkStore store = null)
@@ -42,6 +51,15 @@ public sealed class PptInkSession : IDisposable
     public Func<string> AutoSaveRoot { get; set; } = () => string.Empty;
     public Func<bool> UseScreenshotDateFolders { get; set; } = () => false;
     public Func<bool> SaveInkWithScreenshot { get; set; } = () => false;
+
+    /// <summary>
+    /// Optional per-slide loader used for cache misses and neighbor prefetch. Defaults to the
+    /// file-backed store when one is available; hosts may override it for tests or other stores.
+    /// </summary>
+    public Func<int, IReadOnlyList<InkStroke>> LoadSlide { get; set; }
+
+    /// <summary>Diagnostics for the neighbor cache.</summary>
+    public SlideInkCache InkCache => _inkCache;
 
     public PptSnapshot Snapshot => _last;
     public IReadOnlyList<InkStroke> CurrentStrokes => Clone(CaptureCurrentInk());
@@ -103,6 +121,7 @@ public sealed class PptInkSession : IDisposable
         if (_last.IsSlideShowRunning && _last.Slide is not null)
         {
             _lastSlideIndex = _last.Slide.Index > 0 ? _last.Slide.Index : _lastSlideIndex;
+            _lastSlideId = _last.Slide.SlideId > 0 ? _last.Slide.SlideId : _lastSlideId;
             _lastShowPosition = _last.ShowPosition > 0 ? _last.ShowPosition : _lastShowPosition;
         }
         return BuildArchive();
@@ -116,9 +135,33 @@ public sealed class PptInkSession : IDisposable
         if (_last.IsSlideShowRunning && _last.Slide is not null)
         {
             _lastSlideIndex = _last.Slide.Index > 0 ? _last.Slide.Index : _lastSlideIndex;
+            _lastSlideId = _last.Slide.SlideId > 0 ? _last.Slide.SlideId : _lastSlideId;
             _lastShowPosition = _last.ShowPosition > 0 ? _last.ShowPosition : _lastShowPosition;
         }
         Persist();
+    }
+
+    /// <summary>
+    /// Drops the in-memory ink for the loaded presentation and persists the empty archive.
+    /// Callers must back up the presentation directory first; this never runs implicitly.
+    /// </summary>
+    public void ClearPresentationInk()
+    {
+        ThrowIfDisposed();
+        _slides.Clear();
+        _slideIndexes.Clear();
+        _inkCache.Clear();
+        _prefetchGate.BeginSession();
+        _lastSlideIndex = null;
+        _lastSlideId = null;
+        _offerInkMappingReview = false;
+        _inkMappingSummary = null;
+        if (_store is not null && _loadedPresentation is not null)
+        {
+            try { _store.Save(BuildArchive()); }
+            catch (Exception ex) { Failed?.Invoke(new PptFailure("Clear presentation ink", ex.Message, 0)); }
+        }
+        ApplyCurrentInk?.Invoke(Array.Empty<InkStroke>());
     }
 
     public bool RunSlideShow(PptSlideShowStart start = PptSlideShowStart.PresentationSettings)
@@ -161,9 +204,12 @@ public sealed class PptInkSession : IDisposable
         if (_showActive && (!isShow || newPresentation))
         {
             CaptureOutgoing(previous);
+            // Any in-flight neighbor prefetch belongs to the outgoing show/slide.
+            _prefetchGate.BeginSession();
             if (AutoSavePresentationInk() && previous.IsSlideShowRunning && previous.Slide is not null)
             {
                 _lastSlideIndex = previous.Slide.Index > 0 ? previous.Slide.Index : null;
+                _lastSlideId = previous.Slide.SlideId > 0 ? previous.Slide.SlideId : null;
                 _lastShowPosition = previous.ShowPosition > 0 ? previous.ShowPosition : null;
             }
             Persist();
@@ -180,15 +226,22 @@ public sealed class PptInkSession : IDisposable
             _loadedPresentation = current.Presentation;
             _slides.Clear();
             _slideIndexes.Clear();
+            _inkCache.Clear();
+            _prefetchGate.BeginSession();
             _noticeIdentity = null;
             _lastSlideIndex = null;
+            _lastSlideId = null;
             _lastShowPosition = null;
             _legacyFilesDetected = false;
+            _offerInkMappingReview = false;
+            _inkMappingSummary = null;
+            _backupDirectory = null;
             if (_store is not null)
             {
                 try
                 {
                     PptInkArchive archive = _store.Load(current.Presentation);
+                    archive = MigrateLegacyArchive(archive, current.Presentation);
                     if (archive is not null)
                     {
                         if (AutoSavePresentationInk())
@@ -201,8 +254,10 @@ public sealed class PptInkSession : IDisposable
                             }
                         }
                         _lastSlideIndex = archive.LastSlideIndex;
+                        _lastSlideId = archive.LastSlideId;
                         _lastShowPosition = archive.LastShowPosition;
                         _legacyFilesDetected = archive.LegacyInkFilesDetected;
+                        EvaluateMapping(archive);
                     }
                 }
                 catch (Exception ex) { Failed?.Invoke(new PptFailure("Load presentation ink", ex.Message, 0)); }
@@ -217,6 +272,7 @@ public sealed class PptInkSession : IDisposable
             if (began)
             {
                 _showActive = true;
+                _prefetchGate.BeginSession();
                 // MW_PPT.cs:402 resets the per-show state; a leftover navigation suppression
                 // from the previous show must not eat the first external-change screenshot.
                 _suppressTransitionScreenshotUntilUtc = DateTime.MinValue;
@@ -240,17 +296,134 @@ public sealed class PptInkSession : IDisposable
         _last = current;
     }
 
+    private readonly System.Diagnostics.Stopwatch _applyWatch = new();
+    public long LastSlideApplyMs { get; private set; }
+    public long MaxSlideApplyMs { get; private set; }
+    public int SlideApplyOver50MsCount { get; private set; }
+
     private void ApplySlide(PptSnapshot current, PptSnapshot previous, PptInkTransitionKind kind)
     {
-        CaptureOutgoing(previous);
-        IReadOnlyList<InkStroke> incoming = current.Slide is not null && _slides.TryGetValue(current.Slide.SlideId, out var found)
-            ? found : Array.Empty<InkStroke>();
-        if (!InkManagedExternally()) ApplyCurrentInk?.Invoke(Clone(incoming));
-        if (current.Slide is not null && current.Slide.Index > 0)
-            _slideIndexes[current.Slide.SlideId] = current.Slide.Index;
-        _lastSlideIndex = current.Slide?.Index > 0 ? current.Slide.Index : _lastSlideIndex;
-        _lastShowPosition = current.ShowPosition > 0 ? current.ShowPosition : _lastShowPosition;
-        RaiseTransition(kind, previous, current, incoming);
+        _applyWatch.Restart();
+        try
+        {
+            CaptureOutgoing(previous);
+            List<InkStroke> incoming = ResolveSlideInk(current.Slide);
+            _prefetchGate.NextGeneration();
+            if (!InkManagedExternally()) ApplyCurrentInk?.Invoke(Clone(incoming));
+            if (current.Slide is not null && current.Slide.Index > 0)
+                _slideIndexes[current.Slide.SlideId] = current.Slide.Index;
+            _lastSlideIndex = current.Slide?.Index > 0 ? current.Slide.Index : _lastSlideIndex;
+            _lastSlideId = current.Slide?.SlideId > 0 ? current.Slide.SlideId : _lastSlideId;
+            _lastShowPosition = current.ShowPosition > 0 ? current.ShowPosition : _lastShowPosition;
+            RaiseTransition(kind, previous, current, incoming);
+            PrefetchNeighbors(current.Slide);
+        }
+        finally
+        {
+            _applyWatch.Stop();
+            LastSlideApplyMs = _applyWatch.ElapsedMilliseconds;
+            if (LastSlideApplyMs > MaxSlideApplyMs) MaxSlideApplyMs = LastSlideApplyMs;
+            if (LastSlideApplyMs > 50)
+            {
+                SlideApplyOver50MsCount++;
+                Core.Diagnostics.FileLog.WriteLogToFile(
+                    $"PPT slide apply took {LastSlideApplyMs}ms（>50ms）", Core.Diagnostics.LogType.Trace);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Cache → in-memory archive → single-slide load. A cache hit is already detached, but the
+    /// returned list is cloned per call because the ink controller is allowed to mutate it.
+    /// </summary>
+    private List<InkStroke> ResolveSlideInk(PptSlideInfo slide)
+    {
+        if (slide is null || slide.SlideId <= 0) return new List<InkStroke>();
+
+        if (_inkCache.Get(slide.SlideId) is { } cached) return Clone(cached).ToList();
+
+        if (_slides.TryGetValue(slide.SlideId, out var found))
+        {
+            List<InkStroke> copy = Clone(found).ToList();
+            _inkCache.Set(slide.SlideId, copy);
+            return copy;
+        }
+
+        if (AutoSavePresentationInk() && TryLoadSlide(slide.SlideId) is { Count: > 0 } loaded)
+        {
+            List<InkStroke> copy = loaded.ToList();
+            _inkCache.Set(slide.SlideId, copy);
+            return copy;
+        }
+
+        return new List<InkStroke>();
+    }
+
+    private IReadOnlyList<InkStroke> TryLoadSlide(int slideId)
+    {
+        if (slideId <= 0 || _loadedPresentation is null) return null;
+        try
+        {
+            if (LoadSlide is not null) return LoadSlide(slideId);
+            return _store is PptInkFileStore fileStore ? fileStore.TryLoadSlide(_loadedPresentation, slideId) : null;
+        }
+        catch (Exception ex)
+        {
+            FileLog.WriteLogToFile($"PPT slide load failed (slideId {slideId}): {ex}", LogType.Info);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Warms the cache for the slides before/after the current one. Work runs on the thread
+    /// pool and only lands while the captured (session, generation) is still current, so a
+    /// fast page flip can never overwrite the new page's ink with a stale neighbor.
+    /// </summary>
+    private void PrefetchNeighbors(PptSlideInfo slide)
+    {
+        if (_disposed || slide is null || slide.Index <= 0 || _loadedPresentation is null) return;
+        if (!AutoSavePresentationInk()) return;
+
+        int session = _prefetchGate.Session;
+        int generation = _prefetchGate.Generation;
+        PptPresentationInfo presentation = _loadedPresentation;
+        Func<int, IReadOnlyList<InkStroke>> loader = LoadSlide;
+        PptInkFileStore fileStore = _store as PptInkFileStore;
+
+        foreach (int index in new[] { slide.Index - 1, slide.Index + 1 })
+        {
+            if (index <= 0) continue;
+            int slideId = FindSlideId(index);
+            if (slideId <= 0 || _inkCache.Contains(slideId)) continue;
+
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    IReadOnlyList<InkStroke> strokes = loader is not null
+                        ? loader(slideId)
+                        : fileStore?.TryLoadSlide(presentation, slideId);
+                    if (strokes is null || strokes.Count == 0) return;
+                    if (_disposed) return;
+                    if (!_prefetchGate.IsCurrent(session, generation)) return;
+                    if (!ReferenceEquals(presentation, _loadedPresentation)) return;
+                    _inkCache.Set(slideId, strokes);
+                }
+                catch (Exception ex)
+                {
+                    FileLog.WriteLogToFile($"PPT prefetch failed (slideId {slideId}): {ex}", LogType.Info);
+                }
+            });
+        }
+    }
+
+    private int FindSlideId(int index)
+    {
+        foreach (KeyValuePair<int, int> pair in _slideIndexes)
+        {
+            if (pair.Value == index) return pair.Key;
+        }
+        return 0;
     }
 
     private void CaptureOutgoing(PptSnapshot snapshot)
@@ -258,7 +431,13 @@ public sealed class PptInkSession : IDisposable
         if (InkManagedExternally()) return;
         if (snapshot?.IsSlideShowRunning != true || snapshot.Slide is null || snapshot.Presentation is null || !_showActive) return;
         if (snapshot.Slide.Index > 0) _slideIndexes[snapshot.Slide.SlideId] = snapshot.Slide.Index;
-        try { _slides[snapshot.Slide.SlideId] = Clone(CaptureCurrentInk()).ToList(); }
+        if (snapshot.Slide.SlideId > 0) _lastSlideId = snapshot.Slide.SlideId;
+        try
+        {
+            List<InkStroke> strokes = Clone(CaptureCurrentInk()).ToList();
+            _slides[snapshot.Slide.SlideId] = strokes;
+            _inkCache.Set(snapshot.Slide.SlideId, strokes);
+        }
         catch (Exception ex) { Failed?.Invoke(new PptFailure("Capture outgoing slide ink", ex.Message, 0)); }
     }
 
@@ -278,11 +457,46 @@ public sealed class PptInkSession : IDisposable
         PptPresentationDetails details = _interop.GetPresentationDetails();
         if (details is null) return;
         _noticeIdentity = snapshot.Presentation?.Identity;
-        int? resume = previousEnabled ? _lastSlideIndex : null;
-        if (previousEnabled && resume is > 0 && !details.Slides.Any(s => s.Index == resume.Value)) resume = null;
+        int? resume = null;
+        bool degraded = false;
+        if (previousEnabled)
+        {
+            resume = ResolveResumeIndex(_lastSlideId, _lastSlideIndex, details.Slides, out degraded);
+            if (degraded)
+                FileLog.WriteLogToFile(
+                    $"PPT resume fell back to page {_lastSlideIndex} (slideId {_lastSlideId} unavailable).",
+                    LogType.Info);
+        }
         bool hidden = NotifyHiddenSlides() && details.HasHiddenSlides;
         bool timings = NotifySlideTimings() && details.HasSlideTimings;
-        PresentationNotice?.Invoke(new PptPresentationNotice(details, resume, hidden, timings, _legacyFilesDetected));
+        PresentationNotice?.Invoke(new PptPresentationNotice(details, resume, hidden, timings, _legacyFilesDetected,
+            degraded, _offerInkMappingReview, _inkMappingSummary, _backupDirectory));
+    }
+
+    /// <summary>
+    /// Prefers the stored SlideId and falls back to the legacy page index when that id is
+    /// missing from the live deck. <paramref name="degraded"/> is true whenever the page
+    /// number was used, so the host can explain the downgrade.
+    /// </summary>
+    public static int? ResolveResumeIndex(int? lastSlideId, int? lastSlideIndex,
+        IReadOnlyList<PptSlideInfo> slides, out bool degraded)
+    {
+        degraded = false;
+        IReadOnlyList<PptSlideInfo> list = slides ?? Array.Empty<PptSlideInfo>();
+        if (lastSlideId is > 0)
+        {
+            foreach (PptSlideInfo slide in list)
+            {
+                if (slide is not null && slide.SlideId == lastSlideId.Value && slide.Index > 0)
+                    return slide.Index;
+            }
+        }
+        if (lastSlideIndex is > 0 && list.Any(s => s is not null && s.Index == lastSlideIndex.Value))
+        {
+            degraded = true;
+            return lastSlideIndex;
+        }
+        return null;
     }
 
     private bool ShouldSaveScreenshot()
@@ -326,7 +540,54 @@ public sealed class PptInkSession : IDisposable
     private PptInkArchive BuildArchive() => new(_loadedPresentation, _lastSlideIndex, _lastShowPosition,
         _slides.Select(pair => new PptStoredSlide(pair.Key,
             _slideIndexes.TryGetValue(pair.Key, out int index) ? index : 0, Clone(pair.Value))).ToList(),
-        _legacyFilesDetected);
+        _legacyFilesDetected, _lastSlideId, PptInkFileStore.CurrentManifestVersion);
+
+    /// <summary>
+    /// Runs the one-way legacy upgrade for file-backed stores, then reloads so the in-memory
+    /// archive reflects the new v2 manifest. Any failure is logged and the original archive is
+    /// returned unchanged.
+    /// </summary>
+    private PptInkArchive MigrateLegacyArchive(PptInkArchive archive, PptPresentationInfo presentation)
+    {
+        if (archive is null || _store is not PptInkFileStore fileStore || !AutoSavePresentationInk()) return archive;
+        try
+        {
+            PptPresentationDetails details = _interop.GetPresentationDetails();
+            string directory = fileStore.GetPresentationDirectory(presentation);
+            SlideInkMigrationReport report = SlideInkMigrator.MigrateIfNeeded(archive, details, directory);
+            if (!report.Migrated) return archive;
+
+            _backupDirectory = report.BackupDirectory;
+            return _store.Load(presentation) ?? archive;
+        }
+        catch (Exception ex)
+        {
+            FileLog.WriteLogToFile($"PPT ink migration skipped: {ex}", LogType.Error);
+            return archive;
+        }
+    }
+
+    private void EvaluateMapping(PptInkArchive archive)
+    {
+        try
+        {
+            PptPresentationDetails details = _interop.GetPresentationDetails();
+            if (details is null) return;
+            SlideMappingIssue issue = SlideMappingInspector.Inspect(archive, details.Slides);
+            int stored = archive.Slides?.Count ?? 0;
+            _offerInkMappingReview = issue.NeedsWarning;
+            if (!issue.NeedsWarning) return;
+            int missing = issue.MissingSlideIds?.Count ?? 0;
+            _inkMappingSummary = $"存档 {stored} 页，当前 {details.Slides.Count} 页" +
+                (missing > 0 ? $"，{missing} 页在课件中已找不到" : string.Empty) +
+                (issue.PageOrderChanged ? "，页序已变化" : string.Empty) +
+                (issue.CountChanged ? "，页数不一致" : string.Empty) + "。";
+        }
+        catch (Exception ex)
+        {
+            FileLog.WriteLogToFile($"PPT ink mapping inspection failed: {ex}", LogType.Error);
+        }
+    }
 
     private void RefreshSlideIndexes(PptPresentationDetails details)
     {

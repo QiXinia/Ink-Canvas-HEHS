@@ -156,6 +156,97 @@ export {
 } from './src/main/ets/recognition/ShapeRecognizer';
 export type { InkPointLike, RecognitionPoint, RecognitionSummary } from './src/main/ets/recognition/ShapeRecognizer';
 export {
+  AssistantState,
+  AssistantMode,
+  AssistantEventType,
+  AssistantRole,
+  emptyEvent,
+  eventFromText,
+  modeName,
+  stateName
+} from './src/main/ets/assistant/AssistantTypes';
+export type {
+  AssistantEvent,
+  AssistantMessage,
+  AssistantRequest,
+  AssistantStep,
+  AssistantViewport,
+  InkPointPayload,
+  InkStrokePayload,
+  SelectionRect
+} from './src/main/ets/assistant/AssistantTypes';
+export {
+  createSession,
+  beginCapture,
+  beginRecognize,
+  beginStream,
+  applyEvent,
+  reduceEvents,
+  finish,
+  fail,
+  firstTokenTimedOut,
+  canRetry,
+  beginFollowUp,
+  machineProbe,
+  assistantStateName
+} from './src/main/ets/assistant/AssistantMachine';
+export type { AssistantSession, MachineProbe } from './src/main/ets/assistant/AssistantMachine';
+export {
+  MIN_SELECTION_SIZE,
+  emptyRect,
+  isEmptyRect,
+  rectWidth,
+  rectHeight,
+  rectCenterX,
+  rectCenterY,
+  lassoBounds,
+  lassoPerimeter,
+  isClosedPath,
+  closePath,
+  polygonArea,
+  pointInPolygon,
+  strokeCoverageRatio,
+  strokeHitByLasso,
+  usableSelection,
+  lassoProbe
+} from './src/main/ets/assistant/LassoGeometry';
+export type { LassoPoint, LassoSummary } from './src/main/ets/assistant/LassoGeometry';
+export {
+  SAFE_MARGIN,
+  CARD_GAP,
+  CardSide,
+  clampPlacement,
+  placeCard,
+  followAnchor,
+  dragPlacement,
+  placementProbe,
+  followProbe
+} from './src/main/ets/assistant/AnchorLayout';
+export type { CardPlacement, CardSize, ViewportSize } from './src/main/ets/assistant/AnchorLayout';
+export {
+  FormulaKind,
+  latexToPlain,
+  latexIsRenderable,
+  splitFormulas,
+  formulaProbe
+} from './src/main/ets/assistant/LatexLite';
+export type { FormulaSegment, FormulaProbe } from './src/main/ets/assistant/LatexLite';
+export { MdBlockKind, parseMarkdownProgressive, markdownProbe } from './src/main/ets/assistant/MarkdownLite';
+export type { MdBlock, MarkdownProbe } from './src/main/ets/assistant/MarkdownLite';
+export {
+  PasteKind,
+  AI_CARD_CONTENT_TYPE,
+  PASTE_GAP,
+  estimateCardSize,
+  buildPasteObject,
+  clampPasteRect,
+  pasteResult,
+  pasteUndoProbe
+} from './src/main/ets/assistant/PasteBackModel';
+export type { PasteInput, PasteObject, PasteResult } from './src/main/ets/assistant/PasteBackModel';
+export { SseParser, sseEventFrom, extractOpenAiDelta, parseSseChunk } from './src/main/ets/assistant/SseParser';
+export type { SseParseResult } from './src/main/ets/assistant/SseParser';
+export {
   AiCaptureKind,
   AI_ENGINE_LABEL,
   AI_NOTE_ACCENTS,

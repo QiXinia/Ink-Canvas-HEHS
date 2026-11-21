@@ -8,6 +8,8 @@ using InkCanvas.Core.Ink;
 using InkCanvas.Core.Settings;
 using InkCanvas.Core.Selection;
 using InkCanvas.Features.Board;
+using InkCanvas.Core.AiAssistant;
+using InkCanvas.Features.AiAssistant;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Manipulation;
 using InkCanvas.Ink.Rendering;
@@ -62,6 +64,7 @@ public sealed class BoardWindow : Window
     private readonly IShellActions _shell;
     private readonly InkSurface _surface = new();
     private readonly BoardImageLayer _images = new();
+    private bool _editingAiCard;
     private readonly BoardMediaLayer _media = new();
     private readonly BoardDrawingLayers _drawingLayers = new();
     private readonly CanvasControl _paper;
@@ -159,6 +162,7 @@ public sealed class BoardWindow : Window
         _surfaceHost.Children.Add(_background);
         _surfaceHost.Children.Add(_paper);
         _images.RenderInScene = true;
+        _surfaceHost.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnImageDoubleTapped), true);
         _images.Visibility = Visibility.Collapsed;
         _surfaceHost.Children.Add(_images);
         _surfaceHost.Children.Add(_drawingLayers);
@@ -231,7 +235,7 @@ public sealed class BoardWindow : Window
 
         PageNavigator = new BoardPageNavigator(_board,
             () => new Vector2(Math.Max(1, (float)_surfaceHost.ActualWidth), Math.Max(1, (float)_surfaceHost.ActualHeight)),
-            NavigateToPage, InsertPage, DuplicatePage, DeleteCurrentPage);
+            NavigateToPage, InsertPage, DuplicatePage, DeleteCurrentPage, () => _ = RenameCurrentPageAsync());
         _pagePane = new Border { Child = PageNavigator, Width = 244, HorizontalAlignment = HorizontalAlignment.Left,
             BorderThickness = new Thickness(0, 0, 1, 0), Visibility = Visibility.Collapsed };
         PageNavigator.CloseRequested += () => SetPagePaneOpen(false);
@@ -1083,6 +1087,7 @@ public sealed class BoardWindow : Window
         {
             ("黑板", BoardBackground.Black), ("白板", BoardBackground.White),
             ("网格纸", BoardBackground.Grid), ("横线纸", BoardBackground.Lined),
+            ("绿板", BoardBackground.Green), ("米色纸", BoardBackground.Cream), ("坐标纸", BoardBackground.Coordinate),
         })
         {
             var item = new MenuFlyoutItem { Text = label };
@@ -1349,12 +1354,16 @@ public sealed class BoardWindow : Window
     private void RefreshBackground()
     {
         DismissBoardFlyout();
-        bool dark = _board.Background == BoardBackground.Black;
+        bool dark = _board.Background is BoardBackground.Black or BoardBackground.Green;
         PageNavigator.ApplyTheme(dark ? 2 : 1);
         // WPF board cover: neutral #1F1F1F / #F2F2F2, independent of the application theme.
-        _background.Background = new SolidColorBrush(dark
-            ? Windows.UI.Color.FromArgb(255, 31, 31, 31)
-            : Windows.UI.Color.FromArgb(255, 242, 242, 242));
+        _background.Background = new SolidColorBrush(_board.Background switch
+        {
+            BoardBackground.Black => Windows.UI.Color.FromArgb(255, 31, 31, 31),
+            BoardBackground.Green => Windows.UI.Color.FromArgb(255, 0x1E, 0x3B, 0x2F),
+            BoardBackground.Cream => Windows.UI.Color.FromArgb(255, 0xF5, 0xEF, 0xDC),
+            _ => Windows.UI.Color.FromArgb(255, 242, 242, 242),
+        });
         _boardTheme = dark ? 2 : 1;
         WindowChrome.ApplyTheme(this, _boardTheme);
 
@@ -1394,16 +1403,66 @@ public sealed class BoardWindow : Window
 
     private void OnDrawPaper(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        if (_board.Background is not (BoardBackground.Grid or BoardBackground.Lined)) return;
+        var background = _board.Background;
+        bool dark = background is BoardBackground.Black or BoardBackground.Green;
         float spacing = Math.Clamp(_board.GridSpacing, 12f, 160f);
-        var line = Windows.UI.Color.FromArgb(55, 92, 113, 121);
         float width = (float)sender.ActualWidth;
         float height = (float)sender.ActualHeight;
-        for (float y = spacing; y < height; y += spacing)
-            args.DrawingSession.DrawLine(new Vector2(0, y), new Vector2(width, y), line, 1f);
-        if (_board.Background == BoardBackground.Grid)
-            for (float x = spacing; x < width; x += spacing)
-                args.DrawingSession.DrawLine(new Vector2(x, 0), new Vector2(x, height), line, 1f);
+        var line = dark
+            ? Windows.UI.Color.FromArgb(70, 235, 235, 235)
+            : Windows.UI.Color.FromArgb(55, 92, 113, 121);
+
+        switch (background)
+        {
+            case BoardBackground.Grid:
+                for (float y = spacing; y < height; y += spacing)
+                    args.DrawingSession.DrawLine(new Vector2(0, y), new Vector2(width, y), line, 1f);
+                for (float x = spacing; x < width; x += spacing)
+                    args.DrawingSession.DrawLine(new Vector2(x, 0), new Vector2(x, height), line, 1f);
+                break;
+
+            case BoardBackground.Lined:
+                for (float y = spacing; y < height; y += spacing)
+                    args.DrawingSession.DrawLine(new Vector2(0, y), new Vector2(width, y), line, 1f);
+                break;
+
+            case BoardBackground.Coordinate:
+                DrawCoordinateGrid(args, dark, spacing, width, height);
+                break;
+        }
+    }
+
+    private static void DrawCoordinateGrid(CanvasDrawEventArgs args, bool dark, float spacing, float width, float height)
+    {
+        var session = args.DrawingSession;
+        var axis = dark
+            ? Windows.UI.Color.FromArgb(200, 230, 230, 230)
+            : Windows.UI.Color.FromArgb(190, 60, 80, 90);
+        var tick = dark
+            ? Windows.UI.Color.FromArgb(150, 220, 220, 220)
+            : Windows.UI.Color.FromArgb(140, 60, 80, 90);
+
+        float originX = width * 0.5f;
+        float originY = height * 0.5f;
+        const float tickHalf = 4f;
+
+        session.DrawLine(new Vector2(0, originY), new Vector2(width, originY), axis, 1.6f);
+        session.DrawLine(new Vector2(originX, 0), new Vector2(originX, height), axis, 1.6f);
+
+        for (float x = originX + spacing; x < width; x += spacing)
+            session.DrawLine(new Vector2(x, originY - tickHalf), new Vector2(x, originY + tickHalf), tick, 1f);
+        for (float x = originX - spacing; x > 0; x -= spacing)
+            session.DrawLine(new Vector2(x, originY - tickHalf), new Vector2(x, originY + tickHalf), tick, 1f);
+        for (float y = originY + spacing; y < height; y += spacing)
+            session.DrawLine(new Vector2(originX - tickHalf, y), new Vector2(originX + tickHalf, y), tick, 1f);
+        for (float y = originY - spacing; y > 0; y -= spacing)
+            session.DrawLine(new Vector2(originX - tickHalf, y), new Vector2(originX + tickHalf, y), tick, 1f);
+
+        using var format = new Microsoft.Graphics.Canvas.Text.CanvasTextFormat { FontSize = 12 };
+        session.DrawText("O", originX + 4, originY + 4, axis, format);
+        session.DrawText("x", width - 18, originY + 4, axis, format);
+        session.DrawText("y", originX + 4, 4, axis, format);
+        session.DrawText($"单位：1 格 = {spacing:0} DIP", 8, height - 20, axis, format);
     }
 
     // ---- navigation -----------------------------------------------------------
@@ -1512,6 +1571,21 @@ public sealed class BoardWindow : Window
         if (CurrentController.HasActiveInteraction) return;
         AutoSaveCurrentPage("board-page-duplicate");
         _board.DuplicateCurrentPage();
+    }
+
+    private async Task RenameCurrentPageAsync()
+    {
+        if (_contentRoot.XamlRoot is null) return;
+        var page = _board.Current;
+        var input = new TextBox { Text = _board.PageName(_board.CurrentIndex), PlaceholderText = "页面名称" };
+        var dialog = new ContentDialog
+        {
+            Title = "重命名页面", Content = input, PrimaryButtonText = "保存", CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary, XamlRoot = _contentRoot.XamlRoot,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        int index = _board.Pages.ToList().IndexOf(page);
+        _board.RenamePage(index, input.Text);
     }
 
     private void UpdateUndoRedo()
@@ -1693,6 +1767,136 @@ public sealed class BoardWindow : Window
     /// WPF GridInkCanvasSelectionCover_MouseWheel (MW_SelectionGestures.cs:386-414): wheel zooms the
     /// selection 1.1/0.9 about its center, scaling stroke widths and transforming elements too.
     /// </summary>
+    private void OnImageDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (_board.Current.Tool != InkTool.Select) return;
+        var tap = e.GetPosition(_surfaceHost);
+        var point = new Vector2((float)tap.X, (float)tap.Y);
+        var hit = _board.Current.DrawingObjects.Reverse().Select(item => item.Element)
+            .OfType<BoardSelectionElement>().FirstOrDefault(element => element.Image is not null
+                && Matrix3x2.Invert(element.Frame.Transform * _board.Current.ViewTransform, out var inverse)
+                && element.Frame.Bounds.Contains(Vector2.Transform(point, inverse)));
+        if (hit?.Image is not { } asset || AiPasteMetadata.TryParse(asset.Metadata) is not { } metadata) return;
+        e.Handled = true;
+        _ = EditAiCardAsync(asset, metadata);
+    }
+
+    private async Task EditAiCardAsync(BoardImageAsset asset, AiPasteMetadata metadata)
+    {
+        InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+            $"AI 卡片编辑：进入 EditAiCardAsync，资产 {asset.Name}，Kind={metadata.Kind}，已在编辑={_editingAiCard}",
+            InkCanvas.Core.Diagnostics.LogType.Event);
+        if (_editingAiCard)
+        {
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                "AI 卡片编辑：已有编辑对话框，忽略重复请求",
+                InkCanvas.Core.Diagnostics.LogType.Trace);
+            return;
+        }
+        if (Content is not FrameworkElement root || root.XamlRoot is null)
+        {
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                $"AI 卡片编辑：XamlRoot 为空（Content={Content?.GetType().Name ?? "null"}），无法打开对话框",
+                InkCanvas.Core.Diagnostics.LogType.Error);
+            return;
+        }
+
+        var page = _board.Current;
+        bool formula = metadata.Kind == AiPasteKind.Formula;
+        string initial = formula
+            ? metadata.Latex
+            : metadata.Kind == AiPasteKind.Steps && metadata.Lines.Count > 0
+                ? string.Join("\n", metadata.Lines)
+                : metadata.Text;
+
+        var editor = new TextBox
+        {
+            Text = initial,
+            AcceptsReturn = !formula,
+            TextWrapping = TextWrapping.Wrap,
+            MinWidth = 360,
+            MinHeight = formula ? 60 : 140,
+        };
+        var panel = new StackPanel { Spacing = 6 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = formula ? "LaTeX 公式" : "卡片文本",
+            Opacity = 0.7,
+        });
+        panel.Children.Add(editor);
+
+        var dialog = new ContentDialog
+        {
+            Title = "编辑 AI 卡片",
+            Content = panel,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = root.XamlRoot,
+        };
+
+        _editingAiCard = true;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+            string text = editor.Text ?? "";
+            if (formula && string.IsNullOrWhiteSpace(text))
+            {
+                await ShowMessageAsync("LaTeX 内容不能为空。");
+                return;
+            }
+
+            var updated = new AiPasteMetadata
+            {
+                Version = metadata.Version > 0 ? metadata.Version : AiPasteMetadata.CurrentVersion,
+                Kind = metadata.Kind,
+                Annotations = metadata.Annotations.Select(points => new List<double>(points)).ToList(),
+            };
+            if (formula)
+            {
+                updated.Latex = text.Trim();
+            }
+            else
+            {
+                updated.Text = text;
+                updated.Lines = SplitCardLines(text);
+            }
+
+            var lines = ContentLines(updated);
+            var (estimatedWidth, estimatedHeight) = PasteCardLayout.Estimate(lines);
+            int width = Math.Clamp((int)Math.Round(Math.Max(asset.Width, estimatedWidth)), 120, 640);
+            int height = Math.Clamp((int)Math.Round(Math.Max(asset.Height, estimatedHeight)), 60, 480);
+            byte[] png = await PasteCardRenderer.RenderPngAsync(asset.Name, lines, width, height);
+            if (png is null || png.Length == 0)
+            {
+                await ShowMessageAsync("卡片重新渲染失败，原内容保持不变。");
+                return;
+            }
+
+            if (!ReferenceEquals(page, _board.Current) || !_board.UpdateImage(asset, png, updated.Serialize()))
+                await ShowMessageAsync("卡片已不在当前页面，未更新。");
+        }
+        finally
+        {
+            _editingAiCard = false;
+        }
+    }
+
+    private static List<string> ContentLines(AiPasteMetadata metadata)
+    {
+        if (metadata.Kind == AiPasteKind.Formula)
+            return new List<string> { metadata.Latex };
+        if (metadata.Lines.Count > 0) return metadata.Lines.ToList();
+        return SplitCardLines(metadata.Text);
+    }
+
+    private static List<string> SplitCardLines(string text)
+        => (text ?? "").Replace("\r", "").Split('\n')
+            .Select(line => line.TrimEnd())
+            .Where(line => line.Length > 0)
+            .ToList();
+
     private void OnSurfaceHostPointerWheelChanged(object sender, PointerRoutedEventArgs e)
     {
         if (_board.Current.Tool != InkTool.Select) return;

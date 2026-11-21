@@ -1,0 +1,34 @@
+{
+  "id": "assistant-latex",
+  "entry": "harmony/core/src/main/ets/assistant/LatexLite.ts",
+  "cases": [
+    {
+      "id": "progressive-formula-keeps-unclosed-dollar-as-plain",
+      "fn": "formulaProbe",
+      "input": ["解得 $\\frac{1}{2}$ 与 $$\\sqrt{9}$$ 以及 $x^2"],
+      "expected": {
+        "SegmentCount": 6,
+        "Incomplete": 1,
+        "Plain": "解得 (1)/(2) 与 √(9) 以及 x^2"
+      }
+    },
+    {
+      "id": "latex-subset-to-plain-text",
+      "fn": "latexToPlain",
+      "input": ["\\frac{a+b}{c} + \\sqrt{x^2+1} \\le \\infty"],
+      "expected": "(a+b)/(c) + √(x^2+1) ≤ ∞"
+    },
+    {
+      "id": "dangling-frac-is-not-renderable",
+      "fn": "latexIsRenderable",
+      "input": ["\\frac{1}{"],
+      "expected": false
+    },
+    {
+      "id": "balanced-frac-is-renderable",
+      "fn": "latexIsRenderable",
+      "input": ["\\frac{1}{2}+x^2"],
+      "expected": true
+    }
+  ]
+}

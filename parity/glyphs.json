@@ -1,71 +1,71 @@
 {
-  "note": "target: Symbol 名或 custom:<id>，Phase D 填充",
+  "note": "target: Symbol 名或 custom:<id>，Phase D 填充；清单与当前 Glyphs.cs 严格一致（历史图标见 glyphs-legacy.json）",
   "glyphs": [
     {
       "name": "Pen",
       "codepoint": "U+E70F",
       "char": "",
-      "target": null
+      "target": "sys.symbol.pencil_tip"
     },
     {
       "name": "Highlight",
       "codepoint": "U+E7E6",
       "char": "",
-      "target": null
+      "target": "sys.symbol.highlighter_tip"
     },
     {
       "name": "Eraser",
       "codepoint": "U+E75C",
       "char": "",
-      "target": null
+      "target": "sys.symbol.eraser_line"
     },
     {
       "name": "Select",
       "codepoint": "U+E8B3",
       "char": "",
-      "target": null
+      "target": "custom:text"
     },
     {
       "name": "Shapes",
       "codepoint": "U+25B3",
       "char": "△",
-      "target": null
+      "target": "custom:text"
     },
     {
       "name": "Undo",
       "codepoint": "U+E7A7",
       "char": "",
-      "target": null
+      "target": "sys.symbol.undo"
     },
     {
       "name": "Redo",
       "codepoint": "U+E7A6",
       "char": "",
-      "target": null
+      "target": "sys.symbol.redo"
     },
     {
       "name": "Delete",
       "codepoint": "U+E74D",
       "char": "",
-      "target": null
+      "target": "sys.symbol.trash"
     },
     {
       "name": "Add",
       "codepoint": "U+E710",
       "char": "",
-      "target": null
+      "target": "sys.symbol.plus"
     },
     {
       "name": "Settings",
       "codepoint": "U+E713",
       "char": "",
-      "target": null
+      "target": "sys.symbol.gearshape"
     },
     {
       "name": "Camera",
       "codepoint": "U+E722",
       "char": "",
-      "target": null
+      "target": "sys.symbol.camera"
     },
     {
       "name": "Video",
@@ -77,108 +77,120 @@
       "name": "Stopwatch",
       "codepoint": "U+E916",
       "char": "",
-      "target": null
+      "target": "sys.symbol.timer"
     },
     {
       "name": "People",
       "codepoint": "U+E716",
       "char": "",
-      "target": null
+      "target": "sys.symbol.person_2"
     },
     {
       "name": "Board",
       "codepoint": "U+E7F4",
       "char": "",
-      "target": null
+      "target": "custom:text"
     },
     {
       "name": "ChevronUp",
       "codepoint": "U+E70E",
       "char": "",
-      "target": null
+      "target": "sys.symbol.chevron_up"
     },
     {
       "name": "ChevronDown",
       "codepoint": "U+E70D",
       "char": "",
-      "target": null
+      "target": "sys.symbol.chevron_down"
     },
     {
       "name": "ChevronLeft",
       "codepoint": "U+E76B",
       "char": "",
-      "target": null
+      "target": "sys.symbol.chevron_left"
     },
     {
       "name": "ChevronRight",
       "codepoint": "U+E76C",
       "char": "",
-      "target": null
+      "target": "sys.symbol.chevron_right"
     },
     {
       "name": "Lock",
       "codepoint": "U+E72E",
       "char": "",
-      "target": null
+      "target": "sys.symbol.lock"
     },
     {
       "name": "Unlock",
       "codepoint": "U+E785",
       "char": "",
-      "target": null
+      "target": "sys.symbol.lock_open"
     },
     {
       "name": "Close",
       "codepoint": "U+E711",
       "char": "",
-      "target": null
+      "target": "sys.symbol.xmark"
     },
     {
       "name": "Exit",
       "codepoint": "U+E8BB",
       "char": "",
-      "target": null
+      "target": "custom:text"
     },
     {
       "name": "Play",
       "codepoint": "U+E768",
       "char": "",
-      "target": null
+      "target": "sys.symbol.play"
     },
     {
       "name": "Pause",
       "codepoint": "U+E769",
       "char": "",
-      "target": null
+      "target": "sys.symbol.pause"
     },
     {
       "name": "Restart",
       "codepoint": "U+E72C",
       "char": "",
-      "target": null
+      "target": "sys.symbol.arrow_counterclockwise"
     },
     {
       "name": "Replay",
       "codepoint": "U+E823",
       "char": "",
-      "target": null
+      "target": "sys.symbol.arrow_counterclockwise"
     },
     {
       "name": "Help",
       "codepoint": "U+E897",
       "char": "",
-      "target": null
+      "target": "sys.symbol.questionmark_circle"
     },
     {
       "name": "Info",
       "codepoint": "U+E946",
       "char": "",
-      "target": null
+      "target": "sys.symbol.info_circle"
     },
     {
       "name": "Download",
       "codepoint": "U+E896",
       "char": "",
+      "target": "sys.symbol.arrow_down_circle"
+    },
+    {
+      "name": "TimeMachine",
+      "codepoint": "U+E81C",
+      "char": "",
+      "target": null
+    },
+    {
+      "name": "SlideList",
+      "codepoint": "U+E8FD",
+      "char": "",
       "target": null
     },
     {

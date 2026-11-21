@@ -1,0 +1,100 @@
+{
+  "id": "assistant-paste",
+  "entry": "harmony/core/src/main/ets/assistant/PasteBackModel.ts",
+  "cases": [
+    {
+      "id": "steps-card-placed-right-of-selection",
+      "fn": "pasteResult",
+      "input": [
+        {
+          "Kind": 1,
+          "Text": "第一步\n第二步",
+          "Latex": "",
+          "Anchor": {
+            "Left": 100,
+            "Top": 100,
+            "Right": 300,
+            "Bottom": 200
+          },
+          "Scale": 1
+        },
+        1,
+        800,
+        600
+      ],
+      "expected": {
+        "Left": 316,
+        "Top": 100,
+        "Width": 180,
+        "Height": 68,
+        "ContentType": "application/vnd.inkcanvas.ai",
+        "Data": "{\"Kind\":1,\"Text\":\"第一步\\n第二步\",\"Latex\":\"\"}"
+      }
+    },
+    {
+      "id": "clamp-card-back-inside-viewport",
+      "fn": "pasteResult",
+      "input": [
+        {
+          "Kind": 0,
+          "Text": "",
+          "Latex": "y=x^2",
+          "Anchor": {
+            "Left": 600,
+            "Top": 500,
+            "Right": 780,
+            "Bottom": 560
+          },
+          "Scale": 1
+        },
+        2,
+        800,
+        600
+      ],
+      "expected": {
+        "Left": 620,
+        "Top": 500,
+        "Width": 180,
+        "Height": 56,
+        "ContentType": "application/vnd.inkcanvas.ai",
+        "Data": "{\"Kind\":0,\"Text\":\"\",\"Latex\":\"y=x^2\"}"
+      }
+    },
+    {
+      "id": "paste-insert-undo-redo",
+      "fn": "pasteUndoProbe",
+      "input": [
+        [
+          100,
+          100,
+          300,
+          200
+        ],
+        0,
+        "",
+        "x=1",
+        800,
+        600
+      ],
+      "expected": [
+        [
+          [
+            316,
+            100,
+            180,
+            56
+          ]
+        ],
+        [],
+        [
+          [
+            316,
+            100,
+            180,
+            56
+          ]
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Windows TFM so the suite can also cover the Win32-facing Platform layer. -->
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <!-- Ink 工程引用 Win2D/WindowsAppSDK；测试宿主必须自包含运行时。 -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- P0 纯逻辑测试单独成项目：复用既有测试文件，但不改动 InkCanvas.Core.Tests（基线当前不可编译）。 -->
+    <Compile Include="..\InkCanvas.Core.Tests\PptP0Tests.cs" Link="PptP0Tests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\InkCanvas.Core\InkCanvas.Core.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Platform\InkCanvas.Platform.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Ink\InkCanvas.Ink.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Features\InkCanvas.Features.csproj" />
+  </ItemGroup>
+</Project>

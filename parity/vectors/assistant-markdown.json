@@ -1,0 +1,28 @@
+{
+  "id": "assistant-markdown",
+  "entry": "harmony/core/src/main/ets/assistant/MarkdownLite.ts",
+  "cases": [
+    {
+      "id": "heading-list-table-and-open-code-fence",
+      "fn": "markdownProbe",
+      "input": ["## 标题\n\n- 步骤一\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```ts\nconst x=1;"],
+      "expected": {
+        "BlockCount": 4,
+        "OpenFence": true,
+        "IncompleteFormula": 0,
+        "Plain": "标题\n步骤一\na | b\n1 | 2\nconst x=1;"
+      }
+    },
+    {
+      "id": "counts-unclosed-inline-formula",
+      "fn": "markdownProbe",
+      "input": ["答案是 $x="],
+      "expected": {
+        "BlockCount": 1,
+        "OpenFence": false,
+        "IncompleteFormula": 1,
+        "Plain": "答案是 $x="
+      }
+    }
+  ]
+}

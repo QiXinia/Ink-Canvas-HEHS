@@ -64,14 +64,22 @@ public sealed record PptScreenshotRequest(
 /// <summary>No action is taken automatically: the host displays and answers these notices.</summary>
 public sealed record PptPresentationNotice(
     PptPresentationDetails Details, int? PreviousSlideIndex,
-    bool OfferRestoreHiddenSlides, bool OfferDisableTimings, bool LegacyInkFilesDetected);
+    bool OfferRestoreHiddenSlides, bool OfferDisableTimings, bool LegacyInkFilesDetected,
+    bool ResumeIndexDegraded = false, bool OfferInkMappingReview = false,
+    string InkMappingSummary = null, string BackupDirectory = null);
 
 public sealed record PptStoredSlide(int SlideId, int SlideIndex, IReadOnlyList<InkStroke> Strokes);
 
-/// <summary>Store implementations receive only managed snapshots, never COM objects.</summary>
+/// <summary>
+/// Store implementations receive only managed snapshots, never COM objects.
+/// LastSlideId is the durable resume key; LastSlideIndex is kept for display and as a
+/// fallback for archives that predate slide-id resume. ManifestVersion is 1 for legacy
+/// manifests (no Version field, nothing to migrate from) and 2 once migrated.
+/// </summary>
 public sealed record PptInkArchive(
     PptPresentationInfo Presentation, int? LastSlideIndex, int? LastShowPosition,
-    IReadOnlyList<PptStoredSlide> Slides, bool LegacyInkFilesDetected = false);
+    IReadOnlyList<PptStoredSlide> Slides, bool LegacyInkFilesDetected = false,
+    int? LastSlideId = null, int ManifestVersion = 1);
 
 public interface IPptInkStore
 {

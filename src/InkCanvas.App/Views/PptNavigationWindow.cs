@@ -1,282 +1,266 @@
 using InkCanvas.App.Services;
-using InkCanvas.Controls.Animation;
 using InkCanvas.Controls.Controls;
-using InkCanvas.Controls.Theming;
 using InkCanvas.Features.Ppt;
 using InkCanvas.Platform.Interop;
+using InkCanvas.Platform.Windows;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
 
 namespace InkCanvas.App.Views;
 
 public enum PptNavigationPlacement { BottomLeft, BottomRight, SideLeft, SideRight }
 
 /// <summary>
-/// 1:1 port of the four WPF PPT navigation panels (upstream MainWindow.xaml:4994-5345,
-/// PPTNavigationBottomLeft/Right and PPTNavigationSidesLeft/Right). Each WPF panel is a
-/// Viewbox of 40 DIP over 42 DIP of content (uniform 40/42 scale) holding a Border with
-/// Opacity 0.4, 40x40 prev/next cells, a 40x38 page-number cell flanked by 25px separator
-/// lines, and EDD5/EDD6 (bottom) or EDD7/EDD8 (sides) glyphs. Independent no-activate
-/// WinUI windows so they sit over a slideshow without being clipped by the bar window.
+/// PPT slideshow navigation panel, corresponding to the four WPF controls
+/// <c>PPTNavigationBottomLeft/Right</c> and <c>PPTNavigationSidesLeft/Right</c>.
+/// It is an independent WinUI window so it can sit over a slideshow without being clipped by
+/// the bottom toolbar's window bounds. A single instance now moves between the four corners
+/// and is placed by <see cref="NavigationLayout"/> against the show window's rectangle.
 /// </summary>
 public sealed class PptNavigationWindow : Window
 {
-    /// <summary>WPF Viewbox Height/Width=40 over 42 DIP content (MainWindow.xaml:4995,5172).</summary>
-    private const double S = 40.0 / 42.0;
-    private const double Cell = 40 * S;          // prev/next cell, both axes
-    private const double CounterH = 38 * S;      // page-number cell short axis
-    private const double IconBox = 26 * S;       // FontIcon Width/Height (MainWindow.xaml:5016-5017)
-    private const double IconSz = 20 * S;        // ModernWpf FontIcon default FontSize 20
-    private const double TextSz = 9 * S;         // MainWindow.xaml:5051
-    private const double LineLen = 25 * S;       // separator Line Y2/X2=25
-    private const double LineThick = 1 * S;      // StrokeThickness=1
-    private const double BorderThick = 1 * S;
-    private const double Corner = 6 * S;
+    private const string RotateGlyph = "\uE72C";
+    private const string CollapseGlyph = "\uE711";
+    private const double IdleOpacity = 0.35;
+    private const int ButtonDip = 44;
+    private const int SpacingDip = 2;
 
-    // Exact WPF glyphs (MainWindow.xaml:5020,5078,5196,5253).
-    private const string GlyphPrevBottom = "\uEDD5";
-    private const string GlyphNextBottom = "\uEDD6";
-    private const string GlyphPrevSide = "\uEDD7";
-    private const string GlyphNextSide = "\uEDD8";
-
-    private static readonly FontFamily IconFont = new("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons");
-
-    private readonly PptNavigationPlacement _placement;
     private readonly IShellActions _shell;
-    private readonly Border _previous;
-    private readonly Border _next;
-    private readonly Border _counter;
+    private readonly Button _previous;
+    private readonly Button _next;
+    private readonly Button _counter;
+    private readonly Button _penToggle;
+    private readonly Button _slideList;
+    private readonly Button _rotate;
+    private readonly Button _collapse;
     private readonly TextBlock _counterText;
     private readonly StackPanel _panel;
+    private readonly Border _root;
+    private PptNavigationPlacement _placement;
+    private ShowWindowInfo _showBounds;
+    private bool _counterVisible = true;
+    private bool _closed;
     private XamlRoot _trackedRoot;
-    private IntPtr _showWindow;
-    private bool _windowedShow;
 
     public PptNavigationWindow(PptNavigationPlacement placement, IShellActions shell, int theme)
     {
         _placement = placement;
         _shell = shell;
-        bool vertical = placement is PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight;
         Title = "PowerPoint 导航";
 
-        Brush foreground = PopupBrushes.FloatBarForeground(theme);
-        _previous = NavCell(vertical ? GlyphPrevSide : GlyphPrevBottom, foreground, () => _shell.PptPrevious());
-        _next = NavCell(vertical ? GlyphNextSide : GlyphNextBottom, foreground, () => _shell.PptNext());
+        _previous = NavButton(Glyphs.ChevronLeft, "上一页", () => _shell.PptPrevious());
+        _next = NavButton(Glyphs.ChevronRight, "下一页", () => _shell.PptNext());
         _counterText = new TextBlock
         {
-            Text = "0/0",
-            FontSize = TextSz,
-            Foreground = foreground,
+            Text = "0 / 0",
+            FontSize = 11,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        _counter = CounterCell(foreground, vertical);
-
-        _panel = new StackPanel
+        _counter = new Button
         {
-            Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal,
-            Spacing = 0, // ikw:SimpleStackPanel default
+            Content = _counterText,
+            MinWidth = 52,
+            MinHeight = 40,
+            Padding = new Thickness(4),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
         };
+        ToolTipService.SetToolTip(_counter, "打开 PowerPoint 幻灯片导航窗格并切换到鼠标模式");
+        _counter.Click += (_, _) => _shell.PptOpenNavigation();
+
+        _penToggle = NavButton(Glyphs.Pen, "切换批注/穿透（鼠标）模式", () => _shell.ToggleClickThrough());
+        _slideList = NavButton(Glyphs.SlideList, "课件页导航：按批注/收藏跳页", () => _shell.ToggleSlideNavigator());
+        _rotate = NavButton(RotateGlyph, "切换导航栏位置", () => _shell.RotatePptNavigationCorner());
+        _collapse = NavButton(CollapseGlyph, "收起导航栏", () => _shell.CollapsePptNavigation());
+
+        _panel = new StackPanel { Spacing = SpacingDip };
         _panel.Children.Add(_previous);
         _panel.Children.Add(_counter);
         _panel.Children.Add(_next);
+        _panel.Children.Add(_slideList);
+        _panel.Children.Add(_penToggle);
+        _panel.Children.Add(_rotate);
+        _panel.Children.Add(_collapse);
+        ApplyOrientation();
 
-        Content = new Border
+        _root = new Border
         {
-            Background = PopupBrushes.FloatBarBackground(theme),
-            BorderBrush = PopupBrushes.FloatBarBorder(theme),
-            BorderThickness = new Thickness(BorderThick),
-            CornerRadius = new CornerRadius(Corner),
+            Background = (Brush)Application.Current.Resources["IcSurfaceAltBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["IcStrokeBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = (CornerRadius)Application.Current.Resources["IcBarCorner"],
+            Padding = new Thickness(2),
+            Opacity = IdleOpacity,
             Child = _panel,
         };
+        // Low opacity at rest so the panel does not obscure slide content; full opacity only
+        // while the pointer is over it. Click-through state is deliberately not touched here.
+        _root.PointerEntered += (_, _) => _root.Opacity = 1.0;
+        _root.PointerExited += (_, _) => _root.Opacity = IdleOpacity;
+        Content = _root;
 
-        WindowChrome.MakeBorderless(this, topmost: true, noActivate: true);
-        FloatingBarWindow.EnableTransparency(this);
-        FloatingBarWindow.UpdateAcrylicTint(this, theme);
-        WindowChrome.ClipToSurfaces(this, () => new[] { (Border)Content });
+        WindowChrome.MakeBorderless(this, topmost: true);
         WindowChrome.ApplyTheme(this, theme);
-        // Never steal focus/activation from the slideshow; tool-window keeps it out of alt-tab
-        // (the WPF panels were children of the single main window, not separate taskbar entries).
-        Closed += (_, _) =>
-        {
-            if (_trackedRoot is not null) _trackedRoot.Changed -= OnRootChanged;
-        };
-        Activated += (_, _) => TrackRoot();
-        ((FrameworkElement)Content).Loaded += (_, _) => TrackRoot();
-        PlaceOnScreen();
+        NativeMethods.AddExStyle(WindowChrome.GetHwnd(this), NativeMethods.WS_EX_NOACTIVATE);
+        Closed += OnClosed;
+        Activated += OnActivated;
+        _root.Loaded += (_, _) => TrackRoot();
+        Place(_counterVisible);
         SetVisible(false);
     }
 
-    /// <summary>WPF prev/next cell: transparent 40x40 Border with a centered 26px FontIcon.</summary>
-    private Border NavCell(string glyph, Brush foreground, Action invoke)
+    /// <summary>Corner the window is currently docked to; the shell rotates it on demand.</summary>
+    public PptNavigationPlacement Placement
     {
-        var cell = new Border
+        get => _placement;
+        set => _placement = value;
+    }
+
+    private static Button NavButton(string glyph, string name, Action invoke)
+    {
+        var b = new Button
         {
-            Width = Cell,
-            Height = Cell,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            Child = new FontIcon
+            Content = new FontIcon
             {
                 Glyph = glyph,
-                FontFamily = IconFont,
-                FontSize = IconSz,
-                Foreground = foreground,
-                Width = IconBox,
-                Height = IconBox,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
+                FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons"),
+                FontSize = 16,
             },
-        };
-        AttachClick(cell, invoke);
-        return cell;
-    }
-
-    /// <summary>
-    /// WPF page-number cell (MainWindow.xaml:5023-5063): 1/36/1 grid with 25px separator
-    /// lines and a 9px counter. Click switches to mouse mode and opens PowerPoint's slide
-    /// navigation pane (PPTNavigationBtn_Click, MW_PPT.cs:642-658; handled by the shell).
-    /// </summary>
-    private Border CounterCell(Brush foreground, bool vertical)
-    {
-        var grid = new Grid();
-        var line1 = new Rectangle { Fill = foreground };
-        var line2 = new Rectangle { Fill = foreground };
-        if (vertical)
-        {
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(LineThick) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36 * S) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(LineThick) });
-            line1.Width = LineLen; line1.Height = LineThick;
-            line2.Width = LineLen; line2.Height = LineThick;
-            line1.HorizontalAlignment = HorizontalAlignment.Center;
-            line2.HorizontalAlignment = HorizontalAlignment.Center;
-            Grid.SetRow(line1, 0);
-            Grid.SetRow(_counterText, 1);
-            Grid.SetRow(line2, 2);
-        }
-        else
-        {
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LineThick) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36 * S) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(LineThick) });
-            line1.Width = LineThick; line1.Height = LineLen;
-            line2.Width = LineThick; line2.Height = LineLen;
-            line1.VerticalAlignment = VerticalAlignment.Center;
-            line2.VerticalAlignment = VerticalAlignment.Center;
-            Grid.SetColumn(line1, 0);
-            Grid.SetColumn(_counterText, 1);
-            Grid.SetColumn(line2, 2);
-        }
-        grid.Children.Add(line1);
-        grid.Children.Add(_counterText);
-        grid.Children.Add(line2);
-
-        var cell = new Border
-        {
-            Width = Cell,
-            Height = CounterH,
+            MinWidth = ButtonDip,
+            MinHeight = ButtonDip,
+            Padding = new Thickness(6),
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            Child = grid,
+            BorderThickness = new Thickness(0),
         };
-        AttachClick(cell, () => _shell.PptOpenNavigation());
-        return cell;
-    }
-
-    /// <summary>
-    /// WPF fired these cells on MouseUp only when MouseDown landed on the same Border
-    /// (Border_MouseDown, MW_SelectionGestures.cs:22-25; guards MW_PPT.cs:644,692,698).
-    /// Capture the pointer so touch releases still arrive, then apply the same bounds guard.
-    /// WPF has no hover/pressed visual on these cells; the scale pulse is the app-wide touch
-    /// press feedback (TouchIconButton contract) and does not change the resting look.
-    /// </summary>
-    private static void AttachClick(Border cell, Action invoke)
-    {
-        bool pressed = false;
-        cell.PointerPressed += (_, e) =>
-        {
-            pressed = true;
-            cell.CapturePointer(e.Pointer);
-            Motion.Pulse(cell, 0.92f);
-            e.Handled = true; // keep focus on the slideshow, never on this no-activate window
-        };
-        cell.PointerReleased += (_, e) =>
-        {
-            if (!pressed) return;
-            pressed = false;
-            cell.ReleasePointerCapture(e.Pointer);
-            var position = e.GetCurrentPoint(cell).Position;
-            if (position.X >= 0 && position.Y >= 0 && position.X <= cell.ActualWidth && position.Y <= cell.ActualHeight)
-                invoke();
-            e.Handled = true;
-        };
-        cell.PointerCanceled += (_, _) => pressed = false;
-        cell.PointerCaptureLost += (_, _) => pressed = false;
+        ToolTipService.SetToolTip(b, name);
+        b.Click += (_, _) => invoke();
+        return b;
     }
 
     public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible)
+        => Update(snapshot, panelVisible, counterVisible, default);
+
+    /// <summary>
+    /// Positions the panel inside <paramref name="showBounds"/> (the slideshow window) and
+    /// refreshes the slide counter. A default/invalid rectangle falls back to the work area.
+    /// </summary>
+    public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible, ShowWindowInfo showBounds)
     {
-        _showWindow = snapshot?.WindowHandle ?? IntPtr.Zero;
-        _windowedShow = snapshot?.IsWindowedShow == true;
         _counter.Visibility = counterVisible ? Visibility.Visible : Visibility.Collapsed;
+        _counterVisible = counterVisible;
+        _showBounds = showBounds;
+
         int position = snapshot?.ShowPosition > 0 ? snapshot.ShowPosition : snapshot?.Slide?.Index ?? 0;
         int count = snapshot?.Presentation?.SlideCount ?? 0;
-        // MW_PPT.cs:403,563: "{position}/{count}" with no spaces.
-        string text = $"{position}/{count}";
-        if (_counterText.Text != text) _counterText.Text = text;
-        PlaceOnScreen();
+        _counterText.Text = $"{position} / {count}";
+
+        ApplyOrientation();
+        Place(counterVisible);
         SetVisible(panelVisible);
     }
 
     private void SetVisible(bool visible)
     {
-        if (NativeMethods.IsWindowVisible(WindowChrome.GetHwnd(this)) == visible) return;
-        if (visible) WindowChrome.ShowWithoutActivation(this);
+        if (visible) NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_SHOWNOACTIVATE);
         else NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_HIDE);
+    }
+
+    private void OnClosed(object sender, WindowEventArgs args)
+    {
+        _closed = true;
+        Activated -= OnActivated;
+        if (_trackedRoot is not null) _trackedRoot.Changed -= OnRootChanged;
+        _trackedRoot = null;
+    }
+
+    private void OnActivated(object sender, WindowActivatedEventArgs args)
+    {
+        if (_closed) return;
+        TrackRoot();
     }
 
     private void TrackRoot()
     {
-        if (_trackedRoot is not null) _trackedRoot.Changed -= OnRootChanged;
-        _trackedRoot = (Content as FrameworkElement)?.XamlRoot;
-        if (_trackedRoot is not null) _trackedRoot.Changed += OnRootChanged;
-        PlaceOnScreen();
+        if (_closed) return;
+        try
+        {
+            if (_trackedRoot is not null) _trackedRoot.Changed -= OnRootChanged;
+            _trackedRoot = (Content as FrameworkElement)?.XamlRoot;
+            if (_trackedRoot is not null) _trackedRoot.Changed += OnRootChanged;
+            Place(_counterVisible);
+        }
+        catch (Exception)
+        {
+            // The window may already be torn down; nothing to track or place any more.
+        }
     }
 
-    private void OnRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => PlaceOnScreen();
-
-    /// <summary>
-    /// WPF placed the panels inside the maximized borderless main window, i.e. against the
-    /// full screen, with unscaled Viewbox margins: bottom "2,0,0,2" (right panel flush to
-    /// the right edge), sides 6px and vertically centered (MainWindow.xaml:4996-5000 etc.).
-    /// The Viewbox reflows when the page-number cell is hidden, so the window shrinks too.
-    /// </summary>
-    private void PlaceOnScreen()
+    private void OnRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
     {
-        var monitor = Platform.System.ScreenService.FromWindow(_showWindow);
-        var screen = _windowedShow ? WindowChrome.GetClientBounds(_showWindow).FitInside(monitor.WorkArea) : monitor.Bounds;
-        double dpi = monitor.DpiScale;
-        bool vertical = _placement is PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight;
-        bool counter = _counter.Visibility == Visibility.Visible;
-        double widthDip = vertical ? 42 * S : (counter ? 122 : 82) * S;
-        double heightDip = vertical ? (counter ? 120 : 82) * S : 42 * S;
-        int width = (int)Math.Ceiling(widthDip * dpi);
-        int height = (int)Math.Ceiling(heightDip * dpi);
-        int marginH = (int)Math.Round((_placement switch
-        {
-            PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight => 6,
-            PptNavigationPlacement.BottomLeft => 2,
-            _ => 0, // BottomRight: Margin right=0
-        }) * dpi);
-        int marginV = (int)Math.Round((vertical ? 0 : 2) * dpi);
-        int x = _placement is PptNavigationPlacement.SideRight or PptNavigationPlacement.BottomRight
-            ? screen.X + screen.Width - width - marginH
-            : screen.X + marginH;
-        int y = vertical
-            ? screen.Y + (screen.Height - height) / 2
-            : screen.Y + screen.Height - height - marginV;
+        if (_closed) return;
+        Place(_counterVisible);
+    }
+
+    private NavigationCorner Corner => _placement switch
+    {
+        PptNavigationPlacement.BottomRight => NavigationCorner.BottomRight,
+        PptNavigationPlacement.SideLeft => NavigationCorner.SideLeft,
+        PptNavigationPlacement.SideRight => NavigationCorner.SideRight,
+        _ => NavigationCorner.BottomLeft,
+    };
+
+    private bool IsVertical => _placement is PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight;
+
+    private void ApplyOrientation()
+    {
+        bool vertical = IsVertical;
+        _panel.Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal;
+        if (_previous.Content is FontIcon previous) previous.Glyph = vertical ? Glyphs.ChevronUp : Glyphs.ChevronLeft;
+        if (_next.Content is FontIcon next) next.Glyph = vertical ? Glyphs.ChevronDown : Glyphs.ChevronRight;
+        _counter.MinWidth = vertical ? ButtonDip : 52;
+        _counter.MinHeight = vertical ? 48 : 40;
+    }
+
+    /// <summary>Physical pixel size needed by the six controls plus border/padding chrome.</summary>
+    private static (int Width, int Height) ContentSize(bool vertical, double dpiScale, bool counterVisible)
+    {
+        double scale = dpiScale > 0 ? dpiScale : 1;
+        int length = ButtonDip * 6 + SpacingDip * 5 + (counterVisible ? SpacingDip + (vertical ? 48 : 52) : 0);
+        int contentWidth = vertical ? ButtonDip : length;
+        int contentHeight = vertical ? length : ButtonDip;
+        return ((int)Math.Ceiling((contentWidth + 6) * scale),
+                (int)Math.Ceiling((contentHeight + 6) * scale));
+    }
+
+    private void Place(bool counterVisible)
+    {
+        var work = WindowChrome.GetWorkArea(this);
+        ScreenBox box = _showBounds.Width > 0 && _showBounds.Height > 0
+            ? new ScreenBox(_showBounds.X, _showBounds.Y, _showBounds.Width, _showBounds.Height)
+            : new ScreenBox(work.X, work.Y, work.Width, work.Height);
+
+        double dpi = _trackedRoot?.RasterizationScale ?? WindowChrome.GetDpiScale(this);
+        NavigationPlacementResult placement = NavigationLayout.Place(Corner, box, dpi, counterVisible);
+
+        bool vertical = IsVertical;
+        var (neededWidth, neededHeight) = ContentSize(vertical, dpi, counterVisible);
+        int width = Math.Max(placement.Width, neededWidth);
+        int height = Math.Max(placement.Height, neededHeight);
+
+        int x = placement.Corner is NavigationCorner.BottomRight or NavigationCorner.SideRight
+            ? placement.X + placement.Width - width
+            : placement.X;
+        int y = placement.Corner is NavigationCorner.SideLeft or NavigationCorner.SideRight
+            ? placement.Y + placement.Height / 2 - height / 2
+            : placement.Y + placement.Height - height;
+
+        int maxX = box.X + Math.Max(0, box.Width - width);
+        int maxY = box.Y + Math.Max(0, box.Height - height);
+        x = maxX >= box.X ? Math.Clamp(x, box.X, maxX) : box.X;
+        y = maxY >= box.Y ? Math.Clamp(y, box.Y, maxY) : box.Y;
+
         var position = AppWindow.Position;
         if (position.X != x || position.Y != y || AppWindow.Size.Width != width || AppWindow.Size.Height != height)
             WindowChrome.Place(this, x, y, width, height);

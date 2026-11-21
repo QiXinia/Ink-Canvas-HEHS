@@ -17,13 +17,13 @@
             <Color x:Key="IcAccentSoftColor">#1A0067C0</Color>
             <Color x:Key="IcBoardBlackColor">#FF1F3B2C</Color>
             <Color x:Key="IcBoardWhiteColor">#FFFAFAFA</Color>
-            <SolidColorBrush x:Key="IcSurfaceBrush" Color="{StaticResource IcSurfaceColor}" />
-            <SolidColorBrush x:Key="IcSurfaceAltBrush" Color="{StaticResource IcSurfaceAltColor}" />
-            <SolidColorBrush x:Key="IcStrokeBrush" Color="{StaticResource IcStrokeColor}" />
-            <SolidColorBrush x:Key="IcTextPrimaryBrush" Color="{StaticResource IcTextPrimaryColor}" />
-            <SolidColorBrush x:Key="IcTextSecondaryBrush" Color="{StaticResource IcTextSecondaryColor}" />
-            <SolidColorBrush x:Key="IcAccentBrush" Color="{StaticResource IcAccentColor}" />
-            <SolidColorBrush x:Key="IcAccentSoftBrush" Color="{StaticResource IcAccentSoftColor}" />
+            <SolidColorBrush x:Key="IcSurfaceBrush" Color="#FFF6F7F9" />
+            <SolidColorBrush x:Key="IcSurfaceAltBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="IcStrokeBrush" Color="#1F000000" />
+            <SolidColorBrush x:Key="IcTextPrimaryBrush" Color="#E4000000" />
+            <SolidColorBrush x:Key="IcTextSecondaryBrush" Color="#9E000000" />
+            <SolidColorBrush x:Key="IcAccentBrush" Color="#FF0067C0" />
+            <SolidColorBrush x:Key="IcAccentSoftBrush" Color="#1A0067C0" />
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Dark">
@@ -36,13 +36,31 @@
             <Color x:Key="IcAccentSoftColor">#264CC2FF</Color>
             <Color x:Key="IcBoardBlackColor">#FF16281E</Color>
             <Color x:Key="IcBoardWhiteColor">#FF1B1B1B</Color>
-            <SolidColorBrush x:Key="IcSurfaceBrush" Color="{StaticResource IcSurfaceColor}" />
-            <SolidColorBrush x:Key="IcSurfaceAltBrush" Color="{StaticResource IcSurfaceAltColor}" />
-            <SolidColorBrush x:Key="IcStrokeBrush" Color="{StaticResource IcStrokeColor}" />
-            <SolidColorBrush x:Key="IcTextPrimaryBrush" Color="{StaticResource IcTextPrimaryColor}" />
-            <SolidColorBrush x:Key="IcTextSecondaryBrush" Color="{StaticResource IcTextSecondaryColor}" />
-            <SolidColorBrush x:Key="IcAccentBrush" Color="{StaticResource IcAccentColor}" />
-            <SolidColorBrush x:Key="IcAccentSoftBrush" Color="{StaticResource IcAccentSoftColor}" />
+            <SolidColorBrush x:Key="IcSurfaceBrush" Color="#FF202124" />
+            <SolidColorBrush x:Key="IcSurfaceAltBrush" Color="#FF2B2C2F" />
+            <SolidColorBrush x:Key="IcStrokeBrush" Color="#24FFFFFF" />
+            <SolidColorBrush x:Key="IcTextPrimaryBrush" Color="#F2FFFFFF" />
+            <SolidColorBrush x:Key="IcTextSecondaryBrush" Color="#A8FFFFFF" />
+            <SolidColorBrush x:Key="IcAccentBrush" Color="#FF4CC2FF" />
+            <SolidColorBrush x:Key="IcAccentSoftBrush" Color="#264CC2FF" />
+        </ResourceDictionary>
+
+        <!--
+          High contrast mirrors the Light/Dark token names so {ThemeResource} lookups and
+          ThemeBrushes.Resolve keep working when the system high-contrast flag is on.
+          Values are literal (no StaticResource): black surfaces, white ink/text,
+          cyan accent so accents stay visible on the black background.
+        -->
+        <ResourceDictionary x:Key="HighContrast">
+            <Color x:Key="IcBoardBlackColor">#FF000000</Color>
+            <Color x:Key="IcBoardWhiteColor">#FFFFFFFF</Color>
+            <SolidColorBrush x:Key="IcSurfaceBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="IcSurfaceAltBrush" Color="#FF000000" />
+            <SolidColorBrush x:Key="IcStrokeBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="IcTextPrimaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="IcTextSecondaryBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="IcAccentBrush" Color="#FF00FFFF" />
+            <SolidColorBrush x:Key="IcAccentSoftBrush" Color="#FF000000" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
 

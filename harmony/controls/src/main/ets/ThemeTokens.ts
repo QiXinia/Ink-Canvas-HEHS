@@ -1,4 +1,4 @@
-// @parity src/InkCanvas.Controls/Themes/Tokens.xaml + src/InkCanvas.Controls/Theming/PopupBrushes.cs
+// @parity src/InkCanvas.Controls/Themes/Tokens.xaml
 // 数值来自 parity/tokens.json 与 05-controls 研究；浮条按 S=50/36 换算。
 export interface ThemeTokens {
   surface: string;

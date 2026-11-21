@@ -1,0 +1,51 @@
+{
+  "id": "assistant-sse",
+  "entry": "harmony/core/src/main/ets/assistant/SseParser.ts",
+  "cases": [
+    {
+      "id": "openai-delta-and-named-events",
+      "fn": "parseSseChunk",
+      "input": [
+        "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\nevent: formula\ndata: {\"latex\":\"x=1\"}\n\nevent: step\ndata: {\"index\":1,\"text\":\"两边除以2\",\"latex\":\"x=1\"}\n\ndata: [DONE]\n\n",
+        ""
+      ],
+      "expected": {
+        "Events": [
+          { "Type": 0, "Text": "你好", "Latex": "", "Index": 0, "Title": "", "Points": [] },
+          { "Type": 1, "Text": "", "Latex": "x=1", "Index": 0, "Title": "", "Points": [] },
+          { "Type": 2, "Text": "两边除以2", "Latex": "x=1", "Index": 1, "Title": "", "Points": [] },
+          { "Type": 4, "Text": "", "Latex": "", "Index": 0, "Title": "", "Points": [] }
+        ],
+        "Carry": ""
+      }
+    },
+    {
+      "id": "partial-line-is-carried",
+      "fn": "parseSseChunk",
+      "input": ["data: {\"choices\":[{\"delta\":{\"content\":\"半", ""],
+      "expected": {
+        "Events": [],
+        "Carry": "data: {\"choices\":[{\"delta\":{\"content\":\"半"
+      }
+    },
+    {
+      "id": "error-envelope",
+      "fn": "sseEventFrom",
+      "input": ["message", "{\"error\":{\"message\":\"额度不足\"}}"],
+      "expected": { "Type": 5, "Text": "额度不足", "Latex": "", "Index": 0, "Title": "", "Points": [] }
+    },
+    {
+      "id": "shape-annotation-envelope",
+      "fn": "sseEventFrom",
+      "input": ["shape_annotation", "{\"type\":\"shape_annotation\",\"title\":\"直角\",\"points\":[[10,20],[30,40]]}"],
+      "expected": {
+        "Type": 3,
+        "Text": "",
+        "Latex": "",
+        "Index": 0,
+        "Title": "直角",
+        "Points": [[10, 20], [30, 40]]
+      }
+    }
+  ]
+}

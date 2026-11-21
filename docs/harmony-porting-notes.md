@@ -48,6 +48,21 @@
 - 已补齐（2026-11-18 缺口轮 4，代码缺口+布局精细+基线功能 ArkTS 实现）：上传压缩至 1080P（CompressMath 向量+ImageCompress）、画板 UI 缩放、手指模式切换按钮、退出按钮+二次确认（terminateSelf）、鼠标模式自动清屏、自动开关两指缩放、调色盘笔尖模式切换（PenNib 圆/椭圆45°）、画笔光标（跟随指针指示环）、触摸校准垫（TouchCalibration 向量+采集面板）、课件选择时墨迹隐藏开关；布局精细化：画板三独立浮条（页面/背景/文件）、PPT 四导航面板（底部+侧边翻页/页码）、断点感知面板宽度（手机 360/平板 440）。原「与基线一致」缺项按用户要求以 ArkTS 实现推进。
 - 模拟器/真机验证：本机 Hyper-V 不可用，待具备虚拟化的宿主或真机执行。
 
+## 跨架构契约对齐（2026-11-19）
+
+- manifest 的 csharp 路径与真实文件对齐：`ink-erase` → `InkDocument.cs`（无 StrokeEraser.cs）、`ui-shape-picker` → `PickerWindows.cs`（无 ShapePreview.cs）、`ui-yes-no` → `ShellController.cs`（ContentDialog，无 YesOrNoWindow）、`ui-theme-tokens`/`platform-desktop-acrylic` 去掉不存在的 `PopupBrushes.cs`、`tool-launchers` → 同层 `SystemServices.cs`（**C# 侧无启动器实现**，如实注明）、`board-video` 去掉不存在的 `BoardMediaLayer.cs`（**C# 基线仅图片对象，无视频层**）。
+- 5 处 ArkTS `@parity` 锚点同步改指，`parity/anchors.json` 71 对与扫描结果一致。
+- `parity/glyphs.json` 严格对齐当前 `Glyphs.cs`（29 项）；C# 已移除的 27 个历史图标移入 `parity/glyphs-legacy.json`，保留 Phase D 的 target 映射供 `IconGlyph` 参考。
+- 验证：`node tools/parity-check.mjs` 通过（71 锚点），`--final` 通过；456 向量 / 47 文件全部通过。未改动 C# 功能代码；`tool-launchers` 与 `board-video` 在 C# 侧仍未移植。
+
+## AI 魔法套索与助教浮窗（2026-11-19）
+
+- 鸿蒙侧新增 feature `ai-magic-lasso`（manifest 57 项，覆盖 56/57 = 98.25%，状态 `adapted`；C#/WinUI3 未回移）。
+- 目录：`core/assistant`（状态机、套索几何、锚点翻转/跟随、LaTeX/Markdown 渐进解析、贴回模型、SSE 解析 8 文件）、`platform/assistant`（配置、流式客户端、选区截图 base64 3 文件）、`controls`（MagicLassoEntry / AssistantCard / StreamMessage）、`entry/Index.ets` 接线（套索采集、浮窗跟随、贴回 undo、Q/Esc）。
+- 请求 6.1 字段与 SSE 6.2 事件完整实现；零第三方依赖；`AI_ENDPOINT`/`AI_MODEL`/`AI_TIMEOUT_MS` 配置，端点为空时走内置 mock 流。
+- 验证：`hvigorw assembleHap` **BUILD SUCCESSFUL**（未签名 debug HAP，约 2.2 MB）；480 向量 / 54 文件通过；`parity-check --final` OK（85 锚点）；`tools/mock-ai-sse.mjs` 实测输出 token/step/formula/done 事件序列。
+- 未验证（如实记录）：真机 2 秒首字、Acrylic 实机效果、焦点陷阱/200% 缩放、暗色观感、真实网关的 `requestInStream` 分块节奏；图形标注仅文本提示，未绘制到图层。详见 `docs/ai-magic-lasso.md`。
+
 ## 部署与验证工具（2026-11-18）
 
 - 本机（ECS，无嵌套虚拟化）**已移除模拟器相关文件**：system-image（4.21GB）、Emulator26.0 配置、实例目录、CLI emulator 程序；保留 hvigor/ohpm/SDK/hdc 构建链。

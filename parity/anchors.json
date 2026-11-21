@@ -23,7 +23,7 @@
     },
     {
       "arkts": "harmony/controls/src/main/ets/PanelStyle.ets",
-      "csharp": "src/InkCanvas.Controls/Theming/PopupBrushes.cs"
+      "csharp": "src/InkCanvas.Controls/Themes/Tokens.xaml"
     },
     {
       "arkts": "harmony/controls/src/main/ets/PenPalette.ets",
@@ -91,7 +91,7 @@
     },
     {
       "arkts": "harmony/core/src/main/ets/ink/StrokeEraser.ts",
-      "csharp": "src/InkCanvas.Core/Ink/StrokeEraser.cs"
+      "csharp": "src/InkCanvas.Core/Ink/InkDocument.cs"
     },
     {
       "arkts": "harmony/core/src/main/ets/ink/StrokeGeometry.ts",
@@ -354,16 +354,72 @@
       "csharp": "src/InkCanvas.Core/Update/UpdatePolicy.cs"
     },
     {
-      "arkts": "harmony/platform/src/main/ets/system/SystemServices.ets",
-      "csharp": "src/InkCanvas.Platform/System/SoftwareLauncher.cs"
-    },
-    {
       "arkts": "harmony/platform/src/main/ets/system/WpsInterop.ts",
       "csharp": "src/InkCanvas.Features/Ppt/PptInteropService.cs"
     },
     {
       "arkts": "harmony/platform/src/main/ets/window/CountdownPiP.ets",
       "csharp": "src/InkCanvas.App/Views/CountdownWindow.cs"
+    },
+    {
+      "arkts": "harmony/platform/src/main/ets/system/SystemServices.ets",
+      "csharp": "src/InkCanvas.Platform/System/SoftwareLauncher.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/AssistantTypes.ts",
+      "csharp": "src/InkCanvas.App/Services/ShellController.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/AssistantMachine.ts",
+      "csharp": "src/InkCanvas.App/Services/ShellController.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/LassoGeometry.ts",
+      "csharp": "src/InkCanvas.Core/Selection/SelectionGeometry.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/AnchorLayout.ts",
+      "csharp": "src/InkCanvas.App/Views/FloatingBarWindow.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/LatexLite.ts",
+      "csharp": "src/InkCanvas.App/Views/InfoWindow.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/MarkdownLite.ts",
+      "csharp": "src/InkCanvas.App/Views/InfoWindow.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/PasteBackModel.ts",
+      "csharp": "src/InkCanvas.Features/Board/BoardService.cs"
+    },
+    {
+      "arkts": "harmony/core/src/main/ets/assistant/SseParser.ts",
+      "csharp": "src/InkCanvas.Features/Update/UpdateService.cs"
+    },
+    {
+      "arkts": "harmony/platform/src/main/ets/assistant/AiConfig.ets",
+      "csharp": "src/InkCanvas.Core/Settings/AppSettings.cs"
+    },
+    {
+      "arkts": "harmony/platform/src/main/ets/assistant/AiClient.ets",
+      "csharp": "src/InkCanvas.Features/Update/UpdateService.cs"
+    },
+    {
+      "arkts": "harmony/platform/src/main/ets/assistant/AssistantCapture.ets",
+      "csharp": "src/InkCanvas.Features/Tools/Tools.cs"
+    },
+    {
+      "arkts": "harmony/controls/src/main/ets/MagicLassoEntry.ets",
+      "csharp": "src/InkCanvas.Controls/Controls/FloatingBar.cs"
+    },
+    {
+      "arkts": "harmony/controls/src/main/ets/AssistantCard.ets",
+      "csharp": "src/InkCanvas.Controls/Controls/FloatingBar.cs"
+    },
+    {
+      "arkts": "harmony/controls/src/main/ets/StreamMessage.ets",
+      "csharp": "src/InkCanvas.App/Views/InfoWindow.cs"
     }
   ]
 }

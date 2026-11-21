@@ -24,6 +24,29 @@ public sealed class AppSettings
     [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
     [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
 
+    private AiSettings _ai = new();
+
+    /// <summary>AI 助教功能开关；旧设置文件缺少该节点或显式写成 null 时回退为默认（全开）。</summary>
+    [JsonPropertyName("ai")]
+    public AiSettings Ai
+    {
+        get => _ai ??= new AiSettings();
+        set => _ai = value ?? new AiSettings();
+    }
+
+    private ClassroomSettings _classroom = new();
+
+    /// <summary>课堂场景与工具配置；旧设置文件缺少节点时回退为默认。</summary>
+    [JsonPropertyName("classroom")]
+    public ClassroomSettings Classroom
+    {
+        get => _classroom ??= new ClassroomSettings();
+        set => _classroom = value ?? new ClassroomSettings();
+    }
+
+    /// <summary>新功能回退开关；旧设置文件缺该节点时保持默认（全部开启）。</summary>
+    [JsonPropertyName("features")] public FeatureSettings Features { get; set; } = new();
+
     public AppSettings Clone() =>
         JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(this)) ?? new AppSettings();
 
@@ -172,6 +195,36 @@ public sealed class ExperimentalSettings
     public bool Word { get; set; } = true;
     public bool PowerPoint { get; set; } = true;
     public bool Edge { get; set; } = true;
+}
+
+/// <summary>第一轮功能区开关，供后续新功能按需回退；默认全部开启。</summary>
+public sealed class FeatureSettings
+{
+    [JsonPropertyName("enableAiTeaching")] public bool EnableAiTeaching { get; set; } = true;
+    [JsonPropertyName("enableExerciseFlow")] public bool EnableExerciseFlow { get; set; } = true;
+    [JsonPropertyName("enableExampleLibrary")] public bool EnableExampleLibrary { get; set; } = true;
+    [JsonPropertyName("enableResourceBundle")] public bool EnableResourceBundle { get; set; } = true;
+}
+
+/// <summary>
+/// AI 助教灰度开关：每一项关闭时回退到旧的单段、无圈选、无自检或纯 PNG 贴回行为。
+/// 默认全部开启，便于旧版 Settings.json 直接升级。
+/// </summary>
+public sealed class AiSettings
+{
+    [JsonPropertyName("enableLocalCorrection")] public bool EnableLocalCorrection { get; set; } = true;
+    [JsonPropertyName("enableEditablePaste")] public bool EnableEditablePaste { get; set; } = true;
+    [JsonPropertyName("enableVerification")] public bool EnableVerification { get; set; } = true;
+    [JsonPropertyName("enableTwoStage")] public bool EnableTwoStage { get; set; } = true;
+
+    /// <summary>上次使用的讲题模式，缺省为分步引导（课堂默认不泄露答案）。</summary>
+    [JsonPropertyName("teachingMode")] public string TeachingMode { get; set; } = "step";
+
+    /// <summary>
+    /// 是否已展示过「框选后可用 AI 识别」的一次性引导。旧设置文件缺该键时为 false，
+    /// 因此升级后的首次使用仍会提示一次；之后不再反复打扰。
+    /// </summary>
+    [JsonPropertyName("hasSeenLassoHint")] public bool HasSeenLassoHint { get; set; }
 }
 
 public enum OptionalOperation { Yes, No, Ask }
@@ -385,3 +438,33 @@ public sealed class RandSettings
 }
 
 public enum LotterySamplingMode { SoftCooldown, Uniform, RoundWithoutReplacement }
+
+/// <summary>课堂工具箱配置：场景预设、倒计时与常用参数；新字段只追加。</summary>
+public sealed class ClassroomSettings
+{
+    [JsonPropertyName("version")] public int Version { get; set; } = 1;
+
+    [JsonPropertyName("presetId")] public string PresetId { get; set; } = "teach";
+
+    [JsonPropertyName("countdownMinutes")] public int CountdownMinutes { get; set; } = 3;
+
+    [JsonPropertyName("toolkitCollapsed")] public bool ToolkitCollapsed { get; set; }
+
+    [JsonPropertyName("practicePageName")] public string PracticePageName { get; set; } = "随堂练习";
+
+    [JsonPropertyName("customPresets")] public string CustomPresets { get; set; } = "";
+
+    [JsonPropertyName("groupSplitMode")] public string GroupSplitMode { get; set; } = "groupCount";
+
+    [JsonPropertyName("groupSplitValue")] public int GroupSplitValue { get; set; } = 4;
+
+    [JsonPropertyName("spotlightRegions")] public string SpotlightRegions { get; set; } = "";
+
+    /// <summary>工具箱窗口屏幕位置；int.MinValue 表示从未保存，按默认居中放置。</summary>
+    [JsonPropertyName("toolkitX")] public int ToolkitX { get; set; } = int.MinValue;
+    [JsonPropertyName("toolkitY")] public int ToolkitY { get; set; } = int.MinValue;
+
+    /// <summary>放大镜窗口屏幕位置；int.MinValue 表示未保存。</summary>
+    [JsonPropertyName("magnifierX")] public int MagnifierX { get; set; } = int.MinValue;
+    [JsonPropertyName("magnifierY")] public int MagnifierY { get; set; } = int.MinValue;
+}

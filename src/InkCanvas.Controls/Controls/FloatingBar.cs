@@ -23,6 +23,10 @@ public interface IShellActions
     void OpenLotteryQuick();
     void SaveStrokes();
     void OpenStrokes();
+    void OpenRoster() { }
+    void OpenSpotlight() { }
+    void OpenMagnifier() { }
+    void OpenToolkit() { }
     void OpenReplay();
     void OpenGuide();
     void OpenPenPalette(bool highlighter);
@@ -37,6 +41,21 @@ public interface IShellActions
     void PptPrevious();
     void PptExit();
     void PptOpenNavigation();
+    void ToggleBlackScreen() { }
+    void PptGotoSlide(int oneBasedIndex) { }
+    void ToggleSlideNavigator() { }
+    void RotatePptNavigationCorner() { }
+    void CollapsePptNavigation() { }
+    void TogglePptNavigationWindow() { }
+    void OpenTimeMachine() { }
+    void ToggleRecordingPause() { }
+    void OpenAiAssistant() { }
+    void OpenGroupScore() { }
+    void OpenHandout() { }
+    void CyclePreset() { }
+    void OpenPresetEditor() { }
+    void PasteSpotlightToBoard() { }
+    void AskAiFromSpotlight() { }
     void Exit();
     IReadOnlyList<ExtensionCommand> ExtensionCommands => Array.Empty<ExtensionCommand>();
     Task ExecuteExtensionCommandAsync(ExtensionCommand command) => Task.CompletedTask;
@@ -422,6 +441,7 @@ public sealed class FloatingBar : UserControl
         _highlighterButton.IconFont = "ms-appx:///Assets/SegoeMDL2Assets.ttf#Segoe MDL2 Assets";
         _clearButton = AddPrimary(Glyphs.Delete, "清空", "清空（有选中时删除选中墨迹）— 快捷键 Ctrl+E", ClearOrDeleteSelection);
 
+        AddPrimary(Glyphs.Ai, "AI 助教", "AI 识别（先框选内容）", () => Shell?.OpenAiAssistant());
         _primary.Children.Add(_canvasControls);
         _eraserButton = AddPrimary(_canvasControls, Glyphs.Eraser, "橡皮", "橡皮（选中后再次点击打开选项）— 快捷键 Alt+E", () =>
         {
@@ -618,6 +638,17 @@ public sealed class FloatingBar : UserControl
     public void RefreshExtensionCommands()
     {
         while (_moreRows.Children.Count > 3) _moreRows.Children.RemoveAt(_moreRows.Children.Count - 1);
+        var classroom = MoreRow();
+        AddMore(classroom, Glyphs.Ai, "AI 助教", () => Shell?.OpenAiAssistant());
+        AddMore(classroom, Glyphs.Board, "课堂工具", () => Shell?.OpenToolkit());
+        AddMore(classroom, Glyphs.TimeMachine, "板书时光机", () => Shell?.OpenTimeMachine());
+        AddMore(classroom, Glyphs.Pause, "暂停 / 继续录制", () => Shell?.ToggleRecordingPause());
+        var presentation = MoreRow();
+        AddMore(presentation, Glyphs.SlideList, "课件页导航", () => Shell?.ToggleSlideNavigator());
+        AddMore(presentation, Glyphs.ChevronRight, "翻页悬浮窗", () => Shell?.TogglePptNavigationWindow());
+        AddMore(presentation, Glyphs.Lock, "黑屏 / 恢复", () => Shell?.ToggleBlackScreen());
+        _moreRows.Children.Add(classroom);
+        _moreRows.Children.Add(presentation);
         AppendExtensionCommands();
     }
 

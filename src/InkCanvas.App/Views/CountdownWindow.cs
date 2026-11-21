@@ -45,7 +45,11 @@ public sealed class CountdownWindow : Window, IDisposable
     internal int Round => _round;
     internal int ConfiguredSeconds => _configuredSeconds;
 
-    public CountdownWindow(int theme = 0)
+    public event Action<TimeSpan> TimerStarted;
+    public event Action<TimeSpan> TimerStopped;
+    public event Action TimerEnded;
+
+    public CountdownWindow(int theme = 0, int defaultMinutes = 0)
     {
         Title = "课堂倒计时 - Ink Canvas";
         _timer = DispatcherQueue.CreateTimer();
@@ -62,6 +66,7 @@ public sealed class CountdownWindow : Window, IDisposable
         _root.KeyDown += OnKeyDown;
         Closed += (_, _) => Dispose();
         ApplyPalette();
+        if (defaultMinutes > 0) SetDuration(Math.Clamp(defaultMinutes, 1, 5999) * 60);
         SetDigits(_configuredSeconds);
         RefreshState();
     }
@@ -242,6 +247,7 @@ public sealed class CountdownWindow : Window, IDisposable
         SetDigits((int)Math.Ceiling(remaining));
         if (remaining > 0) return;
         _timer.Stop(); _elapsed.Stop(); _isRunning = false;
+        TimerEnded?.Invoke();
         if (_repeat.IsChecked == true)
         {
             _round++;
@@ -273,14 +279,32 @@ public sealed class CountdownWindow : Window, IDisposable
         }
         _ring.IsPaused = _isPaused;
         RefreshState();
+        var remaining = TimeSpan.FromSeconds(Math.Max(0, _totalSeconds - _elapsed.Elapsed.TotalSeconds));
+        if (_isPaused) TimerStopped?.Invoke(remaining);
+        else TimerStarted?.Invoke(remaining);
+    }
+
+    public void StartCountdown(TimeSpan duration)
+    {
+        if (_disposed || duration <= TimeSpan.Zero) return;
+        Reset();
+        SetDuration((int)Math.Clamp(Math.Ceiling(duration.TotalSeconds), 1, 359999));
+        StartPause();
+    }
+
+    public void StopCountdown()
+    {
+        if (_isRunning) Reset();
     }
 
     internal void Reset()
     {
+        bool wasRunning = _isRunning;
         _timer.Stop(); _elapsed.Reset(); StopSound();
         _isRunning = _isPaused = _editing = false; _round = 1;
         _ring.Value = 0; _ring.IsPaused = false;
         SetDigits(_configuredSeconds); RefreshState();
+        if (wasRunning) TimerStopped?.Invoke(TimeSpan.Zero);
     }
 
     internal void AddTime(int seconds)

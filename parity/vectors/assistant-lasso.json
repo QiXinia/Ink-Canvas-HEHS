@@ -1,0 +1,51 @@
+{
+  "id": "assistant-lasso",
+  "entry": "harmony/core/src/main/ets/assistant/LassoGeometry.ts",
+  "cases": [
+    {
+      "id": "closed-lasso-hits-inside-stroke",
+      "fn": "lassoProbe",
+      "input": [
+        [[100, 100], [400, 100], [400, 300], [100, 300], [100, 100]],
+        [[[120, 120], [200, 140], [250, 200]], [[500, 500], [600, 600]]]
+      ],
+      "expected": {
+        "Closed": true,
+        "Area": 60000,
+        "Usable": true,
+        "HitCount": 1,
+        "Bounds": { "Left": 100, "Top": 100, "Right": 400, "Bottom": 300 }
+      }
+    },
+    {
+      "id": "open-path-is-not-usable",
+      "fn": "lassoProbe",
+      "input": [
+        [[0, 0], [100, 0], [100, 100], [0, 100]],
+        []
+      ],
+      "expected": {
+        "Closed": false,
+        "Area": 10000,
+        "Usable": false,
+        "HitCount": 0,
+        "Bounds": { "Left": 0, "Top": 0, "Right": 100, "Bottom": 100 }
+      }
+    },
+    {
+      "id": "tiny-selection-rejected",
+      "fn": "lassoProbe",
+      "input": [
+        [[0, 0], [20, 0], [20, 20], [0, 20], [0, 0]],
+        []
+      ],
+      "expected": {
+        "Closed": true,
+        "Area": 400,
+        "Usable": false,
+        "HitCount": 0,
+        "Bounds": { "Left": 0, "Top": 0, "Right": 20, "Bottom": 20 }
+      }
+    }
+  ]
+}

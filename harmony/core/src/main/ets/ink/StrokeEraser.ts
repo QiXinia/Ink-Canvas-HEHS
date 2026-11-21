@@ -1,4 +1,4 @@
-// @parity src/InkCanvas.Core/Ink/StrokeEraser.cs
+// @parity src/InkCanvas.Core/Ink/InkDocument.cs
 // 线条擦：只切掉中心线被圆盘扫过的部分，返回新碎片（新 Id，保留宽度，不重算笔锋）。
 import { InkPoint } from './InkPoint';
 import { InkStroke } from './InkStroke';

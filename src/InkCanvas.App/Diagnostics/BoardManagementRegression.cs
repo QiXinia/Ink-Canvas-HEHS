@@ -17,6 +17,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Streams;
 
+using BoardPageThumbnail = InkCanvas.App.Views.BoardPageThumbnail;
+
 namespace InkCanvas.App.Diagnostics;
 
 internal static class BoardManagementRegression

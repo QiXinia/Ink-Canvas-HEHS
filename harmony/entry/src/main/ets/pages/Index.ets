@@ -32,8 +32,13 @@ import {
   isFullLayout,
   InkCastClient,
   StrokePredictor,
-  StylusBinding
+  StylusBinding,
+  AiClient,
+  readAiConfig,
+  captureRegionBase64,
+  describeAiConfig
 } from '@inkcanvas/platform';
+import type { AssistantStream } from '@inkcanvas/platform';
 import {
   FloatingBar,
   PenPalette,
@@ -47,6 +52,8 @@ import {
   sharedId,
   panelBackground,
   panelBlurStyle,
+  AssistantCard,
+  MagicLassoEntry,
   AiCaptureOverlay,
   AiGeneratingOverlay,
   AiResultCard,
@@ -65,6 +72,41 @@ import {
 import type { SceneStrokeInput, SceneSelectionInput, ISelectionElement } from '@inkcanvas/ink';
 import type { PagePlacement } from '@inkcanvas/platform';
 import { InkStroke, InkColor, InkDocument, parseSettings, stringifySettings, createDefaultSettings, matrixToArray, transformPointByMatrix, PenNib, calibrationMultiplier, toTaperKind, toPenStyle, toEraserRadius, resetToRecommendation, TaperKind, placeToolbar, summarizeInk, recognizeFromText, buildLectureNotes, shapeSnapOptions } from '@inkcanvas/core';
+import {
+  AssistantState,
+  AssistantMode,
+  AssistantEventType,
+  createSession,
+  beginCapture,
+  beginRecognize,
+  applyEvent,
+  beginFollowUp,
+  finish,
+  fail,
+  lassoProbe,
+  lassoBounds,
+  isClosedPath,
+  closePath,
+  usableSelection,
+  strokeHitByLasso,
+  placeCard,
+  clampPlacement,
+  pasteResult,
+  latexToPlain,
+  PasteKind,
+  AI_CARD_CONTENT_TYPE
+} from '@inkcanvas/core';
+import type {
+  AssistantEvent,
+  AssistantSession,
+  AssistantRequest,
+  AssistantViewport,
+  InkStrokePayload,
+  InkPointPayload,
+  SelectionRect,
+  LassoPoint,
+  PasteInput
+} from '@inkcanvas/core';
 import type { ShapeKind, StrokePointInput, AppSettings, AdvancedTouchInput, Matrix3x2 } from '@inkcanvas/core';
 import type { AiRegion, AiInkSummary, AiRecognizeResult, LectureNotes, LectureNoteCard, ShapeSnapOption } from '@inkcanvas/core';
 import { CoursewareSession, CountdownEngine, LotteryEngine, BoardDocument, BoardBackground, renderMatrix4Values, applyReplaceRules, lotteryDisplayName, lotteryFlicker, lotteryDrawUnique, lotterySplitGroups, appendTransform, transformedBounds, snapshotGeometry, recordTransform, BoardSelectionElement, parseRoster } from '@inkcanvas/features';
@@ -77,6 +119,7 @@ import { promptAction, matrix4, componentSnapshot, font, window } from '@kit.Ark
 import { textRecognition } from '@kit.CoreVisionKit';
 import { pasteboard, BusinessError } from '@kit.BasicServicesKit';
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 
@@ -122,6 +165,13 @@ interface ChangelogEntry {
   version: string;
   title: string;
   items: string[];
+}
+
+// AI 贴回卡片元数据（随画板图片资产保存，ContentType 标记）。
+interface AiCardPayload {
+  Kind: number;
+  Text: string;
+  Latex: string;
 }
 
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
@@ -307,6 +357,38 @@ struct Index {
   // 触摸校准垫：采集接触宽度样本。
   @State calibrationOpen: boolean = false;
   @State calibrationSamples: number[] = [];
+  // ---- AI 魔法套索 --------------------------------------------------------
+  @State lassoArmed: boolean = false;
+  @State lassoActive: boolean = false;
+  @State assistantOpen: boolean = false;
+  @State assistantState: number = AssistantState.Idle;
+  @State assistantMode: number = AssistantMode.Auto;
+  @State assistantText: string = '';
+  @State assistantFormula: string = '';
+  @State assistantStatus: string = '';
+  @State assistantError: string = '';
+  @State assistantThumb: string = '';
+  @State assistantCanPaste: boolean = false;
+  @State assistantCardX: number = 24;
+  @State assistantCardY: number = 96;
+  @State assistantCardW: number = 360;
+  @State assistantCardMaxH: number = 480;
+  @State assistantPasteFlash: boolean = false;
+  private lassoPoints: LassoPoint[] = [];
+  private lassoPointerId: number = -1;
+  private assistantSession: AssistantSession = createSession(AssistantMode.Auto, '');
+  private assistantClient: AiClient | null = null;
+  private assistantStream: AssistantStream | null = null;
+  private assistantAnchorWorld: SelectionRect | null = null;
+  private assistantAnchorView: SelectionRect | null = null;
+  private assistantLastHits: InkStroke[] = [];
+  private assistantLastMode: number = AssistantMode.Auto;
+  private assistantCardDragX: number = 0;
+  private assistantCardDragY: number = 0;
+  private assistantSeq: number = 0;
+  private assistantTimeoutTimer: number = -1;
+  private lastPastedAiId: string = '';
+  private ctrlHeld: boolean = false;
 
   // ---- AI 教学助手（鸿蒙端增强；内容来自端侧确定性演示引擎） ----
   @State aiCaptureOpen: boolean = false;
@@ -342,6 +424,7 @@ struct Index {
     this.stopLotteryTimer();
     this.stopReplayTimer();
     this.countdownPiP.stop();
+    this.abortAssistantStream();
     this.releaseStylusGesture();
   }
 
@@ -1408,6 +1491,22 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
         .hitTestBehavior(HitTestMode.Transparent)
       }
 
+      if (this.selectedId === 'select' && !this.boardOpen) {
+        MagicLassoEntry({
+          dark: this.dark,
+          entryEnabled: this.controller.HasSelection || this.controller.Document.Count > 0,
+          armed: this.lassoArmed,
+          reduceMotion: this.isMotionReduced(),
+          onTrigger: () => {
+            this.triggerMagicLasso();
+          },
+          onArm: () => {
+            this.armMagicLasso();
+          }
+        })
+          .position({ x: this.lassoEntryX(), y: this.lassoEntryY() })
+      }
+
       if (!this.boardOpen) {
         Stack({ alignContent: Alignment.Bottom }) {
           FloatingBar({
@@ -1459,6 +1558,54 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
       .width('100%')
       .height('100%')
       .hitTestBehavior(HitTestMode.Transparent)
+      }
+
+
+      if (this.assistantOpen) {
+        AssistantCard({
+          dark: this.dark,
+          state: this.assistantState,
+          mode: this.assistantMode,
+          content: this.assistantText,
+          formula: this.assistantFormula,
+          statusText: this.assistantStatus,
+          errorText: this.assistantError,
+          reduceMotion: this.isMotionReduced(),
+          materialBlur: this.blurEnabled,
+          thumbnailBase64: this.assistantThumb,
+          cardWidth: this.assistantCardW,
+          cardMaxHeight: this.assistantCardMaxH,
+          canPaste: this.assistantCanPaste,
+          modeEnabled: this.assistantState === AssistantState.Done || this.assistantState === AssistantState.Error,
+          onClose: () => {
+            this.closeAssistant();
+          },
+          onStop: () => {
+            this.stopAssistant();
+          },
+          onRetry: () => {
+            this.retryAssistant();
+          },
+          onRephrase: () => {
+            this.rephraseAssistant();
+          },
+          onMode: (mode: number) => {
+            this.switchAssistantMode(mode);
+          },
+          onFollowUp: (text: string) => {
+            this.followUpAssistant(text);
+          },
+          onPaste: () => {
+            this.pasteAssistant();
+          },
+          onCopy: () => {
+            this.copyAssistant();
+          },
+          onDrag: (dx: number, dy: number) => {
+            this.dragAssistantCard(dx, dy);
+          }
+        })
+          .position({ x: this.assistantCardX, y: this.assistantCardY })
       }
 
       if (this.boardOpen) {
@@ -1662,7 +1809,9 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
 
   @Builder
   BoardImage(asset: BoardAsset) {
-    if (this.decodeBoardAsset(asset) !== null) {
+    if (asset.ContentType === AI_CARD_CONTENT_TYPE) {
+      this.BoardAiCard(asset)
+    } else if (this.decodeBoardAsset(asset) !== null) {
       Image(this.decodeBoardAsset(asset))
         .objectFit(ImageFit.Fill)
         .position({ x: asset.Left, y: asset.Top })
@@ -1670,6 +1819,54 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
         .height(asset.Height)
         .opacity(asset.Opacity === undefined ? 1 : asset.Opacity)
         .transform(this.boardAssetMatrix(asset))
+    }
+  }
+
+  @Builder
+  BoardAiCard(asset: BoardAsset) {
+    Column({ space: 4 }) {
+      Row() {
+        Text('AI 助教')
+          .fontSize(11)
+          .fontColor('#FF0067C0')
+        Blank()
+        Text('✦')
+          .fontSize(12)
+          .fontColor('#FF0067C0')
+      }
+      .width('100%')
+      Text(this.aiCardBody(asset))
+        .fontSize(13)
+        .fontColor(this.dark ? '#F2FFFFFF' : '#E4000000')
+        .maxLines(6)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .width('100%')
+    }
+    .position({ x: asset.Left, y: asset.Top })
+    .width(asset.Width)
+    .height(asset.Height)
+    .padding(10)
+    .alignItems(HorizontalAlign.Start)
+    .backgroundColor(this.dark ? '#E6202124' : '#F2FFFFFF')
+    .borderRadius(8)
+    .border({
+      width: asset.Id === this.lastPastedAiId ? 2 : 1,
+      color: asset.Id === this.lastPastedAiId ? '#FF0067C0' : (this.dark ? '#33FFFFFF' : '#33000000')
+    })
+    .shadow({ radius: 12, color: '#26000000', offsetY: 4 })
+    .animation({ duration: 300, curve: Curve.EaseInOut })
+    .transform(this.boardAssetMatrix(asset))
+  }
+
+  private aiCardBody(asset: BoardAsset): string {
+    try {
+      const payload = JSON.parse(asset.Data) as AiCardPayload;
+      if (payload.Latex.length > 0) {
+        return latexToPlain(payload.Latex);
+      }
+      return payload.Text;
+    } catch (e) {
+      return '';
     }
   }
 
@@ -2214,7 +2411,8 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
         const days: number[] = [1, 3, 5, 7, 15, 30, 60, 100, 365];
         this.settings.automation.autoDelSavedFilesDaysThreshold = days[i];
         this.touchSettings();
-        this.rebuildAutoSave();
+this.rebuildAutoSave();
+    this.assistantClient = new AiClient(readAiConfig());
       })
   }
 
@@ -2336,9 +2534,6 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
   }
 
   private handleKey(event: KeyEvent): void {
-    if (event.type !== KeyType.Down) {
-      return;
-    }
     let alt = false;
     let ctrl = false;
     try {
@@ -2347,6 +2542,10 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
         ctrl = event.getModifierKeyState(['Ctrl']);
       }
     } catch (e) {
+      return;
+    }
+    this.ctrlHeld = ctrl;
+    if (event.type !== KeyType.Down) {
       return;
     }
     const code = event.keyCode;
@@ -2368,6 +2567,12 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
       this.handleAction('fold');
     } else if (alt && code === KeyCode.KEYCODE_Q) {
       this.handleAction('mouse');
+    } else if (!alt && !ctrl && code === KeyCode.KEYCODE_Q) {
+      if (this.selectedId === 'select' && !this.boardOpen) {
+        this.triggerMagicLasso();
+      }
+    } else if (code === KeyCode.KEYCODE_ESCAPE && this.assistantOpen) {
+      this.closeAssistant();
     } else if (alt && code === KeyCode.KEYCODE_A) {
       this.openAiCapture(0);
     }
@@ -3388,6 +3593,12 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
       if (this.routeBoardImageDrag(event.type, touch.id, px, py)) {
         continue;
       }
+      if (this.assistantOpen && this.pointInAssistantCard(touch.x, touch.y)) {
+        continue;
+      }
+      if (this.handleLassoTouch(event.type, touch.id, touch.x, touch.y)) {
+        continue;
+      }
       // Down/Up/Cancel 在派发给控制器之前清空预测段：Invalidated 是同步回调，
       // 若先派发，提交帧会把上一帧残留的预测段又画回活动层且之后无帧清除。
       if (event.type === TouchType.Down) {
@@ -3606,6 +3817,7 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
     this.drawLassoOverlay();
     this.drawDotAnimations();
     this.ensureDotTimer();
+    this.updateAssistantCardPosition();
   }
 
   private async openCourseware(): Promise<void> {
@@ -3713,6 +3925,595 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
     this.pdfSource.close();
     this.controller.BindDocument(this.annotateDocument);
     this.refreshScene();
+  }
+
+  // ---- AI 魔法套索：入口与采集 -------------------------------------------
+
+  private lassoEntryX(): number {
+    if (this.cursorVisible) {
+      return this.cursorX + 18;
+    }
+    return Math.max(24, this.windowWidth - 190);
+  }
+
+  private lassoEntryY(): number {
+    if (this.cursorVisible) {
+      return this.cursorY + 18;
+    }
+    return Math.max(96, this.windowHeight * 0.5);
+  }
+
+  private armMagicLasso(): void {
+    this.lassoArmed = true;
+    this.lassoPoints = [];
+    this.lassoActive = false;
+    promptAction.showToast({ message: '请手绘圈选区域，松手后自动识别（可点 Q）', duration: 2000 });
+  }
+
+  // 已存在矩形选区时直接识别；否则进入手绘套索等待下一次拖动。
+  private triggerMagicLasso(): void {
+    if (this.controller.Tool !== InkTool.Select) {
+      return;
+    }
+    if (this.assistantOpen) {
+      this.closeAssistant();
+    }
+    if (this.controller.HasSelection) {
+      const worldBounds = this.controller.SelectionBounds;
+      if (worldBounds.isEmpty()) {
+        promptAction.showToast({ message: '请框选有效内容（最小 32×32）', duration: 1600 });
+        return;
+      }
+      const worldRect: SelectionRect = {
+        Left: worldBounds.Left,
+        Top: worldBounds.Top,
+        Right: worldBounds.Right,
+        Bottom: worldBounds.Bottom
+      };
+      const viewRect = this.worldRectToView(worldRect);
+      if (!usableSelection(viewRect)) {
+        promptAction.showToast({ message: '请框选有效内容（最小 32×32）', duration: 1600 });
+        return;
+      }
+      this.beginAssistant(AssistantMode.Auto, viewRect, this.controller.Selection.slice(), '', false);
+      return;
+    }
+    this.armMagicLasso();
+  }
+
+  private handleLassoTouch(type: TouchType, id: number, x: number, y: number): boolean {
+    if (this.controller.Tool !== InkTool.Select) {
+      return false;
+    }
+    // 桌面/2in1：按住 Ctrl 框选直接进入魔法套索（触摸设备仍走入口/Q）。
+    if (!this.lassoArmed && this.ctrlHeld && type === TouchType.Down) {
+      this.lassoArmed = true;
+      this.lassoPoints = [];
+      this.lassoActive = false;
+    }
+    if (!this.lassoArmed) {
+      return false;
+    }
+    if (type === TouchType.Down) {
+      this.lassoActive = true;
+      this.lassoPointerId = id;
+      this.lassoPoints = [{ X: x, Y: y }];
+      return true;
+    }
+    if (!this.lassoActive || id !== this.lassoPointerId) {
+      return false;
+    }
+    if (type === TouchType.Move) {
+      const count = this.lassoPoints.length;
+      if (count > 0) {
+        const last = this.lassoPoints[count - 1];
+        const dx = x - last.X;
+        const dy = y - last.Y;
+        if (dx * dx + dy * dy >= 4) {
+          this.lassoPoints.push({ X: x, Y: y });
+        }
+      }
+      return true;
+    }
+    if (type === TouchType.Up) {
+      this.lassoActive = false;
+      this.lassoPointerId = -1;
+      this.finishLasso();
+      return true;
+    }
+    if (type === TouchType.Cancel) {
+      this.lassoActive = false;
+      this.lassoArmed = false;
+      this.lassoPointerId = -1;
+      this.lassoPoints = [];
+      return true;
+    }
+    return false;
+  }
+
+  private finishLasso(): void {
+    const points = this.lassoPoints;
+    this.lassoPoints = [];
+    this.lassoArmed = false;
+    if (points.length < 4 || !isClosedPath(points)) {
+      promptAction.showToast({ message: '请画出闭合区域', duration: 1600 });
+      return;
+    }
+    const bounds = lassoBounds(points);
+    if (!usableSelection(bounds)) {
+      promptAction.showToast({ message: '请框选有效内容（最小 32×32）', duration: 1600 });
+      return;
+    }
+    const polygon = closePath(points);
+    const worldPolygon = this.toWorldPolygon(polygon);
+    const hits: InkStroke[] = [];
+    const strokes = this.controller.Document.Strokes;
+    for (let i = 0; i < strokes.length; i++) {
+      const strokePoints = this.strokeAsLassoPoints(strokes[i]);
+      if (strokePoints.length > 0 && strokeHitByLasso(strokePoints, worldPolygon)) {
+        hits.push(strokes[i]);
+      }
+    }
+    if (hits.length === 0) {
+      promptAction.showToast({ message: '未框选到墨迹，可换个区域重试', duration: 1600 });
+      return;
+    }
+    const viewRect: SelectionRect = {
+      Left: bounds.Left,
+      Top: bounds.Top,
+      Right: bounds.Right,
+      Bottom: bounds.Bottom
+    };
+    this.beginAssistant(AssistantMode.Auto, viewRect, hits, '', false);
+  }
+
+  private strokeAsLassoPoints(stroke: InkStroke): LassoPoint[] {
+    const points: LassoPoint[] = [];
+    for (let i = 0; i < stroke.Count; i++) {
+      const point = stroke.Points[i];
+      points.push({ X: point.X, Y: point.Y });
+    }
+    return points;
+  }
+
+  private toWorldPolygon(points: LassoPoint[]): LassoPoint[] {
+    const world: LassoPoint[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const converted = this.controller.toWorld(points[i].X, points[i].Y);
+      world.push({ X: converted.X, Y: converted.Y });
+    }
+    return world;
+  }
+
+  private viewRectToWorld(rect: SelectionRect): SelectionRect {
+    const topLeft = this.controller.toWorld(rect.Left, rect.Top);
+    const bottomRight = this.controller.toWorld(rect.Right, rect.Bottom);
+    return {
+      Left: Math.min(topLeft.X, bottomRight.X),
+      Top: Math.min(topLeft.Y, bottomRight.Y),
+      Right: Math.max(topLeft.X, bottomRight.X),
+      Bottom: Math.max(topLeft.Y, bottomRight.Y)
+    };
+  }
+
+  private worldRectToView(rect: SelectionRect): SelectionRect {
+    const topLeft = transformPointByMatrix(this.controller.ViewTransform, rect.Left, rect.Top);
+    const bottomRight = transformPointByMatrix(this.controller.ViewTransform, rect.Right, rect.Bottom);
+    return {
+      Left: Math.min(topLeft.X, bottomRight.X),
+      Top: Math.min(topLeft.Y, bottomRight.Y),
+      Right: Math.max(topLeft.X, bottomRight.X),
+      Bottom: Math.max(topLeft.Y, bottomRight.Y)
+    };
+  }
+
+  private viewScale(): number {
+    const matrix = matrixToArray(this.controller.ViewTransform);
+    const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+    const scale = Math.sqrt(Math.abs(determinant));
+    return scale > 0.01 ? scale : 1;
+  }
+
+  // ---- AI 魔法套索：会话与请求 -------------------------------------------
+
+  private beginAssistant(
+    mode: number,
+    viewRect: SelectionRect,
+    hits: InkStroke[],
+    question: string,
+    keepThumb: boolean
+  ): void {
+    if (this.assistantClient === null) {
+      this.assistantClient = new AiClient(readAiConfig());
+    }
+    this.abortAssistantStream();
+    this.clearAssistantTimer();
+    this.assistantOpen = true;
+    this.assistantMode = mode;
+    this.assistantLastMode = mode;
+    this.assistantLastHits = hits.slice();
+    this.assistantAnchorView = viewRect;
+    this.assistantAnchorWorld = this.viewRectToWorld(viewRect);
+    this.assistantCardDragX = 0;
+    this.assistantCardDragY = 0;
+    this.layoutAssistantCard(viewRect);
+    if (!keepThumb) {
+      this.assistantThumb = '';
+    }
+    this.assistantFormula = '';
+    this.assistantError = '';
+    this.assistantCanPaste = false;
+    this.assistantStatus = this.statusTextFor(mode);
+    this.assistantSession = beginRecognize(createSession(mode, 'ai-' + Date.now()));
+    if (question.length > 0) {
+      this.assistantSession = beginFollowUp(this.assistantSession, question, Date.now());
+    } else {
+      this.assistantState = AssistantState.Recognizing;
+    }
+    this.rebuildAssistantContent();
+    this.startAssistantTimer();
+    this.captureAndRequest(mode, viewRect, keepThumb);
+  }
+
+  private async captureAndRequest(mode: number, viewRect: SelectionRect, keepThumb: boolean): Promise<void> {
+    if (!this.assistantOpen) {
+      return;
+    }
+    if (!keepThumb) {
+      const thumb = await captureRegionBase64('inkRoot', viewRect.Left, viewRect.Top, viewRect.Right, viewRect.Bottom);
+      if (!this.assistantOpen) {
+        return;
+      }
+      this.assistantThumb = thumb;
+    }
+    this.launchAssistantRequest(mode);
+  }
+
+  private launchAssistantRequest(mode: number): void {
+    if (this.assistantClient === null || this.assistantAnchorView === null) {
+      return;
+    }
+    const request: AssistantRequest = {
+      ImageBase64: this.assistantThumb,
+      InkStrokes: this.toInkPayload(this.assistantLastHits),
+      Viewport: { Scale: this.viewScale(), Rect: this.assistantAnchorView },
+      Mode: mode,
+      SessionId: this.assistantSession.SessionId
+    };
+    this.assistantState = AssistantState.Recognizing;
+    this.assistantStatus = this.statusTextFor(mode);
+    this.assistantStream = this.assistantClient.start(
+      request,
+      (event: AssistantEvent) => {
+        this.applyAssistantEvent(event);
+      },
+      (message: string) => {
+        this.handleAssistantError(message);
+      },
+      () => {
+        this.handleAssistantDone();
+      }
+    );
+  }
+
+  private toInkPayload(hits: InkStroke[]): InkStrokePayload[] {
+    const payload: InkStrokePayload[] = [];
+    for (let i = 0; i < hits.length; i++) {
+      const stroke = hits[i];
+      const points: InkPointPayload[] = [];
+      for (let p = 0; p < stroke.Count; p++) {
+        const point = stroke.Points[p];
+        const view = transformPointByMatrix(this.controller.ViewTransform, point.X, point.Y);
+        points.push({ X: view.X, Y: view.Y, Pressure: point.Pressure, TimeMs: point.TimeMs });
+      }
+      payload.push({
+        BaseWidth: stroke.Attributes.BaseWidth,
+        ColorPacked: stroke.Attributes.Color.packedArgb(),
+        Points: points
+      });
+    }
+    return payload;
+  }
+
+  private applyAssistantEvent(event: AssistantEvent): void {
+    if (event.Type === AssistantEventType.Error) {
+      this.handleAssistantError(event.Text);
+      return;
+    }
+    this.assistantSession = applyEvent(this.assistantSession, event, Date.now());
+    if (event.Type === AssistantEventType.Token) {
+      this.clearAssistantTimer();
+      this.assistantState = AssistantState.Streaming;
+      this.assistantStatus = '生成解答中…';
+      this.rebuildAssistantContent();
+    } else if (event.Type === AssistantEventType.Formula) {
+      this.clearAssistantTimer();
+      this.assistantFormula = event.Latex;
+      this.assistantState = AssistantState.Streaming;
+      this.rebuildAssistantContent();
+    } else if (event.Type === AssistantEventType.Step || event.Type === AssistantEventType.ShapeAnnotation) {
+      this.clearAssistantTimer();
+      this.assistantState = AssistantState.Streaming;
+      this.rebuildAssistantContent();
+    } else if (event.Type === AssistantEventType.Done) {
+      this.handleAssistantDone();
+    }
+  }
+
+  private rebuildAssistantContent(): void {
+    let text = '';
+    const messages = this.assistantSession.Messages;
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].Role === 0) {
+        text += '> ' + messages[i].Text + '\n\n';
+      }
+    }
+    text += this.assistantSession.Text;
+    const steps = this.assistantSession.Steps;
+    for (let i = 0; i < steps.length; i++) {
+      text += '\n\n' + (i + 1) + '. ' + steps[i].Text;
+      if (steps[i].Latex.length > 0) {
+        text += '\n   公式：$' + steps[i].Latex + '$';
+      }
+    }
+    if (this.assistantSession.Annotations.length > 0) {
+      text += '\n\n> 已在原图上叠加图形标注';
+    }
+    this.assistantText = text;
+  }
+
+  private statusTextFor(mode: number): string {
+    if (mode === AssistantMode.Shape) {
+      return '理解图形中…';
+    }
+    if (mode === AssistantMode.Solve) {
+      return '正在识别算式…';
+    }
+    return '正在识别墨迹…';
+  }
+
+  private handleAssistantDone(): void {
+    this.clearAssistantTimer();
+    this.assistantSession = finish(this.assistantSession);
+    this.assistantState = AssistantState.Done;
+    this.assistantCanPaste = this.assistantText.length > 0 || this.assistantFormula.length > 0;
+    this.rebuildAssistantContent();
+    this.assistantStream = null;
+  }
+
+  private handleAssistantError(message: string): void {
+    this.clearAssistantTimer();
+    this.assistantSession = fail(this.assistantSession, message);
+    this.assistantState = AssistantState.Error;
+    this.assistantError = message;
+    this.assistantStream = null;
+  }
+
+  private startAssistantTimer(): void {
+    this.clearAssistantTimer();
+    const timeout = this.assistantClient === null ? 15000 : this.assistantClient.Config().TimeoutMs;
+    this.assistantTimeoutTimer = setTimeout(() => {
+      if (this.assistantOpen &&
+        (this.assistantState === AssistantState.Recognizing || this.assistantState === AssistantState.Capturing)) {
+        this.abortAssistantStream();
+        this.handleAssistantError('首 token 超时（' + timeout + 'ms）');
+      }
+    }, timeout);
+  }
+
+  private clearAssistantTimer(): void {
+    if (this.assistantTimeoutTimer >= 0) {
+      clearTimeout(this.assistantTimeoutTimer);
+      this.assistantTimeoutTimer = -1;
+    }
+  }
+
+  private abortAssistantStream(): void {
+    if (this.assistantStream !== null) {
+      this.assistantStream.Abort();
+      this.assistantStream = null;
+    }
+  }
+
+  private stopAssistant(): void {
+    this.abortAssistantStream();
+    this.clearAssistantTimer();
+    if (this.assistantState === AssistantState.Recognizing || this.assistantState === AssistantState.Streaming) {
+      this.assistantSession = finish(this.assistantSession);
+      this.assistantState = AssistantState.Done;
+      this.assistantCanPaste = this.assistantText.length > 0 || this.assistantFormula.length > 0;
+      this.rebuildAssistantContent();
+    }
+  }
+
+  private closeAssistant(): void {
+    this.abortAssistantStream();
+    this.clearAssistantTimer();
+    this.assistantOpen = false;
+    this.assistantState = AssistantState.Idle;
+    this.assistantText = '';
+    this.assistantFormula = '';
+    this.assistantStatus = '';
+    this.assistantError = '';
+    this.assistantThumb = '';
+    this.assistantCanPaste = false;
+    this.assistantAnchorView = null;
+    this.assistantAnchorWorld = null;
+    this.assistantLastHits = [];
+    this.assistantCardDragX = 0;
+    this.assistantCardDragY = 0;
+    this.assistantSession = createSession(AssistantMode.Auto, '');
+  }
+
+  private retryAssistant(): void {
+    if (this.assistantAnchorView === null) {
+      return;
+    }
+    const anchor = this.assistantAnchorView;
+    this.beginAssistant(this.assistantLastMode, anchor, this.assistantLastHits, '', true);
+  }
+
+  private rephraseAssistant(): void {
+    if (this.assistantAnchorView === null) {
+      return;
+    }
+    this.switchAssistantMode(AssistantMode.Chat);
+    promptAction.showToast({ message: '已切换到问答，可在下方输入追问', duration: 1600 });
+  }
+
+  private switchAssistantMode(mode: number): void {
+    if (this.assistantAnchorView === null) {
+      return;
+    }
+    const anchor = this.assistantAnchorView;
+    this.beginAssistant(mode, anchor, this.assistantLastHits, '', true);
+  }
+
+  private followUpAssistant(question: string): void {
+    if (this.assistantAnchorView === null) {
+      return;
+    }
+    this.abortAssistantStream();
+    this.clearAssistantTimer();
+    this.assistantSession = beginFollowUp(this.assistantSession, question, Date.now());
+    this.assistantState = AssistantState.Recognizing;
+    this.assistantError = '';
+    this.assistantFormula = '';
+    this.assistantStatus = '理解追问中…';
+    this.rebuildAssistantContent();
+    this.startAssistantTimer();
+    this.launchAssistantRequest(AssistantMode.Chat);
+  }
+
+  // ---- AI 魔法套索：浮窗定位与拖拽 ---------------------------------------
+
+  private layoutAssistantCard(viewRect: SelectionRect): void {
+    const cardWidth = Math.min(360, Math.max(240, this.windowWidth - 24));
+    const cardHeight = Math.min(360, Math.max(200, this.windowHeight * 0.6));
+    this.assistantCardW = cardWidth;
+    this.assistantCardMaxH = this.windowHeight * 0.6;
+    const placement = placeCard(
+      viewRect,
+      { Width: cardWidth, Height: cardHeight },
+      { Width: this.windowWidth, Height: this.windowHeight }
+    );
+    this.assistantCardX = placement.X;
+    this.assistantCardY = placement.Y;
+  }
+
+  private updateAssistantCardPosition(): void {
+    if (!this.assistantOpen || this.assistantAnchorWorld === null || this.windowWidth <= 0) {
+      return;
+    }
+    const viewRect = this.worldRectToView(this.assistantAnchorWorld);
+    const cardHeight = Math.min(360, Math.max(200, this.windowHeight * 0.6));
+    const placement = placeCard(
+      viewRect,
+      { Width: this.assistantCardW, Height: cardHeight },
+      { Width: this.windowWidth, Height: this.windowHeight }
+    );
+    const clamped = clampPlacement(
+      placement.X + this.assistantCardDragX,
+      placement.Y + this.assistantCardDragY,
+      { Width: this.assistantCardW, Height: cardHeight },
+      { Width: this.windowWidth, Height: this.windowHeight }
+    );
+    if (Math.abs(this.assistantCardX - clamped[0]) > 0.5) {
+      this.assistantCardX = clamped[0];
+    }
+    if (Math.abs(this.assistantCardY - clamped[1]) > 0.5) {
+      this.assistantCardY = clamped[1];
+    }
+  }
+
+  private pointInAssistantCard(x: number, y: number): boolean {
+    const height = Math.min(360, this.assistantCardMaxH);
+    return x >= this.assistantCardX && x <= this.assistantCardX + this.assistantCardW &&
+      y >= this.assistantCardY && y <= this.assistantCardY + height;
+  }
+
+  private dragAssistantCard(dx: number, dy: number): void {
+    this.assistantCardDragX += dx;
+    this.assistantCardDragY += dy;
+    this.updateAssistantCardPosition();
+  }
+
+  // ---- AI 魔法套索：贴回与复制 -------------------------------------------
+
+  private pasteAssistant(): void {
+    const anchor = this.assistantAnchorView;
+    if (anchor === null) {
+      return;
+    }
+    if (!this.boardOpen) {
+      this.openBoard();
+    }
+    const kind = this.assistantFormula.length > 0
+      ? PasteKind.Formula
+      : (this.assistantSession.Steps.length > 0 ? PasteKind.Steps : PasteKind.Shape);
+    const input: PasteInput = {
+      Kind: kind,
+      Text: this.assistantText,
+      Latex: this.assistantFormula,
+      Anchor: anchor,
+      Scale: 1
+    };
+    const result = pasteResult(input, this.assistantSeq, this.windowWidth, this.windowHeight);
+    this.assistantSeq += 1;
+    const asset: BoardAsset = {
+      Id: 'ai-card-' + this.assistantSeq,
+      Name: 'AI 助教',
+      Data: result.Data,
+      ContentType: result.ContentType,
+      Left: result.Left,
+      Top: result.Top,
+      Width: result.Width,
+      Height: result.Height,
+      Transform: null
+    };
+    const images = this.board.Current.Images;
+    const history = this.board.Current.History;
+    images.push(asset);
+    this.lastPastedAiId = asset.Id;
+    history.push({
+      name: 'insert ai card',
+      redo: () => {
+        if (images.indexOf(asset) < 0) {
+          images.push(asset);
+        }
+        this.boardImagesVersion++;
+      },
+      undo: () => {
+        const index = images.indexOf(asset);
+        if (index >= 0) {
+          images.splice(index, 1);
+        }
+        this.boardImagesVersion++;
+      }
+    });
+    this.boardImagesVersion++;
+    this.assistantPasteFlash = true;
+    setTimeout(() => {
+      this.assistantPasteFlash = false;
+    }, 900);
+    promptAction.showToast({ message: '已贴回白板，可 Ctrl+Z 撤回', duration: 2000 });
+  }
+
+  private copyAssistant(): void {
+    const text = this.assistantFormula.length > 0 ? this.assistantFormula : this.assistantText;
+    if (text.length === 0) {
+      return;
+    }
+    try {
+      const data = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
+      pasteboard.getSystemPasteboard().setData(data).then(() => {
+        promptAction.showToast({ message: '已复制', duration: 1200 });
+      }).catch(() => {
+        promptAction.showToast({ message: '复制失败', duration: 1200 });
+      });
+    } catch (e) {
+      promptAction.showToast({ message: '复制失败', duration: 1200 });
+    }
   }
 
   // ---- AI 教学助手：端侧确定性引擎 + 演示交互（真实服务接入时只替换 core 实现） ----

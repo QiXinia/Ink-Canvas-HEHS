@@ -1,0 +1,167 @@
+{
+  "note": "C# Glyphs.cs 已移除的历史图标（保留 Phase D target 映射供 IconGlyph 参考）",
+  "glyphs": [
+    {
+      "name": "Cursor",
+      "codepoint": "U+E8B0",
+      "char": "",
+      "target": "sys.symbol.mouse"
+    },
+    {
+      "name": "PenWpf",
+      "codepoint": "U+EE56",
+      "char": "",
+      "target": "sys.symbol.pencil_tip"
+    },
+    {
+      "name": "HighlightWpf",
+      "codepoint": "U+E7E6",
+      "char": "",
+      "target": "sys.symbol.highlighter_tip"
+    },
+    {
+      "name": "EraserOverlayCircle",
+      "codepoint": "U+F0B6",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "EraserOverlayStroke",
+      "codepoint": "U+F128",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "SelectWpf",
+      "codepoint": "U+E958",
+      "char": "",
+      "target": "sys.symbol.square_dashed"
+    },
+    {
+      "name": "SelectOverlay",
+      "codepoint": "U+F8AF",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "ShapesWpf",
+      "codepoint": "U+F158",
+      "char": "",
+      "target": "sys.symbol.rectangle_stack"
+    },
+    {
+      "name": "InsertMedia",
+      "codepoint": "U+EE71",
+      "char": "",
+      "target": "sys.symbol.picture"
+    },
+    {
+      "name": "BoardWpf",
+      "codepoint": "U+E929",
+      "char": "",
+      "target": "sys.symbol.square_and_pencil"
+    },
+    {
+      "name": "Tools",
+      "codepoint": "U+E8A9",
+      "char": "",
+      "target": "sys.symbol.wrench_and_screwdriver"
+    },
+    {
+      "name": "FoldWpf",
+      "codepoint": "U+ED1A",
+      "char": "",
+      "target": "sys.symbol.arrow_left_to_line"
+    },
+    {
+      "name": "Emoji",
+      "codepoint": "U+E76E",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "EmojiDrag",
+      "codepoint": "U+E899",
+      "char": "",
+      "target": "sys.symbol.move"
+    },
+    {
+      "name": "Gesture",
+      "codepoint": "U+F271",
+      "char": "",
+      "target": "sys.symbol.hand_tap"
+    },
+    {
+      "name": "TimerWpf",
+      "codepoint": "U+EA8F",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "Rand",
+      "codepoint": "U+E8B1",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "SaveStrokes",
+      "codepoint": "U+E74E",
+      "char": "",
+      "target": "sys.symbol.save"
+    },
+    {
+      "name": "OpenStrokes",
+      "codepoint": "U+ED25",
+      "char": "",
+      "target": "sys.symbol.folder"
+    },
+    {
+      "name": "ReplayWpf",
+      "codepoint": "U+EC57",
+      "char": "",
+      "target": "custom:text"
+    },
+    {
+      "name": "GuideWpf",
+      "codepoint": "U+E82D",
+      "char": "",
+      "target": "sys.symbol.doc_plaintext"
+    },
+    {
+      "name": "ExitWpf",
+      "codepoint": "U+E7E8",
+      "char": "",
+      "target": "sys.symbol.arrow_right_to_line"
+    },
+    {
+      "name": "HideControl",
+      "codepoint": "U+E7B3",
+      "char": "",
+      "target": "sys.symbol.eye_slash"
+    },
+    {
+      "name": "LRSwitch",
+      "codepoint": "U+E8AB",
+      "char": "",
+      "target": "sys.symbol.arrow_left_arrow_right"
+    },
+    {
+      "name": "GestureTranslate",
+      "codepoint": "U+E7C2",
+      "char": "",
+      "target": "sys.symbol.move"
+    },
+    {
+      "name": "GestureZoom",
+      "codepoint": "U+E740",
+      "char": "",
+      "target": "sys.symbol.magnifyingglass"
+    },
+    {
+      "name": "GestureRotate",
+      "codepoint": "U+E7AD",
+      "char": "",
+      "target": "sys.symbol.arrow_clockwise"
+    }
+  ]
+}

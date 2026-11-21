@@ -78,6 +78,17 @@ public sealed class ImageSceneRenderer : IDisposable
                 new Windows.Foundation.Rect(frame.Bounds.Left, frame.Bounds.Top, frame.Bounds.Width, frame.Bounds.Height),
                 new Windows.Foundation.Rect(0, 0, entry.Bitmap.Size.Width, entry.Bitmap.Size.Height),
                 Math.Clamp(image.Opacity, 0, 1), CanvasImageInterpolation.Linear);
+            var annotations = image.ImageAnnotations;
+            if (annotations.Count == 0) return;
+            using var annotationOpacity = session.CreateLayer(Math.Clamp(image.Opacity, 0, 1));
+            var color = Windows.UI.Color.FromArgb(255, 39, 128, 235);
+            foreach (var line in annotations)
+                for (int index = 1; index < line.Count; index++)
+                    session.DrawLine(
+                        frame.Bounds.Left + (float)line[index - 1].X * frame.Bounds.Width,
+                        frame.Bounds.Top + (float)line[index - 1].Y * frame.Bounds.Height,
+                        frame.Bounds.Left + (float)line[index].X * frame.Bounds.Width,
+                        frame.Bounds.Top + (float)line[index].Y * frame.Bounds.Height, color, 2f);
         }
         finally { session.Transform = previous; }
     }

@@ -1,4 +1,4 @@
-// @parity src/InkCanvas.Controls/Theming/PopupBrushes.cs
+// @parity src/InkCanvas.Controls/Themes/Tokens.xaml
 // 面板卡片材质：API 26（supportsSystemMaterial）开启 backgroundBlurStyle + 更透的底色；
 // 不支持时回退现有不透明/半透卡片（BlurStyle.NONE）。能力门控在 entry 侧探测后以布尔传入。
 

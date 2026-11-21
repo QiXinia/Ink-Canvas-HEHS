@@ -57,3 +57,6 @@ export {
   IconGlyph
 } from './src/main/ets/IconGlyph';
 export type { GlyphSymbolEntry, IconGlyphOptions } from './src/main/ets/IconGlyph';
+export { MagicLassoEntry, LASSO_ENTRY_WIDTH, LASSO_ENTRY_HEIGHT } from './src/main/ets/MagicLassoEntry';
+export { AssistantCard, AI_CARD_WIDTH, AI_CARD_CORNER } from './src/main/ets/AssistantCard';
+export { StreamMessage } from './src/main/ets/StreamMessage';

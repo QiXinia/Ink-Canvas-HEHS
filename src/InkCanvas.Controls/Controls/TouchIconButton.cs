@@ -28,6 +28,7 @@ public sealed class TouchIconButton : Button
 
     private readonly FontIcon _icon;
     private readonly Viewbox _glyphHost;
+    private readonly TextBlock _aiText;
     private readonly Border _contentBorder;
     private readonly List<FontIcon> _icons = new();
     private TextBlock _label;
@@ -78,6 +79,7 @@ public sealed class TouchIconButton : Button
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        _aiText = AiGlyph.CreateLabel(AiGlyph.ButtonLabelSize);
         _icons.Add(_icon);
         _contentBorder = new Border
         {
@@ -86,13 +88,14 @@ public sealed class TouchIconButton : Button
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
         };
+        ActualThemeChanged += (_, _) => ApplyVisualState();
         Content = _contentBorder;
         RebuildContent();
 
         PointerPressed += (_, _) => { if (Motion.AnimationsEnabled) Motion.Pulse(this, 0.92f); };
         Loaded += (_, _) =>
         {
-            _icon.Glyph = Glyph;
+            UpdateGlyph();
             ApplyVisualState();
         };
     }
@@ -301,7 +304,14 @@ public sealed class TouchIconButton : Button
         => ((TouchIconButton)d).ApplyVisualState();
 
     private static void OnGlyphChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
-        => ((TouchIconButton)d)._icon.Glyph = e.NewValue as string ?? string.Empty;
+        => ((TouchIconButton)d).UpdateGlyph();
+
+    private void UpdateGlyph()
+    {
+        if (_glyphHost is null) return;
+        _icon.Glyph = Glyph == Glyphs.Ai ? string.Empty : Glyph ?? string.Empty;
+        _glyphHost.Child = Glyph == Glyphs.Ai ? _aiText : _icon;
+    }
 
     /// <summary>Re-apply foreground/selection after theme brush properties change.</summary>
     public void RefreshVisual() => ApplyVisualState();
@@ -320,7 +330,8 @@ public sealed class TouchIconButton : Button
     private void ApplyVisualState()
     {
         Brush fg = ContentForeground
-            ?? (Brush)Microsoft.UI.Xaml.Application.Current.Resources[IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush"];
+            ?? ThemeBrushes.Resolve(this, IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush");
+        _aiText.Foreground = fg;
         foreach (var icon in _icons) icon.Foreground = fg;
         if (_label is not null) _label.Foreground = fg;
 
@@ -335,7 +346,7 @@ public sealed class TouchIconButton : Button
         else
         {
             Background = IsSelected
-                ? (Brush)Microsoft.UI.Xaml.Application.Current.Resources["IcAccentSoftBrush"]
+                ? ThemeBrushes.Resolve(this, "IcAccentSoftBrush")
                 : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         }
         if (_customIconOutline is not null) _customIconOutline.Stroke = fg;

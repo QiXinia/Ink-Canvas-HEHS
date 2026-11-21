@@ -396,6 +396,8 @@ public sealed class LotteryWindow : Window
         UpdateResultLayout();
     }
 
+    public event Action<string> Picked;
+
     internal async Task RollAsync()
     {
         if (_rolling || _closed || DrawCount == 0) return;
@@ -425,6 +427,7 @@ public sealed class LotteryWindow : Window
             }
             token.ThrowIfCancellationRequested();
             _lastResult = _lottery.Draw(take); ShowNames(_lastResult);
+            if (_lastResult.Count > 0) Picked?.Invoke(string.Join("、", _lastResult));
             _resultTitle.Text = $"本次抽选 {_lastResult.Count} 人";
             _resultView.UpdateLayout();
             UpdateResultLayout();

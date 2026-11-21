@@ -59,7 +59,7 @@ public sealed partial class BoardService
         indices.Select(index => new PreparedPage(
             _pages[index].Document.Strokes.Select(stroke => stroke.Clone()).ToList(),
             _images[index].Select(image => image.Copy(copyData: false)).ToList(),
-            _media[index].Select(media => media.Copy(copyData: false)).ToList(), _papers[_pages[index]])).ToList());
+            _media[index].Select(media => media.Copy(copyData: false)).ToList(), _papers[_pages[index]], _pages[index].ViewTransform)).ToList());
 
     private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, CancellationToken cancellationToken) => Task.Run(async () =>
     {
@@ -75,6 +75,8 @@ public sealed partial class BoardService
                 Pages = snapshot.Pages.Select(page => new BoardPageFile
                 {
                     Background = page.Paper.Background.ToString(), GridSpacing = page.Paper.GridSpacing,
+                    Name = page.Paper.Name,
+                    ViewTransform = new[] { page.View.M11, page.View.M12, page.View.M21, page.View.M22, page.View.M31, page.View.M32 },
                     Strokes = page.Strokes.Select(ToStrokeFile).ToList(), Images = page.Images, Media = page.Media,
                 }).ToList(),
             };
@@ -219,7 +221,7 @@ public sealed partial class BoardService
                 if (legacy.Strokes is null) throw new InvalidDataException("文件不是有效的墨迹或画板。");
                 legacy.Pages = new() { new() { Strokes = legacy.Strokes } };
             }
-            else if (legacy.Version != 1) throw new InvalidDataException($"不支持的画板版本 {legacy.Version}。");
+            else if (legacy.Version is < 1 or > BoardFormatVersion) throw new InvalidDataException($"不支持的画板版本 {legacy.Version}。");
             ValidatePages(legacy, requireSinglePage);
             return legacy;
         }

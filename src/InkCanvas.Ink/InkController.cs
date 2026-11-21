@@ -407,7 +407,37 @@ public sealed partial class InkController : IDisposable
 
     public bool MultiTouchEnabled { get; set; } = true;
 
-    public Matrix3x2 ViewTransform { get; set; } = Matrix3x2.Identity;
+    private Matrix3x2 _viewTransform = Matrix3x2.Identity;
+
+    /// <summary>世界坐标 → 视图坐标的变换；变化时触发 <see cref="ViewChanged"/>。</summary>
+    public Matrix3x2 ViewTransform
+    {
+        get => _viewTransform;
+        set
+        {
+            if (value.Equals(_viewTransform)) return;
+            _viewTransform = value;
+            ViewChanged?.Invoke(value);
+        }
+    }
+
+    /// <summary>视图缩放 / 平移变化（参数为最新的 <see cref="ViewTransform"/>），供板书录制使用。</summary>
+    public event Action<Matrix3x2> ViewChanged;
+
+    /// <summary>设置视图变换；与直接赋值 <see cref="ViewTransform"/> 等价。</summary>
+    public void SetView(Matrix3x2 transform) => ViewTransform = transform;
+
+    /// <summary>
+    /// 设置视图中心。仅当中心确实变化时触发 <see cref="ViewChanged"/>
+    /// （中心本身不改变矩阵，订阅方仍会拿到当前变换）。
+    /// </summary>
+    public void SetViewCenter(Vector2 center)
+    {
+        if (center.Equals(ViewCenter)) return;
+        ViewCenter = center;
+        ViewChanged?.Invoke(ViewTransform);
+    }
+
     public bool PanZoomEnabled { get; set; }
     public bool TouchGesturesEnabled { get; set; } = true;
 
@@ -595,6 +625,10 @@ public sealed partial class InkController : IDisposable
 
     /// <summary>Raised once per logical change; the presenter redraws on this.</summary>
     public event Action Invalidated;
+
+    public event Action<InkStroke> StrokeCommitted;
+    public event Action<IReadOnlyList<InkStroke>> StrokesErased;
+    public event Action Cleared;
 
     public event Action SelectionChanged;
 
@@ -1234,6 +1268,7 @@ public sealed partial class InkController : IDisposable
             History.Push(new DelegateAction(name,
                 () => Document.AddRange(strokes),
                 () => Document.RemoveAll(strokes)));
+            foreach (var stroke in strokes) StrokeCommitted?.Invoke(stroke);
             if (RecognizeShapes && name == "ink") TryRecognize(strokes, lineEndpointHeld, heldShape);
         }
         Invalidated?.Invoke();
@@ -1293,6 +1328,7 @@ public sealed partial class InkController : IDisposable
                 var strokes = removed.Select(item => item.Stroke).ToList();
                 Remove();
                 History.Push(new DelegateAction("lasso erase", Remove, Restore));
+                if (strokes.Count > 0) StrokesErased?.Invoke(strokes);
                 PruneSelection();
 
                 void Remove()
@@ -1427,6 +1463,7 @@ public sealed partial class InkController : IDisposable
                 () => Document.RemoveAll(removed),
                 () => Document.AddRange(removed)));
             _erasedThisGesture.Clear();
+            StrokesErased?.Invoke(removed);
         }
         Invalidated?.Invoke();
     }
@@ -1906,6 +1943,7 @@ public sealed partial class InkController : IDisposable
         History.Push(new DelegateAction("clear",
             () => { Document.RemoveAll(removed); foreach (var element in elements) element.SetPresent(false); },
             () => { Document.AddRange(removed); for (int i = elements.Count - 1; i >= 0; i--) elements[i].SetPresent(true); }));
+        Cleared?.Invoke();
         Invalidated?.Invoke();
     }
 

@@ -1074,6 +1074,9 @@ public sealed class VectorParityTests
                 if (expected["inkToShape"]?[field] is null) actual["inkToShape"]?.AsObject().Remove(field);
             // The retired WPF stylus-gesture switch is intentionally absent from WinUI settings.
             expected["gesture"]?.AsObject().Remove("isEnableStylusGesture");
+            // Teaching settings extend the shared settings schema.
+            foreach (string field in new[] { "ai", "classroom", "features" })
+                if (expected[field] is null) actual.AsObject().Remove(field);
             Assert.True(JsonNode.DeepEquals(actual, expected), $"settings case {id} mismatch");
         }
     }

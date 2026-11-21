@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace InkCanvas.Features.Ppt;
 
@@ -179,6 +180,129 @@ public sealed class PptInteropService : IDisposable
                 SafeInt(() => (int)settings.AdvanceMode));
         }
         catch (Exception ex) { Fail("Read presentation details", ex.Message, Marshal.GetHRForException(ex)); return null; }
+    }
+
+    /// <summary>读取指定幻灯片（按 SlideID）中所有形状的文本；失败时返回空串，不影响翻页与批注。</summary>
+    public string GetSlideText(int slideId)
+    {
+        VerifyThread();
+        if (_app is null || !_snapshot.IsAttached) return "";
+        using var scope = new ComScope();
+        try
+        {
+            dynamic app = _app;
+            object p = _snapshot.IsSlideShowRunning
+                ? GetShowPresentation(scope, app)
+                : GetActivePresentation(scope, app);
+            if (p is null) return "";
+
+            dynamic presentation = p;
+            dynamic slides = scope.Own((object)presentation.Slides);
+            int count = (int)slides.Count;
+            dynamic slide = null;
+            for (int index = 1; index <= count; index++)
+            {
+                dynamic candidate = scope.Own((object)slides[index]);
+                if (slideId > 0 && (int)candidate.SlideID != slideId) continue;
+                slide = candidate;
+                break;
+            }
+
+            if (slide is null) return "";
+
+            dynamic shapes = scope.Own((object)slide.Shapes);
+            int shapeCount = (int)shapes.Count;
+            var builder = new StringBuilder();
+            for (int index = 1; index <= shapeCount; index++)
+            {
+                dynamic shape = scope.Own((object)shapes[index]);
+                string text = SafeString(() =>
+                {
+                    dynamic frame = shape.TextFrame;
+                    return (int)frame.HasText == -1 ? (string)frame.TextRange.Text : "";
+                });
+                if (!string.IsNullOrWhiteSpace(text)) builder.AppendLine(text.Trim());
+            }
+
+            return builder.ToString().Trim();
+        }
+        catch (Exception)
+        {
+            return "";
+        }
+    }
+
+    /// <summary>
+    /// 当前页的动画/点击阶段。仅放映中可读（SlideShowView.GetClickCount）；
+    /// 不可用时返回 0，由调用方安全降级，不影响翻页与批注。
+    /// </summary>
+    public int GetAnimationStep()
+    {
+        VerifyThread();
+        if (_app is null || !_snapshot.IsAttached || !_snapshot.IsSlideShowRunning) return 0;
+        using var scope = new ComScope();
+        try
+        {
+            dynamic app = _app;
+            dynamic window = GetShowWindow(scope, app);
+            if (window is null) return 0;
+            dynamic view = scope.Own((object)window.View);
+            return SafeInt(() => (int)view.GetClickCount()) ?? 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 翻页/退出/黑屏时暂停课件内音频与视频，避免后台继续播放。
+    /// 嵌入对象或 COM 不支持时静默降级，不影响翻页与批注。
+    /// </summary>
+    public int PauseMedia()
+    {
+        VerifyThread();
+        if (_app is null || !_snapshot.IsAttached) return 0;
+        using var scope = new ComScope();
+        try
+        {
+            dynamic app = _app;
+            object p = _snapshot.IsSlideShowRunning
+                ? GetShowPresentation(scope, app)
+                : GetActivePresentation(scope, app);
+            if (p is null) return 0;
+
+            dynamic slides = scope.Own((object)((dynamic)p).Slides);
+            int count = Math.Min(200, (int)slides.Count);
+            int paused = 0;
+            for (int i = 1; i <= count; i++)
+            {
+                dynamic slide = scope.Own((object)slides[i]);
+                dynamic shapes = scope.Own((object)slide.Shapes);
+                int shapeCount = Math.Min(500, (int)shapes.Count);
+                for (int j = 1; j <= shapeCount; j++)
+                {
+                    dynamic shape = scope.Own((object)shapes[j]);
+                    int mediaType = SafeInt(() => (int)shape.MediaType) ?? -1;
+                    if (mediaType != 2 && mediaType != 3) continue;
+                    try
+                    {
+                        shape.MediaFormat.Pause();
+                        paused++;
+                    }
+                    catch (Exception)
+                    {
+                        // 单个嵌入对象不支持 MediaFormat.Pause：跳过，继续处理其余媒体。
+                    }
+                }
+            }
+
+            return paused;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
     }
 
     public bool Next() => InvokeShow("Next", view => view.Next());

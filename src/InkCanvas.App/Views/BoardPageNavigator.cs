@@ -27,7 +27,9 @@ public sealed class BoardPageThumbnail : INotifyPropertyChanged
     private int _number;
     private ImageSource _preview;
     public int Number { get => _number; set { if (_number == value) return; _number = value; Notify(nameof(Title)); } }
-    public string Title => $"第 {Number} 页";
+    private string _name;
+    public string Name { get => _name; set { if (_name == value) return; _name = value; Notify(nameof(Title)); } }
+    public string Title => string.IsNullOrEmpty(Name) || Name == $"页面 {Number}" ? $"第 {Number} 页" : $"{Number}. {Name}";
     public ImageSource Preview { get => _preview; set { if (ReferenceEquals(_preview, value)) return; _preview = value; Notify(nameof(Preview)); } }
     public bool Dirty { get; set; } = true;
     public int Revision { get; set; }
@@ -68,7 +70,7 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
     public int ItemCount => _items.Count;
     public ListViewBase ActiveView => _overview ? _grid : _list;
 
-    public BoardPageNavigator(BoardService board, Func<Vector2> canvasSize, Action<int> navigate, Action add, Action duplicate, Action delete)
+    public BoardPageNavigator(BoardService board, Func<Vector2> canvasSize, Action<int> navigate, Action add, Action duplicate, Action delete, Action rename)
     {
         _board = board; _canvasSize = canvasSize; _navigate = navigate; _add = add; _duplicate = duplicate; _delete = delete;
         _root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -83,7 +85,13 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
             Command("加页", Glyphs.Add, _add), Command("复制", "\uE8C8", _duplicate),
             Command("删除", Glyphs.Delete, _delete), Command("总览", "\uE80A", () => SetOverview(!_overview)),
         } };
-        Grid.SetRow(commands, 1); _root.Children.Add(commands);
+        var renamePage = Command("重命名", "\uE70F", rename);
+        var undoPage = Command("撤销页面操作", Glyphs.Undo, () => _board.UndoPage());
+        var redoPage = Command("重做页面操作", Glyphs.Redo, () => _board.RedoPage());
+        var naming = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 6, 6),
+            Children = { renamePage, undoPage, redoPage } };
+        var commandRows = new StackPanel { Children = { commands, naming } };
+        Grid.SetRow(commandRows, 1); _root.Children.Add(commandRows);
         ConfigureView(_list, false); ConfigureView(_grid, true);
         Grid.SetRow(_list, 2); Grid.SetRow(_grid, 2);
         _grid.Visibility = Visibility.Collapsed;
@@ -274,7 +282,7 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
                         Action handler = () => { observed.Dirty = true; observed.Revision++; Schedule(); };
                         _documentHandlers.Add(controller, handler); controller.Document.Changed += handler;
                     }
-                    item.Number = index + 1; _items.Add(item);
+                    item.Number = index + 1; item.Name = _board.PageName(index); _items.Add(item);
                 }
                 _structure = _board.PageStructureVersion;
             }
@@ -282,6 +290,8 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
             _count.Text = $"共 {_board.PageCount} 页";
             _page.Maximum = _board.PageCount; _page.Value = _board.CurrentIndex + 1;
             _buttons[0].IsEnabled = _buttons[1].IsEnabled = _board.CanAddPages();
+            _buttons[5].IsEnabled = _board.CanUndoPage;
+            _buttons[6].IsEnabled = _board.CanRedoPage;
             if (ActiveView.SelectedItem is not null) ActiveView.ScrollIntoView(ActiveView.SelectedItem);
         }
         finally { _syncing = false; }
@@ -437,8 +447,13 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
 
     private static void DrawPaper(CanvasDrawingSession drawing, BoardPageInfo info, Vector2 viewport)
     {
-        bool dark = info.Background == BoardBackground.Black;
-        drawing.Clear(dark ? Windows.UI.Color.FromArgb(255, 31, 31, 31) : Windows.UI.Color.FromArgb(255, 242, 242, 242));
+        drawing.Clear(info.Background switch
+        {
+            BoardBackground.Black => Windows.UI.Color.FromArgb(255, 31, 31, 31),
+            BoardBackground.Green => Windows.UI.Color.FromArgb(255, 0x1E, 0x3B, 0x2F),
+            BoardBackground.Cream => Windows.UI.Color.FromArgb(255, 0xF5, 0xEF, 0xDC),
+            _ => Windows.UI.Color.FromArgb(255, 242, 242, 242),
+        });
         if (info.Background is not (BoardBackground.Grid or BoardBackground.Lined)) return;
         var transform = Fit(viewport, info.Controller.ViewTransform);
         if (!Matrix3x2.Invert(info.Controller.ViewTransform, out var inverse)) return;

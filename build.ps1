@@ -36,7 +36,7 @@ New-Item -ItemType Directory -Force -Path $PackageCache | Out-Null
 
 $sln = Join-Path $repo 'InkCanvas.slnx'
 $appProject = Join-Path $repo 'src\InkCanvas.App\InkCanvas.App.csproj'
-$testProject = Join-Path $repo 'tests\InkCanvas.Core.Tests\InkCanvas.Core.Tests.csproj'
+
 
 function Invoke-Dotnet([string[]]$arguments) {
     & dotnet @arguments
@@ -48,7 +48,13 @@ switch ($Task) {
         Invoke-Dotnet @('build', $sln, '-c', $Configuration, '-p:Platform=x64', '--nologo')
     }
     'test' {
-        Invoke-Dotnet @('test', $testProject, '-c', $Configuration, '-p:Platform=x64', '--nologo')
+        foreach ($project in @(
+            'tests\InkCanvas.Core.Tests\InkCanvas.Core.Tests.csproj',
+            'tests\InkCanvas.Ai.Tests\InkCanvas.Ai.Tests.csproj',
+            'tests\InkCanvas.P0.Tests\InkCanvas.P0.Tests.csproj',
+            'tests\InkCanvas.Classroom.Tests\InkCanvas.Classroom.Tests.csproj')) {
+            Invoke-Dotnet @('test', (Join-Path $repo $project), '-c', $Configuration, '-p:Platform=x64', '--nologo')
+        }
     }
     'publish' {
         $extra = @()

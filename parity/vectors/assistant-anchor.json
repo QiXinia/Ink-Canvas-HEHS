@@ -1,0 +1,96 @@
+{
+  "id": "assistant-anchor",
+  "entry": "harmony/core/src/main/ets/assistant/AnchorLayout.ts",
+  "cases": [
+    {
+      "id": "below-when-bottom-space-short-but-above-also-short",
+      "fn": "placementProbe",
+      "input": [
+        [
+          100,
+          100,
+          400,
+          300
+        ],
+        360,
+        420,
+        800,
+        600
+      ],
+      "expected": {
+        "X": 100,
+        "Y": 168,
+        "Side": 0,
+        "FlippedX": false,
+        "FlippedY": false
+      }
+    },
+    {
+      "id": "flip-above-when-room",
+      "fn": "placementProbe",
+      "input": [
+        [
+          100,
+          400,
+          400,
+          560
+        ],
+        360,
+        200,
+        800,
+        600
+      ],
+      "expected": {
+        "X": 100,
+        "Y": 188,
+        "Side": 1,
+        "FlippedX": false,
+        "FlippedY": true
+      }
+    },
+    {
+      "id": "flip-left-when-right-space-short",
+      "fn": "placementProbe",
+      "input": [
+        [
+          700,
+          100,
+          780,
+          200
+        ],
+        360,
+        200,
+        800,
+        600
+      ],
+      "expected": {
+        "X": 328,
+        "Y": 212,
+        "Side": 3,
+        "FlippedX": true,
+        "FlippedY": false
+      }
+    },
+    {
+      "id": "follow-anchor-by-scale-and-offset",
+      "fn": "followProbe",
+      "input": [
+        [
+          100,
+          100,
+          200,
+          200
+        ],
+        2,
+        10,
+        20
+      ],
+      "expected": [
+        210,
+        220,
+        410,
+        420
+      ]
+    }
+  ]
+}

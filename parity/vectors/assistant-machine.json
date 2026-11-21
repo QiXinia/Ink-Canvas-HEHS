@@ -1,0 +1,96 @@
+{
+  "id": "assistant-machine",
+  "entry": "harmony/core/src/main/ets/assistant/AssistantMachine.ts",
+  "cases": [
+    {
+      "id": "token-formula-done-becomes-done",
+      "fn": "machineProbe",
+      "input": [
+        1,
+        [
+          { "Type": 0, "Text": "答案", "Latex": "", "Index": 0, "Title": "", "Points": [] },
+          { "Type": 1, "Text": "", "Latex": "x=2", "Index": 0, "Title": "", "Points": [] },
+          { "Type": 4, "Text": "", "Latex": "", "Index": 0, "Title": "", "Points": [] }
+        ],
+        15000,
+        60000
+      ],
+      "expected": {
+        "State": 4,
+        "StateName": "done",
+        "Text": "答案",
+        "Steps": 0,
+        "Formula": "x=2",
+        "Annotations": 0,
+        "Retry": false
+      }
+    },
+    {
+      "id": "error-event-is-retryable",
+      "fn": "machineProbe",
+      "input": [
+        1,
+        [
+          { "Type": 5, "Text": "网络失败", "Latex": "", "Index": 0, "Title": "", "Points": [] }
+        ],
+        15000,
+        60000
+      ],
+      "expected": {
+        "State": 5,
+        "StateName": "error",
+        "Text": "",
+        "Steps": 0,
+        "Formula": "",
+        "Annotations": 0,
+        "Retry": true
+      }
+    },
+    {
+      "id": "first-token-timeout",
+      "fn": "firstTokenTimedOut",
+      "input": [
+        {
+          "State": 2,
+          "Mode": 1,
+          "SessionId": "s",
+          "Text": "",
+          "Messages": [],
+          "Steps": [],
+          "Formula": "",
+          "Annotations": [],
+          "Error": "",
+          "TokenCount": 0,
+          "StartedAt": 1000,
+          "FirstTokenAt": 0
+        },
+        20000,
+        15000
+      ],
+      "expected": true
+    },
+    {
+      "id": "no-timeout-after-first-token",
+      "fn": "firstTokenTimedOut",
+      "input": [
+        {
+          "State": 3,
+          "Mode": 1,
+          "SessionId": "s",
+          "Text": "答",
+          "Messages": [],
+          "Steps": [],
+          "Formula": "",
+          "Annotations": [],
+          "Error": "",
+          "TokenCount": 1,
+          "StartedAt": 1000,
+          "FirstTokenAt": 2000
+        },
+        60000,
+        15000
+      ],
+      "expected": false
+    }
+  ]
+}

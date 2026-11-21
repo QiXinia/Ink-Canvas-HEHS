@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "denominator": 56,
+  "denominator": 57,
   "features": [
     {
       "id": "ink-erase",
@@ -1010,13 +1010,57 @@
       "vectors": [],
       "tests": [],
       "notes": "清空自动保存开关与定期清理已接线；启动时 prune。"
+    },
+    {
+      "id": "ai-magic-lasso",
+      "name": "AI 魔法套索与助教浮窗",
+      "phase": "D",
+      "status": "adapted",
+      "csharp": [
+        "src/InkCanvas.App/Services/ShellController.cs",
+        "src/InkCanvas.Core/Selection/SelectionGeometry.cs",
+        "src/InkCanvas.App/Views/FloatingBarWindow.cs",
+        "src/InkCanvas.App/Views/InfoWindow.cs",
+        "src/InkCanvas.Features/Board/BoardService.cs",
+        "src/InkCanvas.Features/Update/UpdateService.cs",
+        "src/InkCanvas.Core/Settings/AppSettings.cs",
+        "src/InkCanvas.Features/Tools/Tools.cs",
+        "src/InkCanvas.Controls/Controls/FloatingBar.cs"
+      ],
+      "arkts": [
+        "harmony/core/src/main/ets/assistant/AssistantTypes.ts",
+        "harmony/core/src/main/ets/assistant/AssistantMachine.ts",
+        "harmony/core/src/main/ets/assistant/LassoGeometry.ts",
+        "harmony/core/src/main/ets/assistant/AnchorLayout.ts",
+        "harmony/core/src/main/ets/assistant/LatexLite.ts",
+        "harmony/core/src/main/ets/assistant/MarkdownLite.ts",
+        "harmony/core/src/main/ets/assistant/PasteBackModel.ts",
+        "harmony/core/src/main/ets/assistant/SseParser.ts",
+        "harmony/platform/src/main/ets/assistant/AiConfig.ets",
+        "harmony/platform/src/main/ets/assistant/AiClient.ets",
+        "harmony/platform/src/main/ets/assistant/AssistantCapture.ets",
+        "harmony/controls/src/main/ets/MagicLassoEntry.ets",
+        "harmony/controls/src/main/ets/AssistantCard.ets",
+        "harmony/controls/src/main/ets/StreamMessage.ets"
+      ],
+      "vectors": [
+        "parity/vectors/assistant-lasso.json",
+        "parity/vectors/assistant-anchor.json",
+        "parity/vectors/assistant-latex.json",
+        "parity/vectors/assistant-markdown.json",
+        "parity/vectors/assistant-machine.json",
+        "parity/vectors/assistant-sse.json",
+        "parity/vectors/assistant-paste.json"
+      ],
+      "tests": [],
+      "notes": "鸿蒙侧新增：自由曲线套索入口（Q/长按）、选区截图与墨迹矢量双路采集、SSE 流式助教浮窗（吸附翻转/缩放跟随/单例）、LaTeX/Markdown 渐进渲染与半成公式兜底、贴回画板对象与单撤销。C#/WinUI3 未回移，状态 adapted；真机与真实模型行为未验证。"
     }
   ],
   "coverage": {
-    "total": 56,
+    "total": 57,
     "ported": 32,
-    "adapted": 21,
+    "adapted": 22,
     "not-ported": 3,
-    "percent": 94.64
+    "percent": 94.74
   }
 }
