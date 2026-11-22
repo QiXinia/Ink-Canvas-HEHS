@@ -6,6 +6,21 @@ namespace InkCanvas.Core.Tests;
 
 public sealed class AppearanceSettingsTests
 {
+    [Fact]
+    public void OlderClassroomSettingsLoadWithoutRevivingRetiredControls()
+    {
+        var settings = JsonSerializer.Deserialize<AppSettings>("""
+            {"canvas":{"inkWidth":7},"classroom":{"countdownMinutes":5,"presetId":"practice","toolkitCollapsed":true,"toolkitX":120,"groupSplitValue":4},"features":{"enableResourceBundle":true}}
+            """);
+        Assert.Equal(7, settings.Canvas.InkWidth);
+        Assert.Equal(5, settings.Classroom.CountdownMinutes);
+        using var saved = JsonDocument.Parse(JsonSerializer.Serialize(settings));
+        Assert.False(saved.RootElement.TryGetProperty("features", out _));
+        var classroom = saved.RootElement.GetProperty("classroom");
+        foreach (string name in new[] { "presetId", "toolkitCollapsed", "toolkitX", "groupSplitValue" })
+            Assert.False(classroom.TryGetProperty(name, out _));
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{\"appearance\":{}}")]

@@ -68,14 +68,6 @@ public sealed class AppServices : IDisposable
     {
         if (Path.GetExtension(path).Equals(".icink", StringComparison.OrdinalIgnoreCase))
         {
-            // 新格式课堂录制文件：插件在位则路由给时光机模块，否则给出中文守卫提示。
-            if (ClassroomRecordingProbe.IsClassroomRecording(path))
-            {
-                var service = Modules.GetExport<ITimeMachineService>();
-                if (service is null) throw new InvalidDataException(ClassroomRecordingProbe.PluginRequiredMessage);
-                await service.OpenFileAsync(path);
-                return () => { };
-            }
             return await target.PrepareOpenAsync(path, entireBoard);
         }
 
@@ -95,7 +87,7 @@ public sealed class AppServices : IDisposable
     public ExtensionPreferencesStore ExtensionStore { get; }
     public ExtensionPreferences ExtensionPreferences { get; }
     private bool _modulesStarted;
-    public void StartModules(IScreenTrackingHost host, IDocumentWorkspaceHost documents = null, ICanvasToolsHost canvasTools = null, IAiAssistantHost assistant = null, IBoardLibraryHost library = null, ITimeMachineHost timeMachine = null, IAiDocumentHost documentAi = null)
+    public void StartModules(IScreenTrackingHost host, IDocumentWorkspaceHost documents = null, ICanvasToolsHost canvasTools = null, IAiAssistantHost assistant = null, IBoardLibraryHost library = null, IAiDocumentHost documentAi = null)
     {
         if (_modulesStarted) return; _modulesStarted = true;
         Modules.AddService<IModuleSettingsRegistry>(ModuleSettings);
@@ -106,7 +98,6 @@ public sealed class AppServices : IDisposable
         if (documents is not null) Modules.AddService(documents);
         if (canvasTools is not null) Modules.AddService(canvasTools);
         if (assistant is not null) Modules.AddService(assistant);
-        if (timeMachine is not null) Modules.AddService(timeMachine);
         if (documentAi is not null) Modules.AddService(documentAi);
         if (library is not null) Modules.AddService(library);
         if (library is not null) Modules.RegisterPackage("inkcanvas.library", "文稿库", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.library"));
@@ -116,7 +107,6 @@ public sealed class AppServices : IDisposable
         if (assistant is not null) Modules.RegisterPackage("inkcanvas.ai-assistant", "AI 助手", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.ai-assistant"));
         Modules.RegisterPackage("inkcanvas.cloud-sync", "云同步", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.cloud-sync"));
         Modules.RegisterPackage("inkcanvas.mcp", "MCP 工具连接", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.mcp"));
-        if (timeMachine is not null) Modules.RegisterPackage("inkcanvas.time-machine", "板书时光机", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.time-machine"));
         Modules.Start(ExtensionPreferences.DisabledModules);
         Modules.Changed += UpdateModuleStatus;
         UpdateModuleStatus();

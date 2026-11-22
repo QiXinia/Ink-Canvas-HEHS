@@ -1,4 +1,4 @@
-﻿﻿using InkCanvas.Controls.Animation;
+﻿using InkCanvas.Controls.Animation;
 using InkCanvas.Controls.Theming;
 using InkCanvas.Core.Settings;
 using InkCanvas.Core.Shapes;
@@ -23,10 +23,8 @@ public interface IShellActions
     void OpenLotteryQuick();
     void SaveStrokes();
     void OpenStrokes();
-    void OpenRoster() { }
     void OpenSpotlight() { }
     void OpenMagnifier() { }
-    void OpenToolkit() { }
     void OpenReplay();
     void OpenGuide();
     void OpenPenPalette(bool highlighter);
@@ -49,10 +47,6 @@ public interface IShellActions
     void TogglePptNavigationWindow() { }
     void OpenAiAssistant() { }
     bool AiAssistantAvailable => false;
-    void OpenGroupScore() { }
-    void OpenHandout() { }
-    void CyclePreset() { }
-    void OpenPresetEditor() { }
     void PasteSpotlightToBoard() { }
     void AskAiFromSpotlight() { }
     void Exit();
@@ -620,7 +614,6 @@ public sealed class FloatingBar : UserControl
         AddMore(classroom, Glyphs.TimerWpf, "倒计时", () => Shell?.OpenTimer());
         AddMore(classroom, Glyphs.Rand, "随机抽选", () => Shell?.OpenLottery());
         AddMore(classroom, Glyphs.Rand, "单次抽选", () => Shell?.OpenLotteryQuick(), badge: true);
-        AddMore(classroom, Glyphs.Board, "课堂工具", () => Shell?.OpenToolkit());
         _moreRows.Children.Add(classroom);
 
         var drawing = MoreRow();

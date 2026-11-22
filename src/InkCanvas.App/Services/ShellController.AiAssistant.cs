@@ -1,7 +1,6 @@
 using InkCanvas.Core.AiAssistant;
 using InkCanvas.Core.Settings;
 using InkCanvas.Features.Board;
-using InkCanvas.Features.Classroom;
 using InkCanvas.Features.Ppt;
 using InkCanvas.Host.Contracts;
 using InkCanvas.Ink;
@@ -49,41 +48,13 @@ public sealed partial class ShellController
             return SlideContextPolicy.Build(
                 snapshot.Presentation.Name, slideId, slideIndex,
                 currentText, previousText, nextText,
-                _teachingSession?.CurrentAnimationStep ?? 0);
+                Services.Ppt.GetAnimationStep());
         }
         catch (Exception ex)
         {
             Core.Diagnostics.FileLog.WriteLogToFile(
                 $"课件上下文读取失败：{ex.Message}", Core.Diagnostics.LogType.Info);
             return null;
-        }
-    }
-
-
-    private void RecordAiExplanation(AssistantSession session, int slideId, int slideIndex)
-    {
-        if (session is null || slideId <= 0) return;
-        if (string.IsNullOrWhiteSpace(session.Text)) return;
-
-        try
-        {
-            if (_slideIndex is not null)
-            {
-                _slideIndex.SetText(slideId, session.Text);
-                _slideIndex.MarkAi(slideId);
-                SaveSlideIndex();
-                _slideNav?.Update(_slideIndex, _pptSession.Snapshot?.Slide?.SlideId ?? 0);
-            }
-
-            _teachingSession?.Link(
-                "ai", session.SessionId, slideId, slideIndex,
-                _board is null ? -1 : Services.Board.CurrentIndex, "", Environment.TickCount64);
-            SaveTeachingSession();
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 讲解归档失败：{ex.Message}", Core.Diagnostics.LogType.Error);
         }
     }
 
@@ -100,14 +71,12 @@ public sealed partial class ShellController
         public AssistantSource Source => new(shell.CurrentPresentationName(),
             shell._pptSession?.Snapshot?.Slide?.SlideId ?? 0, shell._pptSession?.Snapshot?.Slide?.Index ?? 0,
             shell._pptSession?.Snapshot?.IsSlideShowRunning == true ? shell.Services.Ppt.GetAnimationStep() : 0);
-        public bool IsClassroomPresentation => shell._pptSession?.Snapshot?.IsSlideShowRunning == true || shell._preset?.Id == "teach";
+        public bool IsClassroomPresentation => shell._pptSession?.Snapshot?.IsSlideShowRunning == true || shell._board is not null;
         public IAssistantToolRegistry Tools => shell.Services.AssistantTools;
         public SlideContext GetSlideContext(int slideId, int slideIndex) => shell.BuildSlideContext(slideId, slideIndex);
         public void ConfigureWindow(Window window) => new CanvasToolsHost(shell).ConfigureWindow(window, 380, 760);
         public void SaveSettings() => shell.Services.SaveSettings();
         public void ShowBoard() { if (shell._board is null) shell.ToggleBoard(); }
-        public void RecordExplanation(AssistantSession session, int slideId, int slideIndex) => shell.RecordAiExplanation(session, slideId, slideIndex);
-        public Task StartPracticeAsync(VariantQuestionDraft draft, bool startTimer) => shell.StartPracticeAsync(draft, startTimer);
         public Task NotifyAsync(string title, string message) => shell.NotifyAsync(title, message);
     }
 }

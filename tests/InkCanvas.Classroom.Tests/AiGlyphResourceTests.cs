@@ -11,7 +11,6 @@ public sealed class AiGlyphResourceTests
     private static readonly string[] CallSites =
     {
         "src/InkCanvas.Controls/Controls/TouchIconButton.cs",
-        "src/InkCanvas.App/Views/ToolkitWindow.cs",
         "src/InkCanvas.Modules.AiAssistant/AssistantWindow.cs",
         "src/InkCanvas.App/Views/SlideNavigatorWindow.cs",
     };

@@ -23,7 +23,6 @@
     <IncludeLibraryModule Condition="'$(IncludeLibraryModule)' == ''">true</IncludeLibraryModule>
     <IncludePdfModule Condition="'$(IncludePdfModule)' == ''">true</IncludePdfModule>
     <IncludeAnalyticGeometryModule Condition="'$(IncludeAnalyticGeometryModule)' == ''">true</IncludeAnalyticGeometryModule>
-    <IncludeTimeMachineModule Condition="'$(IncludeTimeMachineModule)' == ''">true</IncludeTimeMachineModule>
     <IncludeCloudSyncModule Condition="'$(IncludeCloudSyncModule)' == ''">true</IncludeCloudSyncModule>
     <IncludeMcpModule Condition="'$(IncludeMcpModule)' == ''">true</IncludeMcpModule>
   </PropertyGroup>
@@ -50,7 +49,6 @@
     <ProjectReference Include="..\InkCanvas.Modules.AnalyticGeometry\InkCanvas.Modules.AnalyticGeometry.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.Modules.AiAssistant\InkCanvas.Modules.AiAssistant.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeAiAssistantModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.Modules.Library\InkCanvas.Modules.Library.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeLibraryModule)' == 'true'" />
-    <ProjectReference Include="..\InkCanvas.Modules.TimeMachine\InkCanvas.Modules.TimeMachine.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeTimeMachineModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.Modules.CloudSync\InkCanvas.Modules.CloudSync.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeCloudSyncModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.PluginHost\InkCanvas.PluginHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\InkCanvas.Modules.Mcp\InkCanvas.Modules.Mcp.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeMcpModule)' == 'true'" />
@@ -112,7 +110,6 @@
       <_AssistantOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.AiAssistant\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_AssistantOutput>
       <_LibraryOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.Library\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_LibraryOutput>
       <_GeometryOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.AnalyticGeometry\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_GeometryOutput>
-      <_TimeMachineOutput>$(MSBuildProjectDirectory)\..\InkCanvas.Modules.TimeMachine\bin\$(Platform)\$(Configuration)\net10.0-windows10.0.26100.0\$(RuntimeIdentifier)\</_TimeMachineOutput>
     </PropertyGroup>
     <ItemGroup>
       <_AssistantFiles Include="$(_AssistantOutput)InkCanvas.Modules.AiAssistant.dll;$(_AssistantOutput)InkCanvas.Modules.AiAssistant.deps.json;$(_AssistantOutput)module.json" Condition="'$(IncludeAiAssistantModule)' == 'true'" />
@@ -128,7 +125,6 @@
       <_GeometryFiles Include="$(_GeometryOutput)AngouriMath.dll;$(_GeometryOutput)Antlr4.Runtime.Standard.dll;$(_GeometryOutput)GenericTensor.dll;$(_GeometryOutput)HonkSharp.dll;$(_GeometryOutput)Numbers.dll;$(_GeometryOutput)PdfSharp.dll;$(_GeometryOutput)PdfSharp.Shared.dll;$(_GeometryOutput)PdfSharp.System.dll;$(_GeometryOutput)PdfSharp.Cryptography.dll;$(_GeometryOutput)Microsoft.Extensions.Logging.Abstractions.dll;$(_GeometryOutput)Microsoft.Extensions.DependencyInjection.Abstractions.dll;$(_GeometryOutput)System.Security.Cryptography.Pkcs.dll" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
       <_GeometryLicenses Include="$(_GeometryOutput)Licenses\*.txt" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
       <_GeometryFiles Include="$(_GeometryOutput)Jint.dll;$(_GeometryOutput)Acornima.dll" Condition="'$(IncludeAnalyticGeometryModule)' == 'true'" />
-      <_TimeMachineFiles Include="$(_TimeMachineOutput)InkCanvas.Modules.TimeMachine.dll;$(_TimeMachineOutput)InkCanvas.Modules.TimeMachine.deps.json;$(_TimeMachineOutput)module.json" Condition="'$(IncludeTimeMachineModule)' == 'true'" />
     </ItemGroup>
     <Copy SourceFiles="@(_AssistantFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.ai-assistant\" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_AssistantLicenses)" DestinationFolder="$(OutDir)Modules\inkcanvas.ai-assistant\Licenses\" SkipUnchangedFiles="true" />
@@ -150,8 +146,6 @@
     <Copy SourceFiles="@(_PdfLicenses)" DestinationFolder="$(PublishDir)Modules\inkcanvas.pdf\Licenses\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
     <Copy SourceFiles="@(_GeometryFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.analytic-geometry\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
     <Copy SourceFiles="@(_GeometryLicenses)" DestinationFolder="$(PublishDir)Modules\inkcanvas.analytic-geometry\Licenses\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
-    <Copy SourceFiles="@(_TimeMachineFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.time-machine\" SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_TimeMachineFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.time-machine\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
   </Target>
   <!--
     The self-contained Windows App SDK runtime payload ships components this app never uses:

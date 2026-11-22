@@ -21,7 +21,6 @@ public static partial class ExtensionFeed
             ["inkcanvas.analytic-geometry"] = ("解析几何", "代数计算与二维、三维几何作图", RepositoryExtensionKind.Module),
             ["inkcanvas.library"] = ("文稿库", "文件夹导航、预览与白板文稿管理", RepositoryExtensionKind.Module),
             ["inkcanvas.screen-tracking"] = ("屏幕内容跟随", "滚动、缩放和页面批注记忆", RepositoryExtensionKind.Module),
-            ["inkcanvas.time-machine"] = ("板书时光机", "课堂录制、章节书签与视频导出", RepositoryExtensionKind.Module),
             ["inkcanvas.legacy-import"] = ("旧版文稿导入", "导入历史版本的笔迹文件", RepositoryExtensionKind.Plugin),
             ["sample.guide-lines"] = ("参考线示例", "在画布中插入参考线", RepositoryExtensionKind.Plugin),
             ["inkcanvas.shell-preview"] = ("资源管理器预览", "白板文件缩略图与资源管理器预览", RepositoryExtensionKind.Explorer),

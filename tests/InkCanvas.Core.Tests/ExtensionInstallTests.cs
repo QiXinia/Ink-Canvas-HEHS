@@ -13,6 +13,19 @@ namespace InkCanvas.Core.Tests;
 
 public sealed class ExtensionInstallTests : IDisposable
 {
+    [Fact]
+    public void HistoricalReleaseCannotOfferTheRemovedRecordingModule()
+    {
+        const string id = "inkcanvas.time-machine";
+        string feed = JsonSerializer.Serialize(new[] { new {
+            tag_name = "v3.10.0", assets = new[] { new {
+                name = id + "-1.0.1.zip",
+                browser_download_url = $"https://github.com/{Repo}/releases/download/v3.10.0/{id}-1.0.1.zip"
+            } }
+        } });
+        Assert.Empty(ExtensionFeed.Parse(feed, Repo));
+    }
+
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "InkCanvas-extension-test-" + Guid.NewGuid().ToString("N"));
     private const string Repo = "QiXinia/Ink-Canvas-HEHS";
     private const string Id = "inkcanvas.pdf";

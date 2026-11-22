@@ -1056,6 +1056,12 @@ public sealed class VectorParityTests
             var settings = JsonSerializer.Deserialize<AppSettings>(input, CaseInsensitive)!;
             var actual = JsonNode.Parse(JsonSerializer.Serialize(settings))!;
             var expected = JsonNode.Parse(c.GetProperty("expected").GetRawText())!;
+            // The shared vectors include retired classroom controls from the earlier UI.
+            // AppearanceSettingsTests covers loading those keys and dropping them on save.
+            expected.AsObject().Remove("features");
+            foreach (string field in new[] { "presetId", "toolkitCollapsed", "practicePageName", "customPresets",
+                "groupSplitMode", "groupSplitValue", "toolkitX", "toolkitY" })
+                expected["classroom"]?.AsObject().Remove(field);
             // WinUI defaults to Regular icons when older settings omit the style choice.
             if (JsonNode.Parse(input)?["appearance"]?["isIconRegularStyle"] is null
                 && expected["appearance"] is JsonObject appearance) appearance["isIconRegularStyle"] = true;

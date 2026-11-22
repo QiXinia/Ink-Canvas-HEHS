@@ -34,7 +34,7 @@ export function extractGlyphs(text) {
 const ALIAS = new Map(Object.entries({
   Pen: 'Edit', Eraser: 'EraseTool', Select: 'SelectAll', Board: 'TVMonitor',
   Close: 'Cancel', Exit: 'ChromeClose', Restart: 'Refresh', Replay: 'Recent',
-  TimeMachine: 'History', SlideList: 'BulletedList', Pdf: 'PDF', Cursor: 'Click',
+  SlideList: 'BulletedList', Pdf: 'PDF', Cursor: 'Click',
   PenWpf: 'PenPalette', HighlightWpf: 'Highlight', EraserOverlayCircle: 'StatusCircle7',
   EraserOverlayStroke: 'StrokeErase2', SelectWpf: 'StorageOptical', SelectOverlay: 'ClickSolid',
   ShapesWpf: 'DialShape3', InsertMedia: 'ImageExport', BoardWpf: 'Handwriting',

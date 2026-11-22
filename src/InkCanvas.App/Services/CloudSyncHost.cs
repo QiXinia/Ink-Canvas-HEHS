@@ -8,7 +8,7 @@ namespace InkCanvas.App.Services;
 
 internal sealed class CloudSyncHost : ICloudSyncHost, IDisposable
 {
-    private static readonly string[] PortableGroups = { "appearance", "canvas", "gesture", "inkToShape", "behavior", "features" };
+    private static readonly string[] PortableGroups = { "appearance", "canvas", "gesture", "inkToShape", "behavior" };
     private readonly AppServices _services;
     public CloudSyncHost(AppServices services)
     {
@@ -48,6 +48,7 @@ internal sealed class CloudSyncHost : ICloudSyncHost, IDisposable
     {
         if (System.Text.Encoding.UTF8.GetByteCount(json) > 65536) throw new InvalidDataException("云端配置大小超限。");
         var values = JsonNode.Parse(json)?.AsObject() ?? throw new InvalidDataException("云端配置无效。");
+        values.Remove("features");
         if (values.Any(pair => !PortableGroups.Contains(pair.Key))) throw new InvalidDataException("云端配置包含设备或敏感设置。");
         var merged = JsonSerializer.SerializeToNode(_services.Settings).AsObject();
         foreach (var pair in values) merged[pair.Key] = pair.Value?.DeepClone() ?? throw new InvalidDataException("云端配置分组为空。");
@@ -73,7 +74,6 @@ internal sealed class CloudSyncHost : ICloudSyncHost, IDisposable
         _services.Settings.Gesture = restored.Gesture;
         _services.Settings.InkToShape = restored.InkToShape;
         _services.Settings.PowerPoint = restored.PowerPoint;
-        _services.Settings.Features = restored.Features;
     }
     public void Dispose()
     {

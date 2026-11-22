@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace InkCanvas.Core.Settings;
@@ -44,9 +44,6 @@ public sealed class AppSettings
         get => _classroom ??= new ClassroomSettings();
         set => _classroom = value ?? new ClassroomSettings();
     }
-
-    /// <summary>新功能回退开关；旧设置文件缺该节点时保持默认（全部开启）。</summary>
-    [JsonPropertyName("features")] public FeatureSettings Features { get; set; } = new();
 
     public AppSettings Clone() =>
         JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(this)) ?? new AppSettings();
@@ -197,15 +194,6 @@ public sealed class ExperimentalSettings
     public bool Word { get; set; } = true;
     public bool PowerPoint { get; set; } = true;
     public bool Edge { get; set; } = true;
-}
-
-/// <summary>第一轮功能区开关，供后续新功能按需回退；默认全部开启。</summary>
-public sealed class FeatureSettings
-{
-    [JsonPropertyName("enableAiTeaching")] public bool EnableAiTeaching { get; set; } = true;
-    [JsonPropertyName("enableExerciseFlow")] public bool EnableExerciseFlow { get; set; } = true;
-    [JsonPropertyName("enableExampleLibrary")] public bool EnableExampleLibrary { get; set; } = true;
-    [JsonPropertyName("enableResourceBundle")] public bool EnableResourceBundle { get; set; } = true;
 }
 
 /// <summary>
@@ -455,31 +443,12 @@ public sealed class RandSettings
 
 public enum LotterySamplingMode { SoftCooldown, Uniform, RoundWithoutReplacement }
 
-/// <summary>课堂工具箱配置：场景预设、倒计时与常用参数；新字段只追加。</summary>
+/// <summary>计时器、聚光灯与放大镜的配置。</summary>
 public sealed class ClassroomSettings
 {
     [JsonPropertyName("version")] public int Version { get; set; } = 1;
-
-    [JsonPropertyName("presetId")] public string PresetId { get; set; } = "teach";
-
     [JsonPropertyName("countdownMinutes")] public int CountdownMinutes { get; set; } = 3;
-
-    [JsonPropertyName("toolkitCollapsed")] public bool ToolkitCollapsed { get; set; }
-
-    [JsonPropertyName("practicePageName")] public string PracticePageName { get; set; } = "随堂练习";
-
-    [JsonPropertyName("customPresets")] public string CustomPresets { get; set; } = "";
-
-    [JsonPropertyName("groupSplitMode")] public string GroupSplitMode { get; set; } = "groupCount";
-
-    [JsonPropertyName("groupSplitValue")] public int GroupSplitValue { get; set; } = 4;
-
     [JsonPropertyName("spotlightRegions")] public string SpotlightRegions { get; set; } = "";
-
-    /// <summary>工具箱窗口屏幕位置；int.MinValue 表示从未保存，按默认居中放置。</summary>
-    [JsonPropertyName("toolkitX")] public int ToolkitX { get; set; } = int.MinValue;
-    [JsonPropertyName("toolkitY")] public int ToolkitY { get; set; } = int.MinValue;
-
     /// <summary>放大镜窗口屏幕位置；int.MinValue 表示未保存。</summary>
     [JsonPropertyName("magnifierX")] public int MagnifierX { get; set; } = int.MinValue;
     [JsonPropertyName("magnifierY")] public int MagnifierY { get; set; } = int.MinValue;

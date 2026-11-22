@@ -41,7 +41,7 @@ internal static class CloudSyncRegression
             {
                 var portable = JsonDocument.Parse(host.ExportPreferences());
                 Check("preferences exclude credentials device paths and rosters", portable.RootElement.EnumerateObject().All(property =>
-                    new[] { "appearance", "canvas", "gesture", "inkToShape", "behavior", "features" }.Contains(property.Name)));
+                    new[] { "appearance", "canvas", "gesture", "inkToShape", "behavior" }.Contains(property.Name)));
                 bool rejected = false;
                 try { host.ImportPreferences("{\"ai\":{\"endpoint\":\"blocked\"}}"); }
                 catch (InvalidDataException) { rejected = true; }

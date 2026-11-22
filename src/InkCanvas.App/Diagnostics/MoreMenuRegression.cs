@@ -51,6 +51,7 @@ internal static class MoreMenuRegression
                     .SequenceEqual(new[] { "保存墨迹", "打开文件", "设置", "退出" }) && labels[0] == "倒计时");
                 Check($"desktop menu consolidates insertion and duplicate plugins {theme}-{scale}", labels.Contains("插入")
                     && !labels.Any(label => label is "插入图片" or "插入视频" or "PDF 导入画板" or "AI 助手" or "文稿库" or "指南"));
+                Check($"retired classroom tools are absent {theme}-{scale}", !labels.Any(label => label is "课堂工具" or "开始时光机录制" or "时光机录制"));
                 Check($"PDF viewer remains a tool {theme}-{scale}", disabled || Array.IndexOf(labels, "打开 PDF") is var pdf && pdf >= 0 && pdf < Array.IndexOf(labels, "保存墨迹"));
                 await BoardWindowRegression.SaveVisual((FrameworkElement)panel.Content, Path.Combine(directory, $"more-{theme}-{scale}.png"));
                 Invoke(buttons.Single(button => button.Label == "插入"));

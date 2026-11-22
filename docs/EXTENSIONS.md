@@ -17,7 +17,6 @@
 | InkCanvas.AnalyticGeometry / InkCanvas.Modules.AnalyticGeometry | 有界公式解析、曲线采样与原生公式编辑器 | Host.Contracts、共用墨迹控件与 Windows 本地手写服务 |
 | InkCanvas.Modules.AiAssistant | AI 会话、SSE 网络传输、识别与纠错、原生 WinUI 3 助教窗口 | Host.Contracts 与共用控件，通过明确宿主接口对接画布和课堂 |
 | InkCanvas.Modules.Library | 文稿库、目录导航、保存选择和按需页面预览 | Host.Contracts、共用控件与白板存储，独立状态和预览缓存 |
-| InkCanvas.Modules.TimeMachine | 课堂录制：画板 / 白板 / PPT 批注的笔画级事件与章节书签记录、MP4 视频导出 | Host.Contracts 与共用控件，通过明确宿主接口对接画板、PPT 与课堂信号；未安装时本体功能不受影响 |
 | InkCanvas.ShellExtension | 文件资源管理器缩略图与首页预览 | 原生 COM、WIC 和 Win32，独立安装，使用系统隔离宿主 |
 | InkCanvas.PluginHost | 一个外部插件对应一个工作进程 | SDK、扩展运行时 |
 | InkCanvas.App | 主体组合根、窗口和交互入口 | 宿主契约与运行时，通过服务接口调用模块 |
@@ -29,8 +28,6 @@ PDF 模块采用同样的独立分包方式。`IncludePdfModule=false` 可发布
 AI 助教通过独立原生插件安装，使用 `IncludeAiAssistantModule=false` 可发布不含 AI 的基础包。安装、配置与构建方法见 [AI 助教插件](AI-ASSISTANT.md)。
 
 文稿库通过 `IBoardLibraryService` 对接打开、保存入口，使用 `IncludeLibraryModule=false` 可发布不含文稿库的基础包。资源管理器插件单独注册到当前用户。安装和预览格式见 [文稿库与资源管理器预览](BOARD-LIBRARY.md)。
-
-「时光机」模块（`inkcanvas.time-machine`）通过 `ITimeMachineService` 暴露录制启停、录制列表与文件打开能力；课堂录制保存为插件私有目录下的 `.icink` 文件。模块停用或卸载后，本体不再出现录制命令；打开课堂录制文件时由宿主格式守卫提示需要安装并启用该模块。操作说明见 [时光机插件](timemachine-user-guide.md)。
 
 现有课堂工具和 PPT 服务仍在原项目中。本轮用屏幕跟随完成实际拆包，并为后续迁移提供同一套注册、契约和打包入口。
 

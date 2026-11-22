@@ -9,7 +9,6 @@ namespace InkCanvas.App.Services;
 public sealed partial class ShellController
 {
     private IReadOnlyList<ExtensionCommand> _displayedExtensionCommands = Array.Empty<ExtensionCommand>();
-    private ITimeMachineService _timeMachineService;
 
     public IReadOnlyList<ExtensionCommand> ExtensionCommands
     {
@@ -22,14 +21,6 @@ public sealed partial class ShellController
             new ExtensionCommand("inkcanvas.pdf", "import", "PDF 导入画板", "选择 PDF 页码并导入新画板页") });
             if (Services.Modules.HasExport<Host.Contracts.IAnalyticGeometryService>()) commands.Add(new ExtensionCommand("inkcanvas.analytic-geometry", "open", "解析几何", "数学工作区、代数计算、二维与三维联动作图"));
             if (AiAssistantAvailable) commands.Add(new ExtensionCommand("inkcanvas.ai-assistant", "open", "AI 助手", "面向教师的通用 AI 助手与课堂工具调用"));
-            var timeMachine = Services.Modules.GetExport<ITimeMachineService>();
-            if (timeMachine is not null)
-            {
-                commands.Add(new ExtensionCommand("inkcanvas.time-machine", "record",
-                    timeMachine.IsRecording ? "停止录制" : "开始时光机录制", "录制板书/白板/PPT 批注"));
-                commands.Add(new ExtensionCommand("inkcanvas.time-machine", "open",
-                    "时光机录制", "查看课堂录制、章节书签并导出视频"));
-            }
             return commands;
         }
     }
@@ -39,27 +30,14 @@ public sealed partial class ShellController
         try { await Services.Plugins.StartEnabledAsync(new HashSet<string>(Services.ExtensionPreferences.EnabledPlugins)); }
         catch (Exception ex) { Core.Diagnostics.FileLog.WriteLogToFile("Plugin startup: " + ex.Message, Core.Diagnostics.LogType.Error); }
     }
-    private void RefreshTimeMachineService()
-    {
-        var service = Services.Modules.GetExport<ITimeMachineService>();
-        if (ReferenceEquals(service, _timeMachineService)) return;
-        if (_timeMachineService is not null) _timeMachineService.RecordingStateChanged -= OnTimeMachineRecordingChanged;
-        _timeMachineService = service;
-        if (_timeMachineService is not null) _timeMachineService.RecordingStateChanged += OnTimeMachineRecordingChanged;
-    }
-
-    private void OnTimeMachineRecordingChanged() => OnExtensionCommandsChanged();
-
     private void OnExtensionCommandsChanged()
     {
-        RefreshTimeMachineService();
         _dispatcher.TryEnqueue(() =>
         {
             if (_disposed) return;
             var commands = ExtensionCommands.ToArray();
             if (_displayedExtensionCommands.SequenceEqual(commands)) return;
             _displayedExtensionCommands = commands;
-            _toolkit?.SetAiAvailable(AiAssistantAvailable);
             _spotlight?.SetAiAvailable(AiAssistantAvailable);
             _magnifier?.SetAiAvailable(AiAssistantAvailable);
             _bar?.ClosePanels(); _bar?.Bar.RefreshExtensionCommands();
@@ -94,37 +72,6 @@ public sealed partial class ShellController
             {
                 try { var pdf = Services.Modules.GetExport<Host.Contracts.IPdfWorkspaceService>(); if (pdf is not null) await pdf.ImportToBoardAsync(); }
                 catch (Exception ex) { await NotifyAsync("PDF 导入失败", ex.GetBaseException().Message); }
-            }
-            return;
-        }
-        if (command.PluginId == "inkcanvas.time-machine")
-        {
-            var timeMachine = Services.Modules.GetExport<ITimeMachineService>();
-            if (timeMachine is null) { OnExtensionCommandsChanged(); return; }
-            try
-            {
-                if (command.CommandId == "record")
-                {
-                    if (timeMachine.IsRecording) timeMachine.StopRecording();
-                    else
-                    {
-                        if (_board is null && _pptSession?.Snapshot?.IsAttached != true)
-                        {
-                            await NotifyAsync("板书时光机", "请先打开画板或启动课件放映后再开始录制。");
-                            return;
-                        }
-                        timeMachine.StartRecording();
-                    }
-                }
-                else if (command.CommandId == "open")
-                {
-                    await timeMachine.OpenRecordingsAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile("TimeMachine command " + command.CommandId + ": " + ex.Message, Core.Diagnostics.LogType.Error);
-                if (!_disposed) await NotifyAsync("板书时光机", ex.GetBaseException().Message);
             }
             return;
         }

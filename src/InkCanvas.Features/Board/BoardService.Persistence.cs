@@ -276,9 +276,6 @@ public sealed partial class BoardService
         var entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
         foreach (var entry in archive.Entries)
             if (!entries.TryAdd(entry.FullName, entry)) throw new InvalidDataException("画板包存在重复条目。");
-        // 新格式课堂录制文件归时光机插件读取：未安装/未启用插件时在此拦截，避免被误读为画板包。
-        if (ClassroomRecordingProbe.IsClassroomRecording(archive))
-            throw new InvalidDataException(ClassroomRecordingProbe.PluginRequiredMessage);
         if (!entries.TryGetValue("board.json", out var manifest)) throw new InvalidDataException("画板包缺少 board.json。");
         if (previewPage.HasValue && manifest.Length > BoardPreview.MaximumManifestBytes) throw new InvalidDataException("页面数据较大，请打开文件查看。");
         BoardFile model;

@@ -31,7 +31,6 @@ internal static class AssistantCompatibilityRegression
                 ["inkcanvas.pdf"] = new[] { "pdf_read", "pdf_capture", "pdf_navigate", "pdf_save", "open_pdf" },
                 ["inkcanvas.library"] = new[] { "library_list", "library_open", "library_preview" },
                 ["inkcanvas.analytic-geometry"] = new[] { "geometry_read", "geometry_execute", "geometry_calculate", "geometry_insert" },
-                ["inkcanvas.time-machine"] = new[] { "recording_list", "recording_control", "recording_read" },
                 ["inkcanvas.cloud-sync"] = new[] { "cloud_sync_state", "cloud_sync_run" },
                 ["inkcanvas.screen-tracking"] = new[] { "screen_tracking_state", "screen_tracking_reanchor" },
             };
@@ -49,8 +48,6 @@ internal static class AssistantCompatibilityRegression
             Check("screen tracking state tool", tracking.Text.Contains("enabled", StringComparison.Ordinal));
             var cloud = await Call("cloud_sync_state", new { });
             Check("cloud sync status excludes credentials", !cloud.Text.Contains("accessToken", StringComparison.Ordinal) && !cloud.Text.Contains("Email", StringComparison.Ordinal));
-            var recordings = await Call("recording_list", new { });
-            using (var json = JsonDocument.Parse(recordings.Text)) Check("recording list tool", json.RootElement.TryGetProperty("entries", out _));
             var pdf = services.Modules.GetExport<IPdfWorkspaceService>();
             string pdfPath = Path.Combine(directory, "lesson.pdf");
             pdf.GetType().Assembly.GetType("InkCanvas.Modules.Pdf.PdfDiagnostics").GetMethod("CreateFixture",
@@ -115,7 +112,7 @@ internal static class AssistantCompatibilityRegression
                 var computed = await Rpc("tools/call", new { name = "geometry_calculate", arguments = new { expression = "2+3" } });
                 Check("external MCP executes plugin tool", computed.GetProperty("content")[0].GetProperty("text").GetString().Contains('5'));
                 var resources = await Rpc("resources/list", new { });
-                Check("MCP exposes native plugin contexts", resources.GetProperty("resources").GetArrayLength() >= 6);
+                Check("MCP exposes native plugin contexts", resources.GetProperty("resources").GetArrayLength() >= expected.Count);
                 config.Text = JsonSerializer.Serialize(new { mcpServers = new Dictionary<string, object>
                 {
                     ["local-app"] = new { command = bridge, args = new[] { "--pipe", mcp.PipeName } },
@@ -140,7 +137,6 @@ internal static class AssistantCompatibilityRegression
                 if (plugin.Key == "inkcanvas.pdf") services.Modules.Invoke<IPdfWorkspaceService>(_ => throw new InvalidOperationException("diagnostic stop"));
                 else if (plugin.Key == "inkcanvas.analytic-geometry") services.Modules.Invoke<IAnalyticGeometryService>(_ => throw new InvalidOperationException("diagnostic stop"));
                 else if (plugin.Key == "inkcanvas.library") services.Modules.Invoke<IBoardLibraryService>(_ => throw new InvalidOperationException("diagnostic stop"));
-                else if (plugin.Key == "inkcanvas.time-machine") services.Modules.Invoke<ITimeMachineService>(_ => throw new InvalidOperationException("diagnostic stop"));
                 else if (plugin.Key == "inkcanvas.cloud-sync") services.Modules.Invoke<ICloudSyncService>(_ => throw new InvalidOperationException("diagnostic stop"));
                 else services.Modules.Invoke<IScreenTrackingService>(_ => throw new InvalidOperationException("diagnostic stop"));
                 Check("plugin failure removes owned tools " + plugin.Key, !registry.Definitions.Any(tool => tool.Owner == plugin.Key));

@@ -241,14 +241,6 @@
       "segoeCodepoint": "U+E896"
     },
     {
-      "name": "TimeMachine",
-      "codepoint": "U+F486",
-      "char": "",
-      "target": "sys.symbol.clock",
-      "fluentName": "history",
-      "segoeCodepoint": "U+E81C"
-    },
-    {
       "name": "SlideList",
       "codepoint": "U+F6F3",
       "char": "",

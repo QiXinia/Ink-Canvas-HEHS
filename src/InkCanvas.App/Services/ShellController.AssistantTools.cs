@@ -118,29 +118,24 @@ public sealed partial class ShellController
             if (success) host.EnsureVisible(target);
             return new(success ? "已创建图形，可在画布上编辑或撤销。" : "画布当前不可编辑。");
         });
-        Add("open_project_tool", "打开应用提供的课堂工具或已安装插件。timer 计时器，lottery 点名，roster 名单，spotlight 聚光灯，magnifier 放大镜，toolkit 工具箱，examples 例题库，resources 资源包，groups 小组积分，handout 讲义。", """
-            {"type":"object","properties":{"tool":{"type":"string","enum":["timer","lottery","roster","spotlight","magnifier","toolkit","examples","resources","groups","handout"]}},"required":["tool"],"additionalProperties":false}
+        Add("open_project_tool", "打开应用提供的课堂工具或已安装插件。timer 计时器，lottery 点名，roster 名单管理，spotlight 聚光灯，magnifier 放大镜。", """
+            {"type":"object","properties":{"tool":{"type":"string","enum":["timer","lottery","roster","spotlight","magnifier"]}},"required":["tool"],"additionalProperties":false}
             """, args =>
         {
             switch (args.GetProperty("tool").GetString())
             {
                 case "timer": OpenTimer(); break;
                 case "lottery": OpenLottery(); break;
-                case "roster": OpenRoster(); break;
+                case "roster": OpenSettingsPage("抽奖与点名"); break;
                 case "spotlight": OpenSpotlight(); break;
                 case "magnifier": OpenMagnifier(); break;
-                case "toolkit": OpenToolkit(); break;
-                case "examples": OpenExampleLibrary(); break;
-                case "resources": OpenResourceBundle(); break;
-                case "groups": OpenGroupScore(); break;
-                case "handout": OpenHandout(); break;
                 default: throw new ArgumentException("工具名称无效。");
             }
             return new("已调用工具入口。请在打开的工具中继续操作。");
         });
         registry.Register(new("capture_canvas", "获取当前白板页面的图像，供识别板书或查看布局。", empty) { ReadOnly = true }, async (_, token) =>
             new AssistantToolResult("当前白板页面截图。", await BoardPreview.RenderAsync(Services.Board, token: token)));
-        registry.Register(new("invoke_plugin_command", "调用 read_workspace 返回的可用插件命令。需使用实际的 plugin 和 command 标识。可打开文稿库、PDF、解析几何、时光机及其他已安装插件。", """
+        registry.Register(new("invoke_plugin_command", "调用 read_workspace 返回的可用插件命令。需使用实际的 plugin 和 command 标识。可打开文稿库、PDF、解析几何及其他已安装插件。", """
             {"type":"object","properties":{"plugin":{"type":"string"},"command":{"type":"string"}},"required":["plugin","command"],"additionalProperties":false}
             """) { ChangesTarget = true }, async (args, token) =>
         {

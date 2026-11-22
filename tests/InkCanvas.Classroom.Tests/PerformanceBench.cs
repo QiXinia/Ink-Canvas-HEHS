@@ -12,11 +12,10 @@ namespace InkCanvas.Classroom.Tests;
 /// 可复现的本地性能基准（合成数据，无 UI / 无真实 AI 端点依赖）。
 /// 每一项以 <c>[PERF] name=... ms=... detail=...</c> 输出，供
 /// <c>dotnet test --filter FullyQualifiedName~PerformanceBench --logger "console;verbosity=detailed"</c>
-/// 采集真实数字并写入 <c>docs/optimization-report.md</c>。
+/// 采集本机合成负载的性能数据。
 /// <para>
 /// 说明：这些数字是本机合成负载下的耗时，不代表真实课堂硬件、真实 PPT/WPS 进程或
 /// 真实 AI 服务的表现；mock 首字延迟只验证 mock 流的调度开销。
-/// 时光机时间轴 / 笔画抽稀基准已随插件工作包移出本体测试。
 /// </para>
 /// </summary>
 public sealed class PerformanceBench
