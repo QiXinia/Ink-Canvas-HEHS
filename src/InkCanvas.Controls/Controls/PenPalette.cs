@@ -1,4 +1,4 @@
-﻿using InkCanvas.Controls.Theming;
+using InkCanvas.Controls.Theming;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Settings;
 using InkCanvas.Ink;
@@ -11,11 +11,8 @@ using Microsoft.UI.Xaml.Media;
 namespace InkCanvas.Controls.Controls;
 
 /// <summary>
-/// WPF-parity palette, split into two independent menus like the original flyouts:
-/// pen mode ("墨迹选项") shows only pen colours + width + pen style; highlighter mode
-/// ("荧光笔") shows only highlighter colours + alpha + width. Layout follows upstream
-/// MainWindow.xaml PenPalette: 笔锋 combo, 粗细 slider (menu units 1–30), then the colour
-/// grid (pen 5×2 circular swatches with the 亮系/暗系 theme cell; highlighter 3×2 rounded).
+/// Independent pen and highlighter options with width previews, brush styles and
+/// shared light, dark and custom colour palettes.
 /// </summary>
 public sealed class PenPalette : UserControl
 {
@@ -49,25 +46,34 @@ public sealed class PenPalette : UserControl
         TextWrapping = TextWrapping.Wrap,
         FontSize = 12,
     };
-    private readonly List<(Button Cell, OriginalMenuCatalog.Swatch Swatch, FontIcon Check)> _swatches = new();
+    private readonly InkColorPalette _colors;
     private readonly SolidColorBrush _foreground = new(Microsoft.UI.Colors.Black);
-    private readonly SolidColorBrush _swatchBorder = new(Windows.UI.Color.FromArgb(204, 0, 0, 0));
     private readonly Border _card;
     private readonly StackPanel _options;
     private ToggleSwitch _nibMode;
     private Action<bool> _nibModeChanged;
     private bool _configuringNibMode;
     public PopupHeader Header { get; }
-    private FontIcon _themeGlyph;
-    private TextBlock _themeText;
     private bool _suppress;
     private Action<int> _inkAlphaChanged;
     private int _highlighterAlpha = 140;
-    private bool _lightColorScheme;
 
-    public PenPalette(bool highlighter = false)
+    public PenPalette(bool highlighter = false) : this(highlighter, null) { }
+
+    public PenPalette(bool highlighter, CanvasSettings settings)
     {
         _highlighter = highlighter;
+        _colors = new InkColorPalette(settings ?? new CanvasSettings(), highlighter, false);
+        _colors.PaletteChanged += () => ColorPaletteChanged?.Invoke();
+        _colors.ColorPicked += color =>
+        {
+            if (Controller is null || _suppress) return;
+            Controller.Tool = _highlighter ? InkTool.Highlighter : InkTool.Pen;
+            Controller.CurrentAttributes.Color = color;
+            AttributesChanged?.Invoke();
+            RefreshFromController();
+            if (!Header.IsPinned) RequestClose?.Invoke();
+        };
         if (!highlighter) _style = new PenStylePicker { HorizontalAlignment = HorizontalAlignment.Stretch };
         if (highlighter) _preview.PreviewHeight = 96;
         _width.Maximum = highlighter ? OriginalMenuCatalog.HighlighterWidthMaximum : OriginalMenuCatalog.PenWidthMaximum;
@@ -145,7 +151,7 @@ public sealed class PenPalette : UserControl
         {
             // 原右栏顺序：荧光笔标题 → 不透明度 → 3×2 色板；粗细为拆分菜单后保留的调节项。
             panel.Children.Add(SliderRow("不透明度", _alpha, _alphaValue, "荧光笔透明度，范围 20 到 240，步长 20"));
-            panel.Children.Add(SwatchGrid(OriginalMenuCatalog.HighlighterColors, 3, circular: false));
+            panel.Children.Add(_colors);
             panel.Children.Add(SliderRow("粗细", _width, _widthValue, "荧光笔粗细，范围 1 到 120，步长 1"));
             panel.Children.Add(_preview);
             panel.Children.Add(_alphaAvailability);
@@ -154,7 +160,7 @@ public sealed class PenPalette : UserControl
         {
             panel.Children.Add(SliderRow("粗细", _width, _widthValue, "画笔粗细，范围 1 到 30，步长 1"));
             panel.Children.Add(_preview);
-            panel.Children.Add(SwatchGrid(OriginalMenuCatalog.PenColors, 5, circular: true));
+            panel.Children.Add(_colors);
             panel.Children.Add(_style);
         }
 
@@ -204,7 +210,7 @@ public sealed class PenPalette : UserControl
     /// Hosts normally measure the unrooted control.
     /// </summary>
     public double DesignHeightDip =>
-        27 + 2 + 24 + (_highlighter ? 3 : 2) * RowHeight + 4 * 10 + 60 + SwatchCell * 2
+        27 + 2 + 24 + (_highlighter ? 3 : 2) * RowHeight + 4 * 10 + 60 + SwatchCell * 3 + 36
         + (!_highlighter ? 2 * RowHeight + 2 : _alphaAvailability.Visibility == Visibility.Visible ? 10 + 32 : 0);
 
     /// <summary>Apply the exact WPF popup palette for the window theme (0/1/2), fixed at open.</summary>
@@ -218,12 +224,7 @@ public sealed class PenPalette : UserControl
         _card.BorderBrush = PopupBrushes.ToolPanelBorder(theme);
         Header.ApplyTheme(theme);
         _foreground.Color = dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black;
-        // WPF FloatBarBorderBrush: Black@0.8 light / White@0.6 dark.
-        _swatchBorder.Color = dark
-            ? Windows.UI.Color.FromArgb(153, 255, 255, 255)
-            : Windows.UI.Color.FromArgb(204, 0, 0, 0);
-        foreach (var (cell, _, _) in _swatches) if (cell.Content is Border face) face.BorderBrush = _swatchBorder;
-        RefreshThemeCell();
+        _colors.ApplyTheme(theme);
     }
 
     private Grid ChoiceRow(string label, SegmentedSelector selector)
@@ -270,160 +271,6 @@ public sealed class PenPalette : UserControl
         Foreground = _foreground,
     };
 
-    private Grid SwatchGrid(IReadOnlyList<OriginalMenuCatalog.Swatch> colors, int columns, bool circular)
-    {
-        var grid = new Grid { HorizontalAlignment = HorizontalAlignment.Center };
-        for (int i = 0; i < columns; i++)
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(SwatchCell) });
-        int extra = !_highlighter ? 1 : 0; // 亮系/暗系切换格
-        int count = colors.Count + extra;
-        int rows = (count + columns - 1) / columns;
-        for (int i = 0; i < rows; i++)
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(SwatchCell) });
-
-        int index = 0;
-        if (!_highlighter)
-        {
-            var themeCell = BuildThemeCell();
-            Grid.SetColumn(themeCell, 0);
-            Grid.SetRow(themeCell, 0);
-            grid.Children.Add(themeCell);
-            index = 1;
-        }
-
-        for (int i = 0; i < colors.Count; i++, index++)
-        {
-            var swatch = colors[i];
-            var check = new FontIcon
-            {
-                Glyph = "\uF295",
-                FontFamily = IconFontStyle.Font,
-                FontSize = 16,
-                Foreground = new SolidColorBrush(swatch.Name == "白色"
-                    ? Microsoft.UI.Colors.Black : Microsoft.UI.Colors.White),
-                Visibility = Visibility.Collapsed,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            var cellBorder = new Border
-            {
-                Width = SwatchSize,
-                Height = SwatchSize,
-                Background = new SolidColorBrush(ToWindowsColor(GetSwatchColor(swatch))),
-                BorderBrush = _swatchBorder,
-                BorderThickness = new Thickness(circular ? 1.5 : 1),
-                CornerRadius = new CornerRadius(circular ? SwatchSize / 2 : 4),
-                Child = check,
-                Tag = swatch,
-            };
-            // Button semantics: screen-reader name + UIA Invoke (headless tests), same look.
-            var cell = new Button
-            {
-                Content = cellBorder,
-                Width = SwatchSize,
-                Height = SwatchSize,
-                MinWidth = 0,
-                MinHeight = 0,
-                Margin = new Thickness(2),
-                Padding = new Thickness(0),
-                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(0),
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center,
-            };
-            Accessible(cell, swatch.Name, "选择此墨迹颜色");
-            cell.Click += (_, _) =>
-            {
-                if (Controller is null || _suppress) return;
-                Controller.Tool = _highlighter ? InkTool.Highlighter : InkTool.Pen;
-                Controller.CurrentAttributes.Color = GetSwatchColor(swatch);
-                AttributesChanged?.Invoke();
-                UpdatePreview();
-                RefreshFromController();
-                // WPF ColorSwitchCheck -> HideSubPanels("color") closes the palette on a
-                // colour pick (MW_PenColors.cs:34-37). Width/style/alpha edits keep it open.
-                if (!Header.IsPinned) RequestClose?.Invoke();
-            };
-            _swatches.Add((cell, swatch, check));
-            Grid.SetColumn(cell, index % columns);
-            Grid.SetRow(cell, index / columns);
-            grid.Children.Add(cell);
-        }
-        return grid;
-    }
-
-    /// <summary>原色板首格：亮系/暗系切换（E706/E708 + 文字），只改墨迹配色，不改窗口主题。</summary>
-    private Button BuildThemeCell()
-    {
-        _themeGlyph = new FontIcon
-        {
-            FontFamily = IconFontStyle.Font,
-            FontSize = 14,
-            Foreground = _foreground,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        _themeText = new TextBlock
-        {
-            FontSize = 9,
-            Foreground = _foreground,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        var stack = new StackPanel
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-        };
-        stack.Children.Add(_themeGlyph);
-        stack.Children.Add(_themeText);
-        var cellBorder = new Border
-        {
-            Width = SwatchSize,
-            Height = SwatchSize,
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderBrush = _swatchBorder,
-            BorderThickness = new Thickness(1.5),
-            CornerRadius = new CornerRadius(SwatchSize / 2),
-            Child = stack,
-        };
-        var cell = new Button
-        {
-            Content = cellBorder,
-            Width = SwatchSize,
-            Height = SwatchSize,
-            MinWidth = 0,
-            MinHeight = 0,
-            Margin = new Thickness(2),
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(0),
-            HorizontalContentAlignment = HorizontalAlignment.Center,
-            VerticalContentAlignment = VerticalAlignment.Center,
-        };
-        Accessible(cell, "切换亮系/暗系墨迹颜色");
-        cell.Click += (_, _) => LightColorScheme = !LightColorScheme;
-        RefreshThemeCell();
-        return cell;
-    }
-
-    /// <summary>Outer card used by the window to fit and clip its native backdrop.</summary>
-    public Border CardSurface => _card;
-
-    private void RefreshThemeCell()
-    {
-        if (_themeGlyph is null) return;
-        // 与原版一致：显示将要切换到的目标色系。
-        _themeGlyph.Glyph = _lightColorScheme ? "\uF33C" : "\uF8BA";
-        _themeText.Text = _lightColorScheme ? "暗系" : "亮系";
-    }
-
-    private InkColor GetSwatchColor(OriginalMenuCatalog.Swatch swatch) =>
-        _lightColorScheme ? swatch.LightTheme : swatch.DarkTheme;
-
-    private static Windows.UI.Color ToWindowsColor(InkColor color) =>
-        Windows.UI.Color.FromArgb(color.A, color.R, color.G, color.B);
-
     private static double Snap(double value, double minimum, double step) =>
         minimum + Math.Round((value - minimum) / step, MidpointRounding.AwayFromZero) * step;
 
@@ -433,6 +280,10 @@ public sealed class PenPalette : UserControl
         if (!string.IsNullOrWhiteSpace(helpText)) AutomationProperties.SetHelpText(control, helpText);
     }
 
+    public Border CardSurface => _card;
+    public bool IsEditingColor => _colors.IsEditingColor;
+    public Action ColorPaletteChanged { get; set; }
+    public Func<InkColor, Task<InkColor?>> EditColorAsync { get => _colors.EditColorAsync; set => _colors.EditColorAsync = value; }
     public InkController Controller { get; set; }
 
     public Action RequestClose { get; set; }
@@ -488,20 +339,15 @@ public sealed class PenPalette : UserControl
     /// <summary>Raised after a color, width, style or alpha selection is applied.</summary>
     public Action AttributesChanged { get; set; }
 
-    /// <summary>Controls which of the original theme-specific nine pen swatches is used.</summary>
     public bool LightColorScheme
     {
-        get => _lightColorScheme;
-        set
-        {
-            if (_lightColorScheme == value) return;
-            _lightColorScheme = value;
-            RefreshFromController();
-            RefreshThemeCell();
-        }
+        get => _colors.LightColorScheme;
+        set { _colors.LightColorScheme = value; RefreshFromController(); }
     }
 
-    public void RefreshFromController()
+    public void RefreshFromController() => RefreshFromController(null);
+
+    public void RefreshFromController(CanvasSettings settings)
     {
         if (Controller is null) return;
         _suppress = true;
@@ -524,14 +370,7 @@ public sealed class PenPalette : UserControl
                     OriginalMenuCatalog.HighlighterAlphaMaximum);
                 _alphaValue.Text = HighlighterAlpha.ToString();
             }
-            var current = Controller.CurrentAttributes.Color;
-            foreach (var (cell, swatch, check) in _swatches)
-            {
-                InkColor candidate = GetSwatchColor(swatch);
-                if (cell.Content is Border face) face.Background = new SolidColorBrush(ToWindowsColor(candidate));
-                bool selected = candidate.R == current.R && candidate.G == current.G && candidate.B == current.B;
-                check.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
-            }
+            _colors.Refresh(Controller.GetDrawingAttributes(_highlighter).Color, settings);
         }
         finally
         {

@@ -228,8 +228,18 @@ public sealed class AiDocumentSettings
 
 public enum OptionalOperation { Yes, No, Ask }
 
+public enum ColorPaletteKind { Light, Dark, Custom }
+
 public sealed class CanvasSettings
 {
+    [JsonPropertyName("enableCustomColorPalette")] public bool EnableCustomColorPalette { get; set; } = true;
+    [JsonPropertyName("colorPalette")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ColorPaletteKind? ColorPalette { get; set; }
+    private List<uint> _customColors = new();
+    [JsonPropertyName("customColors")]
+    public List<uint> CustomColors { get => _customColors; set => _customColors = value ?? new(); }
+
     public double InkWashWidth { get; set; } = 30;
     public Ink.InkWashBrushOptions InkWash { get; set; } = Ink.InkWashBrushOptions.Default;
     public bool UseHardwarePressure { get; set; } = true;

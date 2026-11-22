@@ -291,6 +291,22 @@
     "canvas": {
       "type": "object",
       "properties": {
+        "enableCustomColorPalette": {
+          "type": "boolean",
+          "default": true,
+          "description": "允许切换到自定义颜色色板"
+        },
+        "colorPalette": {
+          "type": ["integer", "null"],
+          "enum": [0, 1, 2, null],
+          "description": "0 亮系，1 暗系，2 自定义；未设置时沿用窗口配色"
+        },
+        "customColors": {
+          "type": ["array", "null"],
+          "items": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "default": [],
+          "description": "画笔与荧光笔共用的自定义颜色，保存为 packed ARGB 整数"
+        },
         "inkWidth": {
           "type": "number"
         },

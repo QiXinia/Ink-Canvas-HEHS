@@ -28,6 +28,8 @@ public interface IShellActions
     void OpenReplay();
     void OpenGuide();
     void OpenPenPalette(bool highlighter);
+    Task<InkCanvas.Core.Ink.InkColor?> EditCustomColorAsync(InkCanvas.Core.Ink.InkColor color)
+        => Task.FromResult<InkCanvas.Core.Ink.InkColor?>(null);
     void OpenShapePicker();
     void InsertImage();
     void InsertVideo() { }

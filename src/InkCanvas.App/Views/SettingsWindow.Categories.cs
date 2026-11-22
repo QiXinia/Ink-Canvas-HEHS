@@ -46,6 +46,9 @@ public sealed partial class SettingsWindow
         _content.Children.Add(SliderRow("画笔粗细（原菜单 1–30；设置值为菜单值的一半）",
             () => S.Canvas.InkWidth, 0.5, 15, v => S.Canvas.InkWidth = v, 0.5));
         _content.Children.Add(ToggleRow("显示画笔光标", () => S.Canvas.IsShowCursor, value => S.Canvas.IsShowCursor = value));
+        _content.Children.Add(ToggleRow("启用自定义颜色色板", () => S.Canvas.EnableCustomColorPalette,
+            value => S.Canvas.EnableCustomColorPalette = value,
+            note: "在亮系、暗系后切换到自定义色板，可添加、编辑和删除颜色并自动保存。画笔与荧光笔共用自定义颜色。"));
         AddSection("荧光笔");
         _content.Children.Add(SliderRow("荧光笔透明度", () => S.Canvas.InkAlpha,
             20, 240, v => S.Canvas.InkAlpha = (int)v, 20));

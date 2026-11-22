@@ -601,6 +601,7 @@ public sealed partial class BoardWindow : Window
         if (ShowDetachedPanel(_inkOptionsFlyout)) return;
         if (_inkOptionsFlyout is not null && ReferenceEquals(_activeBoardFlyout, _inkOptionsFlyout)) { DismissBoardFlyout(); return; }
         var palette = _boardPenPalette = new BoardPenPalette(CurrentController, _services.Settings, _boardTheme);
+        palette.EditColorAsync = color => _shell?.EditCustomColorAsync(color) ?? Task.FromResult<InkCanvas.Core.Ink.InkColor?>(null);
         var flyout = new Flyout { Content = palette, Placement = FlyoutPlacementMode.Top };
         palette.SettingsChanged += () => { _services.ApplySettings(); _services.SaveSettings(); };
         palette.ColorPicked += () => { _services.RememberToolOptions(CurrentController); HideBoardFlyout(flyout); };

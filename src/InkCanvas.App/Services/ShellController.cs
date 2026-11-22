@@ -84,6 +84,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private ReplayWindow _replay;
     private readonly List<NoticeWindow> _notices = new();
     private PenPaletteWindow _palette;
+    private ColorEditorWindow _colorEditor;
     private readonly List<PenPaletteWindow> _detachedPalettes = new();
     private ShapePickerWindow _shapePicker;
     private bool _lastSlideShowState;
@@ -251,6 +252,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             if (_documentWorkspace is not null) yield return _documentWorkspace.Window;
             foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window)) yield return window;
             if (_settings is not null) yield return _settings;
+            if (_colorEditor is not null) yield return _colorEditor;
             if (_countdown is not null) yield return _countdown;
             if (_lottery is not null) yield return _lottery;
             if (_replay is not null) yield return _replay;
@@ -1125,8 +1127,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void RefreshPaletteNibModes()
     {
         _board?.RefreshToolSettings();
-        if (_palette is not null) { ConfigurePaletteNibMode(_palette); _palette.RefreshFromController(); }
-        foreach (var palette in _detachedPalettes) { ConfigurePaletteNibMode(palette); palette.RefreshFromController(); }
+        if (_palette is not null) { ConfigurePaletteNibMode(_palette); _palette.RefreshFromController(Services.Settings.Canvas); }
+        foreach (var palette in _detachedPalettes) { ConfigurePaletteNibMode(palette); palette.RefreshFromController(Services.Settings.Canvas); }
     }
 
     private void ConfigurePaletteNibMode(PenPaletteWindow palette) => palette.ConfigureNibMode(
@@ -1606,7 +1608,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _paletteHighlighter = highlighter;
         var controller = ActiveController;
         _palette = new PenPaletteWindow(controller, highlighter, EffectiveTheme,
-            _board is not null ? Services.Settings.Appearance.BlackboardScale : Services.Settings.Appearance.FloatingBarScale)
+            _board is not null ? Services.Settings.Appearance.BlackboardScale : Services.Settings.Appearance.FloatingBarScale,
+            Services.Settings.Canvas)
         {
             HighlighterAlpha = Services.Settings.Canvas.InkAlpha,
             LightColorScheme = Services.Settings.Appearance.Theme == 1,
@@ -1637,6 +1640,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 Services.SaveSettings();
             },
             AttributesChanged = () => { Services.RememberToolOptions(controller); _bar?.Bar.RefreshSelection(); },
+            ColorPaletteChanged = () => { Services.ApplySettings(); Services.SaveSettings(); },
+            EditColorAsync = EditCustomColorAsync,
         };
         NotifyWindowOpened(_palette);
         ConfigurePaletteNibMode(_palette);
@@ -1655,6 +1660,22 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
         WindowChrome.ShowWithoutActivation(_palette);
         WindowChrome.EnsureAbove(_palette);
+    }
+
+    public async Task<InkColor?> EditCustomColorAsync(InkColor color)
+    {
+        if (_colorEditor is not null) { _colorEditor.Activate(); return null; }
+        var window = new ColorEditorWindow(color, EffectiveTheme);
+        _colorEditor = window;
+        try
+        {
+            NotifyWindowOpened(window);
+            WindowChrome.CenterOnOwner(window, _documentWorkspace?.Window ?? (Window)_board ?? _bar);
+            window.Activate();
+            WindowChrome.EnsureAbove(window);
+            return await window.Result;
+        }
+        finally { if (ReferenceEquals(_colorEditor, window)) _colorEditor = null; }
     }
 
     private void CloseDetachedPalettes()
@@ -2258,6 +2279,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _cachedBoard?.CloseForShutdown();
         _cachedBoard = null;
         _documentAi?.Dispose();
+        _colorEditor?.Close();
         _spotlight?.Close();
         _magnifier?.Close();
         _slideNav?.Close();
