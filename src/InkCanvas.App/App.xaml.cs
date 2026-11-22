@@ -46,6 +46,8 @@ public partial class App : Application
             _ = PptPreviewWorker.Run(previewWorker["--pptpreviewworker=".Length..], parent, directory);
             return;
         }
+        var stylusCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--styluscheck=", StringComparison.OrdinalIgnoreCase));
+        if (stylusCheck is not null) { _ = Diagnostics.StylusRegression.Run(stylusCheck["--styluscheck=".Length..]); return; }
         var moreMenuCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--moremenucheck=", StringComparison.OrdinalIgnoreCase));
         if (moreMenuCheck is not null) { _ = Diagnostics.MoreMenuRegression.Run(moreMenuCheck["--moremenucheck=".Length..]); return; }
         var cloudSyncCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--cloudsynccheck=", StringComparison.OrdinalIgnoreCase));

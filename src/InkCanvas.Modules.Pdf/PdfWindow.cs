@@ -236,6 +236,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             }
             if (previous is not null)
             {
+                previous.NotifyInputContextChanging();
                 next.CurrentAttributes.Color = previous.CurrentAttributes.Color;
                 next.CurrentAttributes.TaperKind = previous.CurrentAttributes.TaperKind;
                 next.CurrentAttributes.Nib = previous.CurrentAttributes.Nib;

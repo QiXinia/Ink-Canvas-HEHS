@@ -392,6 +392,7 @@ public sealed partial class BoardService
 
     private static void CarryDrawingState(InkController source, InkController target)
     {
+        source.NotifyInputContextChanging();
         source.EndPlayback(); target.EndPlayback();
         source.CancelLassoErase();
         source.ClearSelection();

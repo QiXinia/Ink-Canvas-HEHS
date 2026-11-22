@@ -25,6 +25,7 @@
     <IncludeAnalyticGeometryModule Condition="'$(IncludeAnalyticGeometryModule)' == ''">true</IncludeAnalyticGeometryModule>
     <IncludeCloudSyncModule Condition="'$(IncludeCloudSyncModule)' == ''">true</IncludeCloudSyncModule>
     <IncludeMcpModule Condition="'$(IncludeMcpModule)' == ''">true</IncludeMcpModule>
+    <IncludeStylusModule Condition="'$(IncludeStylusModule)' == ''">true</IncludeStylusModule>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\InkCanvas.UpdateHost\InkCanvas.UpdateHost.csproj" ReferenceOutputAssembly="false" Private="false" />
@@ -50,6 +51,7 @@
     <ProjectReference Include="..\InkCanvas.Modules.AiAssistant\InkCanvas.Modules.AiAssistant.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeAiAssistantModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.Modules.Library\InkCanvas.Modules.Library.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeLibraryModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.Modules.CloudSync\InkCanvas.Modules.CloudSync.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeCloudSyncModule)' == 'true'" />
+    <ProjectReference Include="..\InkCanvas.Modules.Stylus\InkCanvas.Modules.Stylus.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeStylusModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.PluginHost\InkCanvas.PluginHost.csproj" ReferenceOutputAssembly="false" Private="false" />
     <ProjectReference Include="..\InkCanvas.Modules.Mcp\InkCanvas.Modules.Mcp.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeMcpModule)' == 'true'" />
     <ProjectReference Include="..\InkCanvas.McpHost\InkCanvas.McpHost.csproj" ReferenceOutputAssembly="false" Private="false" Condition="'$(IncludeMcpModule)' == 'true'" />
@@ -97,6 +99,11 @@
     </ItemGroup>
     <Copy SourceFiles="@(_McpOutputFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.mcp\" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_McpOutputFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.mcp\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
+    <ItemGroup Condition="'$(IncludeStylusModule)' == 'true'">
+      <_StylusFiles Include="..\InkCanvas.Modules.Stylus\bin\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InkCanvas.Modules.Stylus.dll;..\InkCanvas.Modules.Stylus\bin\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InkCanvas.Modules.Stylus.deps.json;..\InkCanvas.Modules.Stylus\module.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_StylusFiles)" DestinationFolder="$(OutDir)Modules\inkcanvas.stylus\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_StylusFiles)" DestinationFolder="$(PublishDir)Modules\inkcanvas.stylus\" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
     <ItemGroup Condition="'$(IncludeCloudSyncModule)' == 'true'">
       <_CloudSyncFiles Include="..\InkCanvas.Modules.CloudSync\bin\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InkCanvas.Modules.CloudSync.dll;..\InkCanvas.Modules.CloudSync\bin\$(Platform)\$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InkCanvas.Modules.CloudSync.deps.json;..\InkCanvas.Modules.CloudSync\module.json" />
     </ItemGroup>

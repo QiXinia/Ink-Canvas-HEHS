@@ -269,7 +269,7 @@ public sealed class OverlayInkPresenter : IDisposable
         try { _controller.OnPointerHover(p); }
         finally { _moveInput = false; }
     }
-    private void OnExited(uint pointerId) => _controller.HideEraserPreview(pointerId);
+    private void OnExited(uint pointerId) => _controller.OnPointerExited(pointerId);
 
     private void NoteInput(OverlayPointer p)
     {

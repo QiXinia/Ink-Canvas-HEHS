@@ -355,6 +355,7 @@ public sealed partial class InkController : IDisposable
 
     public void OnPointerHover(in OverlayPointer pointer)
     {
+        PointerInput?.Invoke(new(this, pointer, InkPointerPhase.Hover));
         if (pointer.Kind == OverlayPointerKind.Touch || _erasing || Playback is not null) return;
         UpdateEraserPreview(pointer);
     }
@@ -643,7 +644,7 @@ public sealed partial class InkController : IDisposable
 
     // ---- input ------------------------------------------------------------
 
-    public void OnPointerDown(in OverlayPointer p)
+    private void OnPointerDownCore(in OverlayPointer p)
     {
         if (Playback is not null) return;
         if (_shapeEditPointer is not null) return;
@@ -795,7 +796,7 @@ public sealed partial class InkController : IDisposable
         }
     }
 
-    public void OnPointerMove(in OverlayPointer p)
+    private void OnPointerMoveCore(in OverlayPointer p)
     {
         if (Playback is not null) return;
         if (_shapeEditPointer is not null) { UpdateShapeControlDrag(p, false); return; }
@@ -934,7 +935,7 @@ public sealed partial class InkController : IDisposable
         }
     }
 
-    public void OnPointerUp(in OverlayPointer p, bool canceled = false)
+    private void OnPointerUpCore(in OverlayPointer p, bool canceled)
     {
         if (Playback is not null) return;
         if (_shapeEditPointer is not null) { UpdateShapeControlDrag(p, true, canceled); return; }

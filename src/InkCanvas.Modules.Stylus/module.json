@@ -1,0 +1,9 @@
+{
+  "Id": "inkcanvas.stylus",
+  "Name": "手写笔与数位板",
+  "Version": "1.0.0",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.Stylus.dll",
+  "EntryType": "InkCanvas.Modules.Stylus.StylusModule",
+  "PackageFiles": []
+}

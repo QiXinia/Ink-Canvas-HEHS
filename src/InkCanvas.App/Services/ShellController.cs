@@ -115,7 +115,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _screens = ScreenService.All();
         _documentAi = new DocumentAiHost(this);
         RegisterAssistantTools();
-        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || DocumentActive), new DocumentHost(this), new CanvasToolsHost(this), new AssistantHost(this), new LibraryHost(this), _documentAi);
+        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || DocumentActive), new DocumentHost(this), new CanvasToolsHost(this), new AssistantHost(this), new LibraryHost(this), _documentAi, new StylusInputHost(this));
         _pptStore = new PptInkFileStore(services.Settings.Automation.AutoSavedStrokesLocation);
         services.SettingsApplied += ApplyArchivePaths;
         _pptSession = new PptInkSession(services.Ppt, _pptStore)
@@ -129,6 +129,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 try
                 {
                     Overlay.Window.CancelInput();
+                    controller.NotifyInputContextChanging();
                     controller.EndPlayback();
                     controller.FinishDotAnimations();
                     controller.ClearSelection();

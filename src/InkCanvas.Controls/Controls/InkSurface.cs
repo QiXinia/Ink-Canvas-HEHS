@@ -58,7 +58,7 @@ public sealed class InkSurface : UserControl, IDisposable
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
         PointerEntered += OnPointerEntered;
-        PointerExited += (_, args) => _controller?.HideEraserPreview(args.Pointer.PointerId);
+        PointerExited += (_, args) => _controller?.OnPointerExited(args.Pointer.PointerId);
         Unloaded += (_, _) => _controller?.HideEraserPreview();
         PointerReleased += OnPointerReleased;
         PointerCanceled += OnPointerCanceled;
@@ -265,6 +265,10 @@ public sealed class InkSurface : UserControl, IDisposable
             (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0)
         {
             HasPressure = hasPressure,
+            BarrelButton = kind == OverlayPointerKind.Pen && props.IsBarrelButtonPressed,
+            SecondaryBarrelButton = kind == OverlayPointerKind.Pen && props.IsMiddleButtonPressed,
+            Inverted = kind == OverlayPointerKind.Pen && props.IsInverted,
+            EraserButton = kind == OverlayPointerKind.Pen && props.IsEraser,
             TiltX = kind == OverlayPointerKind.Pen ? props.XTilt : 0,
             TiltY = kind == OverlayPointerKind.Pen ? props.YTilt : 0,
         };

@@ -23,6 +23,10 @@ public readonly record struct OverlayPointer(
     public float TiltX { get; init; }
     public float TiltY { get; init; }
     public bool IsIntermediate { get; init; }
+    public bool BarrelButton { get; init; }
+    public bool SecondaryBarrelButton { get; init; }
+    public bool Inverted { get; init; }
+    public bool EraserButton { get; init; }
 }
 
 /// <summary>
@@ -595,6 +599,10 @@ public sealed class LayeredInkWindow : IDisposable
                         HasPressure = (pen.penMask & 1) != 0,
                         TiltX = (pen.penMask & 4) != 0 ? Math.Clamp(pen.tiltX, -89, 89) : 0,
                         TiltY = (pen.penMask & 8) != 0 ? Math.Clamp(pen.tiltY, -89, 89) : 0,
+                        BarrelButton = (pen.penFlags & 1) != 0,
+                        SecondaryBarrelButton = (pen.pointerInfo.pointerFlags & 0x0040) != 0,
+                        Inverted = (pen.penFlags & 2) != 0,
+                        EraserButton = (pen.penFlags & 4) != 0,
                     };
                     PointerMove?.Invoke(point);
                 }
@@ -662,7 +670,7 @@ public sealed class LayeredInkWindow : IDisposable
         var screen = ScreenAt(info.ptPixelLocation.X, info.ptPixelLocation.Y);
 
         float pressure = 0.5f, cw = 0, ch = 0, tiltX = 0, tiltY = 0;
-        bool hasPressure = false;
+        bool hasPressure = false, barrel = false, inverted = false, eraser = false;
         var kind = OverlayPointerKind.Mouse;
 
         if (info.pointerType == NativeMethods.POINTER_INPUT_TYPE_PEN)
@@ -671,6 +679,9 @@ public sealed class LayeredInkWindow : IDisposable
             if (NativeMethods.GetPointerPenInfo(id, out var pen))
             {
                 hasPressure = (pen.penMask & 1) != 0;
+                barrel = (pen.penFlags & 1) != 0;
+                inverted = (pen.penFlags & 2) != 0;
+                eraser = (pen.penFlags & 4) != 0;
                 pressure = hasPressure ? Math.Clamp(pen.pressure / 1024f, 0f, 1f) : .5f;
                 if ((pen.penMask & 4) != 0) tiltX = Math.Clamp(pen.tiltX, -89, 89);
                 if ((pen.penMask & 8) != 0) tiltY = Math.Clamp(pen.tiltY, -89, 89);
@@ -690,7 +701,9 @@ public sealed class LayeredInkWindow : IDisposable
         var pt = info.ptPixelLocation;
         sample = new OverlayPointer(id, (pt.X - X) / DpiScale, (pt.Y - Y) / DpiScale,
             pressure, cw, ch, kind, info.dwTime, NativeMethods.GetKeyState(0x10) < 0, NativeMethods.GetKeyState(0x11) < 0)
-            { InputSurface = screen.Handle.ToInt64(), HasPressure = hasPressure, TiltX = tiltX, TiltY = tiltY };
+            { InputSurface = screen.Handle.ToInt64(), HasPressure = hasPressure, TiltX = tiltX, TiltY = tiltY,
+                BarrelButton = barrel, SecondaryBarrelButton = (info.pointerFlags & 0x0040) != 0,
+                Inverted = inverted, EraserButton = eraser };
         return true;
     }
 

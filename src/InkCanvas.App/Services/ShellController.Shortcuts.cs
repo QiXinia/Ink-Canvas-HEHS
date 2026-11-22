@@ -15,9 +15,9 @@ public sealed partial class ShellController
 
     internal bool CanvasShortcutsEnabled => IsCanvasShortcutContext(NativeMethods.GetForegroundWindow());
 
-    internal bool IsCanvasShortcutContext(nint foreground)
+    internal bool IsCanvasShortcutContext(nint foreground, bool allowPan = false)
     {
-        if (_disposed || _exiting || _imagePicking || _settingsOpening || _exitPromptOpen || ActiveController.Tool == InkTool.Pan) return false;
+        if (_disposed || _exiting || _imagePicking || _settingsOpening || _exitPromptOpen || !allowPan && ActiveController.Tool == InkTool.Pan) return false;
         Window canvas = (Window)_board ?? (DocumentActive ? _documentWorkspace.Window : null);
         if (canvas is not null)
         {

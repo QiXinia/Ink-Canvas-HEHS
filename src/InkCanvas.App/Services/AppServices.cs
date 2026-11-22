@@ -87,7 +87,7 @@ public sealed class AppServices : IDisposable
     public ExtensionPreferencesStore ExtensionStore { get; }
     public ExtensionPreferences ExtensionPreferences { get; }
     private bool _modulesStarted;
-    public void StartModules(IScreenTrackingHost host, IDocumentWorkspaceHost documents = null, ICanvasToolsHost canvasTools = null, IAiAssistantHost assistant = null, IBoardLibraryHost library = null, IAiDocumentHost documentAi = null)
+    public void StartModules(IScreenTrackingHost host, IDocumentWorkspaceHost documents = null, ICanvasToolsHost canvasTools = null, IAiAssistantHost assistant = null, IBoardLibraryHost library = null, IAiDocumentHost documentAi = null, IStylusInputHost stylus = null)
     {
         if (_modulesStarted) return; _modulesStarted = true;
         Modules.AddService<IModuleSettingsRegistry>(ModuleSettings);
@@ -100,6 +100,8 @@ public sealed class AppServices : IDisposable
         if (assistant is not null) Modules.AddService(assistant);
         if (documentAi is not null) Modules.AddService(documentAi);
         if (library is not null) Modules.AddService(library);
+        if (stylus is not null) Modules.AddService(stylus);
+        if (stylus is not null) Modules.RegisterPackage("inkcanvas.stylus", "手写笔与数位板", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.stylus"));
         if (library is not null) Modules.RegisterPackage("inkcanvas.library", "文稿库", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.library"));
         Modules.RegisterPackage("inkcanvas.screen-tracking", "屏幕内容跟随", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.screen-tracking"));
         if (documents is not null) Modules.RegisterPackage("inkcanvas.pdf", "PDF 阅读与批注", ExtensionInstalls.ModuleManifest(AppContext.BaseDirectory, "inkcanvas.pdf"));
