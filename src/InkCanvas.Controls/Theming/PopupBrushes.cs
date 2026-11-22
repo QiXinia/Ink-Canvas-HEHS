@@ -95,18 +95,18 @@ public static class PopupBrushes
         ? new SolidColorBrush(Color.FromArgb(128, 33, 86, 201))
         : new SolidColorBrush(Color.FromArgb(64, 88, 139, 252));
 
-    /// <summary>FloatBarButtonBackgroundPointerOverKey: #66FFFFFF light / #2200CDCD dark.</summary>
+    /// <summary>Neutral Fluent hover surface.</summary>
     public static SolidColorBrush FloatBarButtonHover(int theme) => IsDark(theme)
-        ? new SolidColorBrush(Color.FromArgb(34, 0, 205, 205))
-        : new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+        ? new SolidColorBrush(Color.FromArgb(24, 255, 255, 255))
+        : new SolidColorBrush(Color.FromArgb(14, 0, 0, 0));
 
-    /// <summary>FloatBarButtonButtonBackgroundPressedKey: #99FFFFFF light / #4400CDCD dark.</summary>
+    /// <summary>Neutral Fluent pressed surface.</summary>
     public static SolidColorBrush FloatBarButtonPressed(int theme) => IsDark(theme)
-        ? new SolidColorBrush(Color.FromArgb(68, 0, 205, 205))
-        : new SolidColorBrush(Color.FromArgb(153, 255, 255, 255));
+        ? new SolidColorBrush(Color.FromArgb(16, 255, 255, 255))
+        : new SolidColorBrush(Color.FromArgb(24, 0, 0, 0));
 
-    /// <summary>Selected tool: check-box-background.png #1296DB at Opacity 0.5 (both themes).</summary>
-    public static SolidColorBrush FloatBarSelected() => new(Color.FromArgb(128, 18, 150, 219));
+    /// <summary>Neutral surface used by compatible module selection properties.</summary>
+    public static SolidColorBrush FloatBarSelected() => new(Color.FromArgb(20, 128, 128, 128));
 
     /// <summary>IsColorfulViewboxFloatingBar gradient: #9580B0FF → #95C0FFC0, (0,0)→(1,1).</summary>
     public static LinearGradientBrush FloatBarColorful()

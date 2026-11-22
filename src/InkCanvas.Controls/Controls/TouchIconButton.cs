@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using Microsoft.UI.Xaml.Automation;
 
 namespace InkCanvas.Controls.Controls;
 
@@ -10,10 +11,8 @@ namespace InkCanvas.Controls.Controls;
 /// An icon button that meets the touch contract: at least a 40x40 hit target, no hover-only
 /// affordance, a visible selected state, and Composition-driven press feedback.
 /// <para>
-/// Opt-in WPF floating-bar styling: <see cref="Label"/> adds the 8px caption under the icon,
-/// <see cref="SelectionBackground"/> / <see cref="ContentForeground"/> / <see cref="HoverBackground"/>
-/// replace the token brushes with the exact upstream FloatBar palette. Defaults keep the
-/// original token look so other windows (replay transport) are unaffected.
+/// <see cref="Label"/> adds a caption under the icon. Foreground and pointer-state brushes
+/// can be supplied by a toolbar, while selection uses the shared Fluent indicator.
 /// </para>
 /// </summary>
 public sealed class TouchIconButton : Button
@@ -34,6 +33,8 @@ public sealed class TouchIconButton : Button
     private readonly Viewbox _glyphHost;
     private readonly FontIcon _aiText;
     private readonly Border _contentBorder;
+    private SelectionIndicator _selection;
+    private double _selectionCornerRadius = 4;
     private readonly List<FontIcon> _icons = new();
     private TextBlock _label;
     private UIElement _customContent;
@@ -85,6 +86,7 @@ public sealed class TouchIconButton : Button
         };
         ActualThemeChanged += (_, _) => ApplyVisualState();
         Content = _contentBorder;
+        IsEnabledChanged += (_, _) => ApplyVisualState();
         RebuildContent();
 
         PointerPressed += (_, _) => { if (Motion.AnimationsEnabled) Motion.Pulse(this, 0.92f); };
@@ -169,14 +171,26 @@ public sealed class TouchIconButton : Button
     /// <summary>Exact FloatBarForeground; when set overrides the token foreground in both states.</summary>
     public Brush ContentForeground { get; set; }
 
-    /// <summary>WPF check-box-background selection wash; when set the button body stays transparent.</summary>
+    /// <summary>Retained for module compatibility. Selection is drawn by the shared Fluent indicator.</summary>
     public Brush SelectionBackground { get; set; }
 
-    /// <summary>Corner radius of the selection wash / content border.</summary>
+    /// <summary>Corner radius of the selected tool surface.</summary>
     public double SelectionCornerRadius
     {
-        get => _contentBorder.CornerRadius.TopLeft;
-        set => _contentBorder.CornerRadius = new CornerRadius(value);
+        get => _selectionCornerRadius;
+        set
+        {
+            _selectionCornerRadius = value;
+            if (_selection is not null) _selection.CornerRadius = new CornerRadius(value);
+        }
+    }
+
+    protected override void OnApplyTemplate()
+    {
+        base.OnApplyTemplate();
+        _selection = GetTemplateChild("SelectionIndicator") as SelectionIndicator;
+        if (_selection is not null) _selection.CornerRadius = new CornerRadius(_selectionCornerRadius);
+        ApplyVisualState();
     }
 
     /// <summary>FloatBarButton hover/pressed brushes, injected as per-instance template resources.</summary>
@@ -339,25 +353,17 @@ public sealed class TouchIconButton : Button
     private void ApplyVisualState()
     {
         Brush fg = ContentForeground
-            ?? ThemeBrushes.Resolve(this, IsSelected ? "IcAccentBrush" : "IcTextPrimaryBrush");
+            ?? ThemeBrushes.Resolve(this, "IcTextPrimaryBrush");
         _aiText.Foreground = fg;
         foreach (var icon in _icons) icon.Foreground = fg;
         if (_label is not null) _label.Foreground = fg;
 
-        if (SelectionBackground is not null)
+        if (_selection is not null)
         {
-            // WPF paints the selection wash behind the icon stack; the button body keeps its
-            // own (transparent or solid) background and hover comes from template resources.
-            _contentBorder.Background = IsSelected
-                ? SelectionBackground
-                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            _selection.IsSelected = IsSelected;
+            _selection.Opacity = IsEnabled ? 1 : .45;
         }
-        else
-        {
-            Background = IsSelected
-                ? ThemeBrushes.Resolve(this, "IcAccentSoftBrush")
-                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        }
+        AutomationProperties.SetItemStatus(this, IsSelected ? "已选中" : "");
         if (_customIconOutline is not null) _customIconOutline.Stroke = fg;
     }
 }

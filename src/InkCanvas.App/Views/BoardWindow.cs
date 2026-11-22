@@ -113,9 +113,8 @@ public sealed partial class BoardWindow : Window
     private SolidColorBrush _barBorder = new(Windows.UI.Color.FromArgb(153, 255, 255, 255));
     private SolidColorBrush _barFg = new(Microsoft.UI.Colors.White);
     private SolidColorBrush _barTitleBg = new(Windows.UI.Color.FromArgb(128, 33, 86, 201));
-    private SolidColorBrush _hoverBg = new(Windows.UI.Color.FromArgb(204, 0, 40, 40));
-    private SolidColorBrush _pressedBg = new(Windows.UI.Color.FromArgb(212, 0, 55, 55));
-    private SolidColorBrush _selectedBg = new(Windows.UI.Color.FromArgb(200, 10, 40, 70));
+    private SolidColorBrush _hoverBg = new(Windows.UI.Color.FromArgb(24, 255, 255, 255));
+    private SolidColorBrush _pressedBg = new(Windows.UI.Color.FromArgb(16, 255, 255, 255));
     private int _boardTheme = 2;
 
     private InkController _boundController;
@@ -451,7 +450,9 @@ public sealed partial class BoardWindow : Window
         var content = new Grid { Margin = new Thickness(5) };
         content.Children.Add(iconHost);
         content.Children.Add(labelText);
-        var face = new Border { BorderThickness = border, CornerRadius = corner, Child = content };
+        var selection = new SelectionIndicator { Margin = new Thickness(2), CornerRadius = new CornerRadius(4) };
+        var face = new Border { BorderThickness = border, CornerRadius = corner,
+            Child = new Grid { Children = { selection, content } } };
 
         var button = new Button
         {
@@ -467,7 +468,7 @@ public sealed partial class BoardWindow : Window
         ToolTipService.SetToolTip(button, label);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label);
         if (onClick is not null) button.Click += (_, _) => onClick();
-        var cell = new ToolCell { Button = button, Face = face, Icon = icon, BadgeIcon = badgeIcon, Label = labelText, Content = content };
+        var cell = new ToolCell { Button = button, Face = face, Icon = icon, BadgeIcon = badgeIcon, Label = labelText, Content = content, Selection = selection };
         button.PointerEntered += (_, _) => { cell.Hovered = true; RefreshCellFace(cell); };
         button.PointerExited += (_, _) => { cell.Hovered = false; cell.Pressed = false; RefreshCellFace(cell); };
         button.PointerPressed += (_, _) => { cell.Pressed = true; RefreshCellFace(cell); };
@@ -498,13 +499,15 @@ public sealed partial class BoardWindow : Window
 
     private void RefreshCellFace(ToolCell cell)
     {
-        var brush = !cell.Button.IsEnabled ? _barBg : cell.Pressed ? _pressedBg : cell.Selected ? _selectedBg : cell.Hovered ? _hoverBg : _barBg;
+        var brush = !cell.Button.IsEnabled ? _barBg : cell.Pressed ? _pressedBg : cell.Hovered ? _hoverBg : _barBg;
         cell.Face.Background = CloneBrush(brush);
+        cell.Selection.IsSelected = cell.Selected;
+        cell.Selection.Opacity = cell.Button.IsEnabled ? 1 : .45;
+        cell.Selection.RequestedTheme = _boardTheme == 2 ? ElementTheme.Dark : ElementTheme.Light;
     }
 
     /// <summary>
-    /// Pins the WinUI button template states to the WPF board bar palette: transparent-state
-    /// hover/pressed tints (#00CDCD over the bar) and a stable foreground/border.
+    /// Keeps the board palette and neutral pointer feedback consistent across native buttons.
     /// </summary>
     private void ApplyButtonTheme(Button button)
     {
@@ -1465,9 +1468,8 @@ public sealed partial class BoardWindow : Window
         _barBorder = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(153, 255, 255, 255) : Windows.UI.Color.FromArgb(204, 0, 0, 0));
         _barFg = new SolidColorBrush(dark ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black);
         _barTitleBg = new SolidColorBrush(dark ? Windows.UI.Color.FromArgb(128, 33, 86, 201) : Windows.UI.Color.FromArgb(64, 88, 139, 252));
-        _hoverBg = Blend(_barBg, dark ? Windows.UI.Color.FromArgb(54, 0, 205, 205) : Windows.UI.Color.FromArgb(34, 0, 205, 205));
-        _pressedBg = Blend(_barBg, dark ? Windows.UI.Color.FromArgb(85, 0, 205, 205) : Windows.UI.Color.FromArgb(68, 0, 205, 205));
-        _selectedBg = Blend(_barBg, Windows.UI.Color.FromArgb(90, 0, 102, 191));
+        _hoverBg = Blend(_barBg, PopupBrushes.FloatBarButtonHover(_boardTheme).Color);
+        _pressedBg = Blend(_barBg, PopupBrushes.FloatBarButtonPressed(_boardTheme).Color);
 
         foreach (var cell in _allCells) ApplyCellTheme(cell);
         foreach (var border in _indicatorBorders)
@@ -2401,6 +2403,7 @@ public sealed partial class BoardWindow : Window
     {
         public Button Button { get; init; }
         public Border Face { get; init; }
+        public SelectionIndicator Selection { get; init; }
         public bool Selected, Hovered, Pressed;
         public FontIcon Icon { get; init; }
         public FontIcon BadgeIcon { get; init; }

@@ -104,11 +104,6 @@ public sealed partial class LotteryWindow : Window
             {
                 button.IsEnabled = !_rolling && count <= remaining;
                 button.IsSelected = count == DrawCount;
-                button.SelectionBackground = PopupBrushes.BadgeBackground(_root.ActualTheme == ElementTheme.Dark ? 2 : 1);
-                button.Background = count == DrawCount ? button.SelectionBackground
-                    : PopupBrushes.Surface(_root.ActualTheme == ElementTheme.Dark ? 2 : 1);
-                button.Foreground = count == DrawCount ? PopupBrushes.BadgeForeground(_root.ActualTheme == ElementTheme.Dark ? 2 : 1)
-                    : PopupBrushes.Foreground(_root.ActualTheme == ElementTheme.Dark ? 2 : 1);
                 button.RefreshVisual();
             }
             _copy.IsEnabled = !_rolling && _lastResult.Count > 0;

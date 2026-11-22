@@ -17,7 +17,6 @@ internal static class ClassroomControls
             Content = text, FontSize = 18, MinHeight = 56, MinWidth = 56,
             HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(12, 8, 12, 8),
             CornerRadius = new CornerRadius(8), BorderThickness = new Thickness(primary ? 0 : 1),
-            SelectionBackground = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
         };
         AutomationProperties.SetName(button, text);
         if (glyph is not null) SetButtonContent(button, text, glyph);
@@ -25,9 +24,8 @@ internal static class ClassroomControls
         void Apply()
         {
             int theme = button.ActualTheme == ElementTheme.Dark ? 2 : 1;
-            var foreground = primary || button.IsSelected ? new SolidColorBrush(Microsoft.UI.Colors.White) : PopupBrushes.Foreground(theme);
-            button.Background = button.IsSelected ? PopupBrushes.BadgeBackground(theme)
-                : primary ? PopupBrushes.Accent() : PopupBrushes.Surface(theme);
+            var foreground = primary ? new SolidColorBrush(Microsoft.UI.Colors.White) : PopupBrushes.Foreground(theme);
+            button.Background = primary ? PopupBrushes.Accent() : PopupBrushes.Surface(theme);
             button.Foreground = foreground;
             button.BorderBrush = new SolidColorBrush(Color.FromArgb(48, 128, 128, 128));
             button.Resources["ButtonForegroundPointerOver"] = foreground;

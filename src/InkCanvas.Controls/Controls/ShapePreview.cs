@@ -630,6 +630,7 @@ public sealed class ShapePreview : UserControl
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Tag = item,
         };
+        cell.Children.Add(new SelectionIndicator { CornerRadius = new CornerRadius(4) });
         cell.Children.Add(icon);
         cell.Children.Add(new FontIcon { Glyph = "\uF60E", FontSize = 9,
             FontFamily = IconFontStyle.Font,
@@ -670,7 +671,7 @@ public sealed class ShapePreview : UserControl
         {
             var item = (ShapeMenuItem)cell.Tag;
             bool selected = _controller.Tool == InkTool.Shape && _controller.ShapeKind == item.Kind;
-            cell.Background = selected ? PopupBrushes.FloatBarSelected() : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            cell.Children.OfType<SelectionIndicator>().Single().IsSelected = selected;
             cell.Children.OfType<FontIcon>().Single().Visibility = selected && _controller.StickyShape ? Visibility.Visible : Visibility.Collapsed;
             AutomationProperties.SetItemStatus(cell, selected ? _controller.StickyShape ? "连续绘制" : "已选中" : "");
         }
