@@ -1,4 +1,5 @@
 using InkCanvas.App.Services;
+using InkCanvas.Platform.Ai;
 using Microsoft.UI.Xaml;
 
 namespace InkCanvas.App;
@@ -22,6 +23,21 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var commandLineArgs = Environment.GetCommandLineArgs();
+        AiConfig.ApplyOverrides(
+            ReadOption(commandLineArgs, "--ai-endpoint="),
+            ReadOption(commandLineArgs, "--ai-model="),
+            ReadOption(commandLineArgs, "--ai-timeout-ms="),
+            ReadOption(commandLineArgs, "--ai-image-timeout-ms="));
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            "[AI] " + AiConfig.ReadFromEnvironment().Summarize(), Core.Diagnostics.LogType.Info);
+
+        static string ReadOption(string[] args, string prefix)
+        {
+            string match = args.FirstOrDefault(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            return match is null ? "" : match[prefix.Length..];
+        }
+
         var sideBoardLongCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--sideboardcheck-long=", StringComparison.OrdinalIgnoreCase));
         if (sideBoardLongCheck is not null) { _ = Diagnostics.SideBoardRegression.Run(sideBoardLongCheck["--sideboardcheck-long=".Length..], cycles: 500); return; }
         var sideBoardCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--sideboardcheck=", StringComparison.OrdinalIgnoreCase));

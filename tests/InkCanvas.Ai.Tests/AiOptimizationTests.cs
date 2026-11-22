@@ -7,6 +7,7 @@ using Xunit;
 
 namespace InkCanvas.Ai.Tests;
 
+[Collection("AiConfigEnvironment")]
 public sealed class AiOptimizationTests
 {
     // ---------- 局部纠错 ----------
