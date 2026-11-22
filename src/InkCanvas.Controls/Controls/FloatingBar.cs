@@ -747,9 +747,10 @@ public sealed class FloatingBar : UserControl
         icon.VerticalAlignment = VerticalAlignment.Center;
         var text = new TextBlock { Text = label, FontSize = 12 * S, VerticalAlignment = VerticalAlignment.Center };
         var toggle = new ToggleSwitch { MinWidth = 0, Width = 42 * S, OnContent = "", OffContent = "", VerticalAlignment = VerticalAlignment.Center };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, label);
         toggle.Toggled += (_, _) =>
         {
-            if (_syncingGestures) return;
+            if (_syncingGestures || !toggle.IsEnabled) return;
             setter(toggle.IsOn);
             if (Controller is not null)
             {
@@ -1001,6 +1002,8 @@ public sealed class FloatingBar : UserControl
         bool multi = Gesture.IsEnableMultiTouchMode;
         for (int i = 1; i < _gestureOptionRows.Count; i++)
             _gestureOptionRows[i].Opacity = multi ? 0.5 : 1;
+        if (_translateSwitch is not null) _translateSwitch.IsEnabled = !multi;
+        if (_zoomSwitch is not null) _zoomSwitch.IsEnabled = !multi;
         if (_rotateSwitch is not null) _rotateSwitch.IsEnabled = SupportsViewRotation && !multi;
         if (_gestureButton is not null)
             _gestureButton.Opacity = multi || !Gesture.IsEnableTwoFingerGesture ? 0.5 : 1;
