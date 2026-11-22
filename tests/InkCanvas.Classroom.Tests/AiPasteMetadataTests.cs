@@ -230,4 +230,49 @@ public sealed class AiPasteMetadataTests
         Assert.Equal("", present.Metadata);
         Assert.Single(board.CurrentImages);
     }
+
+    [Fact]
+    public void Serialize_RoundTripsBoardPlanMetadata()
+    {
+        var metadata = new AiPasteMetadata
+        {
+            Kind = AiPasteKind.BoardPlan,
+            Schema = 2,
+            Latex = "x^2 - 1",
+            Text = "标题",
+            Lines = new List<string> { "第一行", "第二行" },
+            StyleJson = "{\"fontSize\":24,\"columns\":2}",
+            Instruction = "整理当前页板书",
+            CreatedAt = 1730000000000,
+            Notes = new List<string> { "第 2 行置信度较低" },
+        };
+
+        string json = metadata.Serialize();
+        var parsed = AiPasteMetadata.TryParse(json);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(AiPasteKind.BoardPlan, parsed.Kind);
+        Assert.Equal(2, parsed.Schema);
+        Assert.Equal("x^2 - 1", parsed.Latex);
+        Assert.Equal("标题", parsed.Text);
+        Assert.Equal(2, parsed.Lines.Count);
+        Assert.Equal("{\"fontSize\":24,\"columns\":2}", parsed.StyleJson);
+        Assert.Equal("整理当前页板书", parsed.Instruction);
+        Assert.Equal(1730000000000, parsed.CreatedAt);
+        Assert.Single(parsed.Notes);
+    }
+
+    [Fact]
+    public void TryParse_LegacyJson_DefaultsBoardPlanFields()
+    {
+        var parsed = AiPasteMetadata.TryParse("{\"kind\":1,\"text\":\"旧卡片\",\"lines\":[\"a\"]}");
+
+        Assert.NotNull(parsed);
+        Assert.Equal(AiPasteKind.Steps, parsed.Kind);
+        Assert.Equal(1, parsed.Schema);
+        Assert.Equal("", parsed.StyleJson);
+        Assert.Equal("", parsed.Instruction);
+        Assert.Equal(0, parsed.CreatedAt);
+        Assert.Empty(parsed.Notes);
+    }
 }
