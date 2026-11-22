@@ -76,7 +76,7 @@ public sealed class SelectionToolbarWindow : Window
     {
         var controller = _shell.Services.OverlayInk;
         if (!_shell.DesktopSelectionAvailable || !controller.HasSelection || controller.Playback is not null
-            || controller.IsMarqueeSelecting || controller.IsRotatingSelection)
+            || controller.IsRegionSelecting || controller.IsRotatingSelection)
         {
             Hide();
             return;

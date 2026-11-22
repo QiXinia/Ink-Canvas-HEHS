@@ -395,7 +395,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_disposed || _exiting) return;
         var ink = Services.OverlayInk;
         if (_selectionToolbar is null && DesktopSelectionAvailable && ink.HasSelection && ink.Playback is null
-            && !ink.IsMarqueeSelecting && !ink.IsRotatingSelection)
+            && !ink.IsRegionSelecting && !ink.IsRotatingSelection)
         {
             var toolbar = new SelectionToolbarWindow(this);
             _selectionToolbar = toolbar;

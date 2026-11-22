@@ -171,6 +171,7 @@ public sealed class AppServices : IDisposable
 
     public void ConfigureController(InkController controller)
     {
+        controller.SelectionMode = Enum.IsDefined(Settings.Canvas.SelectionMode) ? Settings.Canvas.SelectionMode : Core.Selection.InkSelectionMode.Rectangle;
         var taper = OriginalMenuCatalog.ToTaperKind(Settings.Canvas.InkStyle);
         controller.ConfigurePenWidths((float)Math.Clamp(Settings.Canvas.InkWidth, .5, 60),
             (float)Math.Clamp(Settings.Canvas.HighlighterWidth ?? Settings.Canvas.InkWidth, .5, 60));

@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var selectionPaletteCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--selectionpalettecheck=", StringComparison.Ordinal));
+        if (selectionPaletteCheck is not null) { _ = Diagnostics.SelectionPaletteRegression.Run(selectionPaletteCheck["--selectionpalettecheck=".Length..]); return; }
         var customColorsCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--customcolorscheck=", StringComparison.Ordinal));
         if (customColorsCheck is not null) { _ = Diagnostics.CustomColorsRegression.Run(customColorsCheck["--customcolorscheck=".Length..]); return; }
         if (Environment.GetCommandLineArgs().Contains("--register-file-associations", StringComparer.OrdinalIgnoreCase))

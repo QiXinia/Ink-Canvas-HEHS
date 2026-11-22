@@ -149,6 +149,7 @@ public sealed class InkSceneRenderer : IDisposable
         Vector2 Surface(Vector2 point) => Vector2.Transform(point, screenToSurface);
         var accent = Windows.UI.Color.FromArgb(255, 0, 120, 212);
         var fill = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+        if (controller.IsLassoSelecting) DrawLasso(session, controller, view);
         if (controller.IsMarqueeSelecting && !controller.MarqueeBounds.IsEmpty)
         {
             var bounds = controller.MarqueeBounds;

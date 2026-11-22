@@ -350,7 +350,7 @@ public sealed class OverlayInkPresenter : IDisposable
         if (_window.PixelBuffer == IntPtr.Zero) return;
 
         if (!InkVisible || _trackingSuppressed || (_controller.Document.Count == 0 && !ImageSceneRenderer.Images(_controller).Any() && !_controller.LiveStrokes.Any()
-            && !_controller.ShapePreview.Any() && _controller.ExtensionPreview.Count == 0 && !_controller.HasSelection && !_controller.IsMarqueeSelecting && !_controller.IsLassoErasing
+            && !_controller.ShapePreview.Any() && _controller.ExtensionPreview.Count == 0 && !_controller.HasSelection && !_controller.IsRegionSelecting && !_controller.IsLassoErasing
             && !_controller.IsEraserPreviewVisible && !_controller.IsPenCursorVisible))
         {
             // Keep alpha at one so the layered window remains hit-testable. The window's
@@ -387,7 +387,7 @@ public sealed class OverlayInkPresenter : IDisposable
         bool incremental = _controller.Playback is null && _controller.PreviewStrokes is null
             && !_controller.ShapePreview.Any() && _controller.RecognitionPreview.Count == 0
             && _controller.ExtensionPreview.Count == 0 && _controller.DotAnimations.Count == 0
-            && !_controller.HasSelection && !_controller.IsMarqueeSelecting && !_controller.IsLassoErasing
+            && !_controller.HasSelection && !_controller.IsRegionSelecting && !_controller.IsLassoErasing
             && !_controller.IsEraserPreviewVisible && !_controller.IsPenCursorVisible;
         var region = LiveRegion(incremental);
         if (region.Width > 0 && region.Height > 0)

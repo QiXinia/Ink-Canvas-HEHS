@@ -232,6 +232,7 @@ public enum ColorPaletteKind { Light, Dark, Custom }
 
 public sealed class CanvasSettings
 {
+    [JsonPropertyName("selectionMode")] public Selection.InkSelectionMode SelectionMode { get; set; }
     [JsonPropertyName("enableCustomColorPalette")] public bool EnableCustomColorPalette { get; set; } = true;
     [JsonPropertyName("colorPalette")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

@@ -57,7 +57,7 @@ public interface IShellActions
 }
 
 /// <summary>The two WPF sub-popups that live in their own window above the bar.</summary>
-public enum BarPanelKind { More, Gesture, Eraser }
+public enum BarPanelKind { More, Gesture, Eraser, Selection }
 
 /// <summary>
 /// 1:1 visual port of the WPF 浮动批注主窗口 (MainWindow.xaml ViewboxFloatingBar). The original
@@ -122,7 +122,7 @@ public sealed class FloatingBar : UserControl
     public double MainExpansion { get; private set; } = 1;
     public bool IsMainCollapseAnimating => _collapseTimer?.IsRunning == true;
     public event Action MainCollapseAnimationChanged;
-    private bool _moreOpen, _gestureOpen, _eraserOpen;
+    private bool _moreOpen, _gestureOpen, _eraserOpen, _selectionOpen;
     private InkController _controller;
     private int _theme = 1;
     private Brush _fg, _bg, _border, _hover, _pressed, _selected;
@@ -243,6 +243,7 @@ public sealed class FloatingBar : UserControl
     {
         if (kind == BarPanelKind.More) { _moreOpen = false; _insertFlyout?.Hide(); _insertFlyout = null; }
         else if (kind == BarPanelKind.Gesture) _gestureOpen = false;
+        else if (kind == BarPanelKind.Selection) _selectionOpen = false;
         else _eraserOpen = false;
     }
 
@@ -255,6 +256,17 @@ public sealed class FloatingBar : UserControl
 
     /// <summary>The 手势选项 rows, hosted by <see cref="BarPanelKind.Gesture"/> popup window.</summary>
     public UIElement CreateGesturePanelContent() => _gestureRows;
+
+    public UIElement CreateSelectionPanelContent()
+    {
+        var palette = new SelectionPalette(() => Controller, Theme);
+        palette.ModePicked += mode =>
+        {
+            Cfg.Canvas.SelectionMode = mode;
+            SettingsEdited?.Invoke();
+        };
+        return palette;
+    }
 
     public UIElement CreateEraserPanelContent()
     {
@@ -297,6 +309,8 @@ public sealed class FloatingBar : UserControl
         _moreOpen = false;
         _gestureOpen = false;
         _eraserOpen = false;
+        _selectionOpen = false;
+        PanelRequested?.Invoke(BarPanelKind.Selection, false);
         PanelRequested?.Invoke(BarPanelKind.Eraser, false);
         PanelRequested?.Invoke(BarPanelKind.More, false);
         PanelRequested?.Invoke(BarPanelKind.Gesture, false);
@@ -328,6 +342,7 @@ public sealed class FloatingBar : UserControl
     {
         InkTool.Highlighter => _highlighterButton,
         InkTool.Shape => _shapeButton,
+        InkTool.Select => _selectButton,
         InkTool.Eraser => _eraserButton,
         _ => _penButton,
     };
@@ -337,6 +352,7 @@ public sealed class FloatingBar : UserControl
     {
         BarPanelKind.More => _toolsButton,
         BarPanelKind.Eraser => _eraserButton,
+        BarPanelKind.Selection => _selectButton,
         _ => _gestureButton,
     };
 
@@ -455,7 +471,15 @@ public sealed class FloatingBar : UserControl
             _eraserOpen = !_eraserOpen;
             PanelRequested?.Invoke(BarPanelKind.Eraser, _eraserOpen);
         });
-        _selectButton = AddPrimary(_canvasControls, Glyphs.SelectWpf, "选择", "选择 — 快捷键 Alt+S", () => SetTool(InkTool.Select));
+        _selectButton = AddPrimary(_canvasControls, Glyphs.SelectWpf, "选择", "选择（选中后再次点击全选并打开选项）— 快捷键 Alt+S", () =>
+        {
+            bool active = !ClickThroughActive && Controller?.Tool == InkTool.Select;
+            SetTool(InkTool.Select);
+            if (!active) return;
+            _selectionOpen = !_selectionOpen;
+            if (_selectionOpen) Controller.SelectAll();
+            PanelRequested?.Invoke(BarPanelKind.Selection, _selectionOpen);
+        });
         _shapeButton = AddPrimary(_canvasControls, Glyphs.ShapesWpf, "图形", "图形（选中后再次点击打开选项）", () =>
         {
             bool active = !ClickThroughActive && Controller?.Tool == InkTool.Shape;
@@ -849,6 +873,11 @@ public sealed class FloatingBar : UserControl
     public void RefreshSelection()
     {
         if (IsMainCollapseAnimating) FinishMainCollapseAnimation();
+        if (_selectionOpen && (Controller?.Tool != InkTool.Select || ClickThroughActive))
+        {
+            _selectionOpen = false;
+            PanelRequested?.Invoke(BarPanelKind.Selection, false);
+        }
         var tool = Controller?.Tool ?? InkTool.Pen;
         bool ink = !ClickThroughActive;
         if (_penButton is not null) _penButton.IsSelected = ink && tool == InkTool.Pen;

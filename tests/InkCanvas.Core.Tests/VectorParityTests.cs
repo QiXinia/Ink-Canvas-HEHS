@@ -1079,7 +1079,7 @@ public sealed class VectorParityTests
                 if (expected["randSettings"]?[field] is null) actual["randSettings"]?.AsObject().Remove(field);
             // Native pressure, palm routing and hold-to-shape settings extend the legacy schema.
             foreach (string field in new[] { "UseHardwarePressure", "UsePenTilt", "InkWash", "InkWashWidth",
-                "enableCustomColorPalette", "colorPalette", "customColors" })
+                "enableCustomColorPalette", "colorPalette", "customColors", "selectionMode" })
                 if (expected["canvas"]?[field] is null) actual["canvas"]?.AsObject().Remove(field);
             foreach (string field in new[] { "PenHasPriority", "PalmErases" })
                 if (expected["gesture"]?[field] is null) actual["gesture"]?.AsObject().Remove(field);

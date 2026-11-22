@@ -432,7 +432,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
     }
     private void UpdateSelection()
     {
-        if (!Controller.HasSelection || Controller.Tool != InkTool.Select || Controller.Playback is not null || Controller.IsMarqueeSelecting || Controller.IsRotatingSelection)
+        if (!Controller.HasSelection || Controller.Tool != InkTool.Select || Controller.Playback is not null || Controller.IsRegionSelecting || Controller.IsRotatingSelection)
         { _selectionBorder.Visibility = Visibility.Collapsed; return; }
         _selection.Refresh();
         _selectionBorder.Visibility = Visibility.Visible;

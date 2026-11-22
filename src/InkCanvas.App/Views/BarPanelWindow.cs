@@ -45,11 +45,12 @@ internal sealed class BarPanelWindow : Window
         _bar = bar;
         _kind = kind;
         _isMore = kind == BarPanelKind.More;
-        Title = kind switch { BarPanelKind.More => "更多设置", BarPanelKind.Eraser => "橡皮", _ => "手势选项" };
+        Title = kind switch { BarPanelKind.More => "更多设置", BarPanelKind.Eraser => "橡皮", BarPanelKind.Selection => "选择选项", _ => "手势选项" };
         _content = kind switch
         {
             BarPanelKind.More => bar.CreateMorePanelContent(),
             BarPanelKind.Eraser => bar.CreateEraserPanelContent(),
+            BarPanelKind.Selection => bar.CreateSelectionPanelContent(),
             _ => bar.CreateGesturePanelContent(),
         };
         _title = new PopupHeader(Title, _bar.Theme);
@@ -168,8 +169,8 @@ internal sealed class BarPanelWindow : Window
             // buttons + title band; gesture panel = icon+label+toggle rows under its title.
             if (_designW < 50 || _designH < 50)
             {
-                _designW = _kind == BarPanelKind.Eraser ? 244 : _isMore ? 256 : 180;
-                _designH = _kind == BarPanelKind.Eraser ? 168 : _isMore ? 236 : 165;
+                _designW = _kind is BarPanelKind.Eraser or BarPanelKind.Selection ? 244 : _isMore ? 256 : 180;
+                _designH = _kind is BarPanelKind.Eraser or BarPanelKind.Selection ? 180 : _isMore ? 236 : 165;
             }
             _measured = true;
         }

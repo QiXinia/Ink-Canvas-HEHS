@@ -301,6 +301,7 @@
           "enum": [0, 1, 2, null],
           "description": "0 亮系，1 暗系，2 自定义；未设置时沿用窗口配色"
         },
+        "selectionMode": { "type": "integer", "enum": [0, 1] },
         "customColors": {
           "type": ["array", "null"],
           "items": { "type": "integer", "minimum": 0, "maximum": 4294967295 },

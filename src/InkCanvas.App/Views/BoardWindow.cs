@@ -92,7 +92,7 @@ public sealed partial class BoardWindow : Window
     private readonly Viewbox _leftDock, _centerDock, _rightDock;
     private FlyoutBase _activeBoardFlyout;
     private PopupHeader _activeBoardHeader;
-    private Flyout _inkOptionsFlyout, _moreFlyout, _gestureFlyout, _eraserFlyout;
+    private Flyout _inkOptionsFlyout, _moreFlyout, _gestureFlyout, _eraserFlyout, _selectionFlyout;
     private readonly Dictionary<FlyoutBase, ToolOptionsWindow> _toolPanels = new();
     internal IEnumerable<ToolOptionsWindow> ToolPanels => _toolPanels.Values;
     public event Action CanvasInputBegan;
@@ -592,8 +592,21 @@ public sealed partial class BoardWindow : Window
 
     public void SelectOrSelectAll()
     {
-        if (CurrentController.Tool == InkTool.Select) CurrentController.SelectAll();
-        else SetTool(InkTool.Select);
+        if (CurrentController.Tool != InkTool.Select) { SetTool(InkTool.Select); return; }
+        if (ShowDetachedPanel(_selectionFlyout)) return;
+        if (_selectionFlyout is not null && ReferenceEquals(_activeBoardFlyout, _selectionFlyout)) { DismissBoardFlyout(); return; }
+        CurrentController.SelectAll();
+        var palette = new SelectionPalette(() => CurrentController, _boardTheme);
+        var header = new PopupHeader("选择选项", _boardTheme);
+        palette.ModePicked += mode =>
+        {
+            _services.Settings.Canvas.SelectionMode = mode;
+            _services.ApplySettings(); _services.SaveSettings();
+        };
+        _selectionFlyout = new Flyout { Placement = FlyoutPlacementMode.Top,
+            Content = new Border { Background = _barBg, BorderBrush = PopupBrushes.ToolPanelBorder(_boardTheme), BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8), Child = new StackPanel { Children = { header, palette } } } };
+        ShowBoardFlyout(_selectionFlyout, _selectCell.Button);
     }
 
     public void ShowPenPalette()
@@ -714,6 +727,7 @@ public sealed partial class BoardWindow : Window
             if (ReferenceEquals(_moreFlyout, flyout)) _moreFlyout = null;
             if (ReferenceEquals(_gestureFlyout, flyout)) _gestureFlyout = null;
             if (ReferenceEquals(_eraserFlyout, flyout)) _eraserFlyout = null;
+            if (ReferenceEquals(_selectionFlyout, flyout)) _selectionFlyout = null;
         };
         flyout.ShowAt(anchor);
     }
@@ -737,6 +751,7 @@ public sealed partial class BoardWindow : Window
         if (ReferenceEquals(_moreFlyout, current)) _moreFlyout = null;
         if (ReferenceEquals(_gestureFlyout, current)) _gestureFlyout = null;
         if (ReferenceEquals(_eraserFlyout, current)) _eraserFlyout = null;
+        if (ReferenceEquals(_selectionFlyout, current)) _selectionFlyout = null;
     }
 
     private bool ShowDetachedPanel(FlyoutBase flyout)
@@ -1824,7 +1839,7 @@ public sealed partial class BoardWindow : Window
             _viewScale = ExtractScale(t);
             PageNavigator.InvalidateCurrent();
         }
-        if (_board.Current.Playback is not null || _board.Current.IsMarqueeSelecting || _board.Current.IsRotatingSelection)
+        if (_board.Current.Playback is not null || _board.Current.IsRegionSelecting || _board.Current.IsRotatingSelection)
             _selectionPanel.Visibility = Visibility.Collapsed;
         else if (_selectionPanel.Visibility == Visibility.Visible) PlaceSelectionPanel();
     }
@@ -1864,7 +1879,7 @@ public sealed partial class BoardWindow : Window
     private void UpdateSelectionActions()
     {
         bool any = _board.Current.HasSelection;
-        _selectionPanel.Visibility = any && _board.Current.Playback is null && !_board.Current.IsMarqueeSelecting && !_board.Current.IsRotatingSelection
+        _selectionPanel.Visibility = any && _board.Current.Playback is null && !_board.Current.IsRegionSelecting && !_board.Current.IsRotatingSelection
             ? Visibility.Visible : Visibility.Collapsed;
         SyncCloneButton();
         if (any) PlaceSelectionPanel();
