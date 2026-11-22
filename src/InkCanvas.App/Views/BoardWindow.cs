@@ -140,6 +140,24 @@ private readonly Grid _surfaceHost;
     public InkController CurrentController => _board.Current;
     internal BoardMediaLayer MediaLayer => _media;
     internal IReadOnlyList<FrameworkElement> DockSurfaces => new FrameworkElement[] { _leftDock, _centerDock, _rightDock };
+    internal bool IsClosed => _closed;
+    internal Vector2 PasteViewport
+    {
+        get
+        {
+            double width = _surface.ActualWidth > 0 ? _surface.ActualWidth : _contentRoot.ActualWidth;
+            double height = _surface.ActualHeight > 0 ? _surface.ActualHeight : _contentRoot.ActualHeight;
+            if (width <= 0 || height <= 0)
+            {
+                var work = WindowChrome.GetWorkArea(this);
+                double dpi = WindowChrome.GetDpiScale(this);
+                width = work.Width / Math.Max(1, dpi);
+                height = work.Height / Math.Max(1, dpi);
+            }
+            return new Vector2((float)Math.Max(1, width), (float)Math.Max(1, height));
+        }
+    }
+    internal Matrix3x2 PasteViewTransform => _board.Current.ViewTransform;
 
     /// <summary>Raised after navigation or loading has rebound this window to its current page.</summary>
     public event Action CurrentPageChanged;
@@ -326,9 +344,12 @@ private readonly Grid _surfaceHost;
         var image = MakeCell(GlyphImage, "插入图片", async () => await InsertImageAsync(), 60, 22, midBorder);
         _undoCell = MakeCell(GlyphUndo, "撤销", () => _board.Current.Undo(), 60, 22, midBorder);
         _redoCell = MakeCell(GlyphRedo, "重做", () => _board.Current.Redo(), 60, 22, midBorder);
+        var aiCell = MakeCell(Glyphs.Ai, "AI 助教", () => _shell?.OpenAiAssistant(), 60, 22, midBorder);
+        var sideBoardCell = MakeCell(Glyphs.Add, "板中板", () => _shell?.ToggleSideBoard(), 60, 22, midBorder);
+        ToolTipService.SetToolTip(sideBoardCell.Button, "板中板 — 快捷键 Alt+N");
         _moreCell = MakeCell(GlyphMore, "更多", ShowMoreFlyout, 60, 24, midBorder);
         var exitC = MakeCell(GlyphExit, "退出", ExitBoard, 60, 24, lastBorder, lastCorner);
-        foreach (var cell in new[] { _gestureCell, canvas, _selectCell, _penCell, _eraserCell, clear, _shapeCell, image, _undoCell, _redoCell, _moreCell, exitC })
+        foreach (var cell in new[] { _gestureCell, canvas, _selectCell, _penCell, _eraserCell, clear, _shapeCell, image, _undoCell, _redoCell, aiCell, sideBoardCell, _moreCell, exitC })
             center.Children.Add(cell.Button);
 
         _toolCells.Add((_selectCell, () => _board.Current.Tool == InkTool.Select));
@@ -387,10 +408,20 @@ private readonly Grid _surfaceHost;
     private ToolCell MakeCell(string glyph, string label, Action onClick, double width, double glyphSize,
         Thickness border, CornerRadius corner = default, string badge = null, double badgeSize = 14)
     {
-        var icon = new FontIcon { Glyph = glyph, FontFamily = IconFont, FontSize = glyphSize, IsTextScaleFactorEnabled = false };
+        var icon = glyph == Glyphs.Ai ? null
+            : new FontIcon { Glyph = glyph, FontFamily = IconFont, FontSize = glyphSize, IsTextScaleFactorEnabled = false };
         FontIcon badgeIcon = null;
+        TextBlock aiLabel = null;
         UIElement iconHost;
-        if (badge is null)
+        if (glyph == Glyphs.Ai)
+        {
+            // AI is a sentinel glyph: render the shared AiGlyph label inside the same metric box.
+            aiLabel = AiGlyph.CreateLabel(AiGlyph.ButtonLabelSize, _barFg);
+            iconHost = new Viewbox { Width = 28, Height = 28, Stretch = Stretch.Uniform,
+                StretchDirection = StretchDirection.DownOnly, Child = aiLabel,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Top };
+        }
+        else if (badge is null)
         {
             icon.HorizontalAlignment = HorizontalAlignment.Center;
             icon.VerticalAlignment = VerticalAlignment.Center;
@@ -443,8 +474,9 @@ private readonly Grid _surfaceHost;
             VerticalContentAlignment = VerticalAlignment.Stretch,
         };
         ToolTipService.SetToolTip(button, label);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label);
         if (onClick is not null) button.Click += (_, _) => onClick();
-        var cell = new ToolCell { Button = button, Face = face, Icon = icon, BadgeIcon = badgeIcon, Label = labelText, Content = content };
+        var cell = new ToolCell { Button = button, Face = face, Icon = icon, AiLabel = aiLabel, BadgeIcon = badgeIcon, Label = labelText, Content = content };
         button.PointerEntered += (_, _) => { cell.Hovered = true; RefreshCellFace(cell); };
         button.PointerExited += (_, _) => { cell.Hovered = false; cell.Pressed = false; RefreshCellFace(cell); };
         button.PointerPressed += (_, _) => { cell.Pressed = true; RefreshCellFace(cell); };
@@ -468,7 +500,8 @@ private readonly Grid _surfaceHost;
         cell.Hovered = false; cell.Pressed = false;
         cell.Face.BorderBrush = CloneBrush(_barBorder);
         RefreshCellFace(cell);
-        cell.Icon.Foreground = _barFg;
+        if (cell.Icon is not null) cell.Icon.Foreground = _barFg;
+        if (cell.AiLabel is not null) cell.AiLabel.Foreground = _barFg;
         if (cell.BadgeIcon is not null) cell.BadgeIcon.Foreground = _barFg;
         cell.Label.Foreground = _barFg;
     }
@@ -757,7 +790,13 @@ private readonly Grid _surfaceHost;
     internal bool TryHandleBoardShortcut(Windows.System.VirtualKey key, bool control, bool shift, bool alt, DependencyObject source)
     {
         if (_closed || CurrentController.Tool == InkTool.Pan || KeyboardShortcutScope.IsTextInput(source)
-            || KeyboardShortcutScope.HasTextInputFocus(_contentRoot) || alt || shift) return false;
+            || KeyboardShortcutScope.HasTextInputFocus(_contentRoot) || shift) return false;
+        if (alt && !control && key == Windows.System.VirtualKey.A)
+        {
+            _shell?.OpenAiAssistant();
+            return true;
+        }
+        if (alt) return false;
         if (control && key == Windows.System.VirtualKey.Z) CurrentController.Undo();
         else if (control && key == Windows.System.VirtualKey.Y) CurrentController.Redo();
         else if (control && key == Windows.System.VirtualKey.E)
@@ -897,7 +936,7 @@ private readonly Grid _surfaceHost;
         _gestureFlyout = BuildGestureFlyout(); ShowBoardFlyout(_gestureFlyout, _gestureCell.Button);
     }
 
-    /// <summary>更多功能: WPF 3x3 icon grid + 视频展台|Desmos row, plus relocated port extras.</summary>
+    /// <summary>更多功能: WPF 3x3 icon grid (plus the local AI 助教 cell) + 视频展台|Desmos row, plus relocated port extras.</summary>
     private Flyout BuildMoreFlyout()
     {
         var flyout = new Flyout { Placement = FlyoutPlacementMode.Top };
@@ -905,10 +944,9 @@ private readonly Grid _surfaceHost;
 
         var grid = new Grid { HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 6, 0, 0) };
         for (int i = 0; i < 3; i++)
-        {
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        for (int i = 0; i < 4; i++)
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        }
         grid.ColumnSpacing = 6;
         grid.RowSpacing = 6;
         var items = new (string Glyph, string Label, Action Click, bool Badge)[]
@@ -922,20 +960,28 @@ private readonly Grid _surfaceHost;
             ("", "截屏", async () => { HideBoardFlyout(flyout); if (_shell is not null) await _shell.ScreenshotAsync(); }, false),
             ("", "指南", () => { HideBoardFlyout(flyout); _shell?.OpenGuide(); }, false),
             ("", "设置", () => { HideBoardFlyout(flyout); _shell?.OpenSettings(); }, false),
+            (Glyphs.Ai, "AI 助教", () => { HideBoardFlyout(flyout); _shell?.OpenAiAssistant(); }, false),
         };
         for (int i = 0; i < items.Length; i++)
         {
             var item = items[i];
             var iconHost = new Grid { Width = 40, Height = 40 };
-            iconHost.Children.Add(new FontIcon
+            if (item.Glyph == Glyphs.Ai)
             {
-                Glyph = item.Glyph,
-                FontFamily = IconFont,
-                FontSize = 24,
-                Foreground = _barFg,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            });
+                iconHost.Children.Add(AiGlyph.CreateFramed(40, 40, _barFg));
+            }
+            else
+            {
+                iconHost.Children.Add(new FontIcon
+                {
+                    Glyph = item.Glyph,
+                    FontFamily = IconFont,
+                    FontSize = 24,
+                    Foreground = _barFg,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
             if (item.Badge)
             {
                 var badge = new Border
@@ -2039,25 +2085,53 @@ private static bool IsDarkBackground(BoardBackground background)
 
     private void SetFullscreen(bool fullscreen)
     {
-        if (fullscreen == _isFullscreen) return;
-        if (fullscreen)
+        // 窗口已在关闭流程中时，Window.set_Content 会抛 ArgumentException（旧 error.log 记录）。
+        if (_closed || fullscreen == _isFullscreen) return;
+        try
         {
-            _windowedContent.Children.Remove(_contentRoot);
-            AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
-            Content = _contentRoot;
+            if (fullscreen)
+            {
+                _windowedContent.Children.Remove(_contentRoot);
+                AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
+                Content = _contentRoot;
+            }
+            else
+            {
+                AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+                WindowChrome.MakeBorderless(this, topmost: true, resizable: true);
+                WindowChrome.SuppressTouchFeedback(this);
+                Content = null;
+                Grid.SetRow(_contentRoot, 1);
+                if (!_windowedContent.Children.Contains(_contentRoot))
+                    _windowedContent.Children.Add(_contentRoot);
+                Content = _windowedContent;
+                var work = WindowChrome.GetWorkArea(this);
+                WindowChrome.Place(this, work.X, work.Y, work.Width, work.Height);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
-            WindowChrome.MakeBorderless(this, topmost: true, resizable: true);
-            WindowChrome.SuppressTouchFeedback(this);
-            Content = null;
-            Grid.SetRow(_contentRoot, 1);
-            if (!_windowedContent.Children.Contains(_contentRoot))
-                _windowedContent.Children.Add(_contentRoot);
-            Content = _windowedContent;
-            var work = WindowChrome.GetWorkArea(this);
-            WindowChrome.Place(this, work.X, work.Y, work.Width, work.Height);
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[BoardWindow] 切换全屏失败：fullscreen={fullscreen}，{ex.GetType().Name}: {ex.Message}",
+                Core.Diagnostics.LogType.Trace);
+            // Content 可能已置空；窗口仍存活时把手风琴内容挂回，避免留下黑屏空壳。
+            if (!_closed && Content is null)
+            {
+                try
+                {
+                    Grid.SetRow(_contentRoot, 1);
+                    if (!_windowedContent.Children.Contains(_contentRoot))
+                        _windowedContent.Children.Add(_contentRoot);
+                    Content = _windowedContent;
+                }
+                catch (Exception restore)
+                {
+                    Core.Diagnostics.FileLog.WriteLogToFile(
+                        $"[BoardWindow] 全屏失败后恢复内容失败：{restore.GetType().Name}: {restore.Message}",
+                        Core.Diagnostics.LogType.Trace);
+                }
+            }
+            return;
         }
         _isFullscreen = fullscreen;
         WindowChrome.ApplyTheme(this, _boardTheme);
@@ -2142,10 +2216,11 @@ private static bool IsDarkBackground(BoardBackground background)
         }
     }
 
-    internal void InsertImage(BoardImageAsset asset)
+    internal bool InsertImage(BoardImageAsset asset)
     {
-        if (!_board.AddImage(asset)) return;
+        if (!_board.AddImage(asset)) return false;
         CurrentController.SelectElement(_board.GetSelectionElements().Single(element => element.Id == asset.Id));
+        return true;
     }
 
     private bool _mediaPicking;
@@ -2275,6 +2350,7 @@ private static bool IsDarkBackground(BoardBackground background)
         public Border Face { get; init; }
         public bool Selected, Hovered, Pressed;
         public FontIcon Icon { get; init; }
+        public TextBlock AiLabel { get; init; }
         public FontIcon BadgeIcon { get; init; }
         public TextBlock Label { get; init; }
         public Grid Content { get; init; }

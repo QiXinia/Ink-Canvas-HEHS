@@ -29,12 +29,16 @@ public sealed class AppServices : IDisposable
         Plugins = new PluginManager(Path.Combine(AppContext.BaseDirectory, "PluginHost", "InkCanvas.PluginHost.exe"), Path.Combine(Store.Directory, "PluginData"));
         Plugins.Discover(Path.Combine(AppContext.BaseDirectory, "Plugins"), Path.Combine(Store.Directory, "Plugins"));
         Board = new BoardService();
+        SideBoard = new BoardService();
+        Board.SideBoardSource = SideBoard;
         ScreenImages = new BoardService(OverlayInk);
         OverlayInk.GetSelectableElements = ScreenImages.GetSelectionElements;
         ScreenImages.ImagePlacementChanged += OnScreenImagePlacementChanged;
         // 1:1 SetBoardTheme：白板模式决定画板明暗。未验证。
         Board.Background = Core.Theming.ThemeResolver.GetBoardTheme(Settings.Canvas.UsingWhiteboard)
             == Core.Theming.AppTheme.Light ? BoardBackground.White : BoardBackground.Black;
+        // 子板与主展板共用初始纸型，但页/笔画/撤销/背景此后完全独立。
+        SideBoard.SetBackground(Board.Background);
         Ppt = new PptInteropService();
         AutoSave = new AutoSaveService(Settings.Automation);
         Lottery = new LotteryService();
@@ -93,6 +97,7 @@ public sealed class AppServices : IDisposable
     public InkController OverlayInk { get; } = new();
 
     public BoardService Board { get; }
+    public BoardService SideBoard { get; }
     public BoardService ScreenImages { get; }
 
     private void OnScreenImagePlacementChanged(BoardImageAsset image) => OverlayInk.NotifyElementsChanged();
@@ -161,7 +166,7 @@ public sealed class AppServices : IDisposable
             Settings.Gesture.IsEnableTwoFingerZoom,
             Settings.Gesture.IsEnableTwoFingerTranslate,
             Settings.Gesture.IsEnableTwoFingerRotation);
-        if (BoardModeActive && Board.Pages.Contains(controller) && Settings.Gesture.AutoSwitchTwoFingerGesture)
+        if (BoardModeActive && (Board.Pages.Contains(controller) || SideBoard.Pages.Contains(controller)) && Settings.Gesture.AutoSwitchTwoFingerGesture)
         {
             controller.MultiTouchEnabled = false;
             controller.ConfigureGestures(Settings.Gesture.IsEnableTwoFingerZoom, true, Settings.Gesture.IsEnableTwoFingerRotation);
@@ -183,6 +188,7 @@ public sealed class AppServices : IDisposable
     {
         yield return OverlayInk;
         foreach (var page in Board.Pages) yield return page;
+        foreach (var page in SideBoard.Pages) yield return page;
     }
 
     public void SaveSettings() => Store.Save(Settings);
@@ -214,5 +220,6 @@ public sealed class AppServices : IDisposable
         ScreenImages.ImagePlacementChanged -= OnScreenImagePlacementChanged;
         OverlayInk.Dispose();
         foreach (var page in Board.Pages) page.Dispose();
+        foreach (var page in SideBoard.Pages) page.Dispose();
     }
 }

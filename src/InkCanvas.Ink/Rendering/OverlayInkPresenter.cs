@@ -44,6 +44,10 @@ public sealed class OverlayInkPresenter : IDisposable
     private long _lastDotAnimationVersion;
     private long _lastRecognitionVersion;
     private DotAnimationClock _dotClock;
+    // Surface size the committed/live caches were built for. The overlay is re-anchored between
+    // the full-screen show and a windowed reading view, so a stale cache must never be copied
+    // into a smaller DIB.
+    private int _cacheWidth, _cacheHeight;
 
     private CanvasRenderTarget _liveTarget;
     private int _liveCapacityWidth, _liveCapacityHeight;
@@ -436,6 +440,29 @@ public sealed class OverlayInkPresenter : IDisposable
 
     private void EnsureCommittedCache()
     {
+        if (_cacheWidth != _window.Width || _cacheHeight != _window.Height)
+        {
+            // The window was resized (full-screen show ⇄ windowed reading view). Drop every
+            // buffer derived from the old surface: copying them into the new DIB would throw
+            // "Destination is too short" and leave the presenter unusable.
+            _cacheWidth = _window.Width; _cacheHeight = _window.Height;
+            _committedTarget?.Dispose();
+            _committedTarget = null;
+            _committedPixelsBuffer = null;
+            _committedPixels = null;
+            _committedValid = false;
+            _committedChanged = false;
+            _liveTarget?.Dispose();
+            _liveTarget = null;
+            _livePixelsBuffer = null;
+            _livePixels = null;
+            _liveCapacityWidth = _liveCapacityHeight = 0;
+            _liveW = _liveH = 0;
+            _liveDamage.Clear();
+            _nextLiveDamage.Clear();
+            _historyTiles.Invalidate();
+        }
+
         var view = OverlayTransform();
         bool viewChanged = _lastView != view || _lastTrackingAnimation != _trackingTransition.IsActive;
         // During a selection drag this is the frozen restore image. The moving scene is

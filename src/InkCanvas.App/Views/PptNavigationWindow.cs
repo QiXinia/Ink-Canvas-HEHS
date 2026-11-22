@@ -153,6 +153,7 @@ public sealed class PptNavigationWindow : Window
     /// </summary>
     public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible, ShowWindowInfo showBounds)
     {
+        if (_closed) return;
         _showWindow = snapshot?.WindowHandle ?? IntPtr.Zero;
         _windowedShow = snapshot?.IsWindowedShow == true;
         _counter.Visibility = counterVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -170,9 +171,11 @@ public sealed class PptNavigationWindow : Window
 
     private void SetVisible(bool visible)
     {
-        if (NativeMethods.IsWindowVisible(WindowChrome.GetHwnd(this)) == visible) return;
-        if (visible) NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_SHOWNOACTIVATE);
-        else NativeMethods.ShowWindow(WindowChrome.GetHwnd(this), NativeMethods.SW_HIDE);
+        if (_closed) return;
+        var hwnd = WindowChrome.GetHwnd(this);
+        if (hwnd == IntPtr.Zero) return;
+        if (NativeMethods.IsWindowVisible(hwnd) == visible) return;
+        NativeMethods.ShowWindow(hwnd, visible ? NativeMethods.SW_SHOWNOACTIVATE : NativeMethods.SW_HIDE);
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
@@ -195,13 +198,18 @@ public sealed class PptNavigationWindow : Window
         try
         {
             if (_trackedRoot is not null) _trackedRoot.Changed -= OnRootChanged;
+            // 窗口已关闭后访问 Content 会抛 COMException (0x800710DD)；_closed 先拦一层，
+            // try/catch 再兜住 Activated/Loaded 与 Closed 竞争时的残余竞态。
             _trackedRoot = (Content as FrameworkElement)?.XamlRoot;
             if (_trackedRoot is not null) _trackedRoot.Changed += OnRootChanged;
             Place(_counterVisible);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // The window may already be torn down; nothing to track or place any more.
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[PptNavigation] 跳过导航栏根视觉跟踪：窗口已关闭，{ex.GetType().Name}: {ex.Message}",
+                Core.Diagnostics.LogType.Trace);
         }
     }
 
@@ -243,6 +251,18 @@ public sealed class PptNavigationWindow : Window
     }
 
     private void Place(bool counterVisible)
+    {
+        if (_closed) return;
+        try { PlaceCore(counterVisible); }
+        catch (Exception ex)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[PptNavigation] 跳过导航栏定位：窗口已关闭，{ex.GetType().Name}: {ex.Message}",
+                Core.Diagnostics.LogType.Trace);
+        }
+    }
+
+    private void PlaceCore(bool counterVisible)
     {
         // Follow the monitor that hosts the slideshow window; IntPtr.Zero resolves to the
         // nearest/primary monitor, which keeps the constructor call safe before any show.

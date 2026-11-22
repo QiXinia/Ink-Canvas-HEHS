@@ -67,6 +67,43 @@ public static class AssistantLayout
         return new AssistantPlacement(left, top, flippedX, flippedY, side);
     }
 
+    /// <summary>物理屏幕像素矩形换算为 DIP，使用目标显示器的缩放比例。</summary>
+    public static AssistantRect ToDips(AssistantRect physical, double dpiScale)
+    {
+        double dpi = dpiScale > 0 ? dpiScale : 1.0;
+        return new AssistantRect(physical.Left / dpi, physical.Top / dpi,
+            physical.Right / dpi, physical.Bottom / dpi);
+    }
+
+    /// <summary>把画布客户区 DIP 锚点平移到屏幕绝对 DIP（板窗口客户区原点非 (0,0) 时）。</summary>
+    public static AssistantRect Offset(AssistantRect rect, double dx, double dy)
+        => new(rect.Left + dx, rect.Top + dy, rect.Right + dx, rect.Bottom + dy);
+
+    /// <summary>
+    /// 在屏幕绝对 DIP 的目标工作区里放置浮窗：先平移到以工作区左上为原点计算，
+    /// 再把结果平移回屏幕坐标，副屏工作区不在 (0,0) 时不会被 clamp 回主屏。
+    /// </summary>
+    public static AssistantPlacement PlaceInWorkArea(
+        AssistantRect anchor, double cardWidth, double cardHeight, AssistantRect workArea,
+        double gap = 12, double margin = 12)
+    {
+        AssistantRect local = Offset(anchor, -workArea.Left, -workArea.Top);
+        AssistantPlacement placement = Place(local, cardWidth, cardHeight,
+            workArea.Width, workArea.Height, gap, margin);
+        return placement with { X = placement.X + workArea.Left, Y = placement.Y + workArea.Top };
+    }
+
+    /// <summary>锚点铺满视口时固定在目标工作区右下角，并按同一工作区做边界 clamp。</summary>
+    public static AssistantPlacement DockBottomRight(
+        AssistantRect workArea, double cardWidth, double cardHeight, double inset = 16, double margin = 12)
+    {
+        double x = workArea.Right - cardWidth - inset;
+        double y = workArea.Bottom - cardHeight - inset;
+        x = Clamp(x, workArea.Left + margin, workArea.Right - cardWidth - margin);
+        y = Clamp(y, workArea.Top + margin, workArea.Bottom - cardHeight - margin);
+        return new AssistantPlacement(x, y, false, false, 0);
+    }
+
     private static double Clamp(double value, double min, double max)
     {
         if (max <= min) return min;

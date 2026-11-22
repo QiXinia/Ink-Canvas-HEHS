@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var sideBoardCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--sideboardcheck=", StringComparison.OrdinalIgnoreCase));
+        if (sideBoardCheck is not null) { _ = Diagnostics.SideBoardRegression.Run(sideBoardCheck["--sideboardcheck=".Length..]); return; }
         var inkWashCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--inkwashcheck=", StringComparison.OrdinalIgnoreCase));
         if (inkWashCheck is not null) { _ = Diagnostics.InkWashRegression.Run(inkWashCheck["--inkwashcheck=".Length..]); return; }
         var penContrastCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pencontrastcheck=", StringComparison.OrdinalIgnoreCase));

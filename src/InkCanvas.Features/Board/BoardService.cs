@@ -162,7 +162,8 @@ public static class BoardElementMath
 public sealed partial class BoardService
 {
     private const string BoardFormat = "inkcanvas-board";
-    private const int BoardFormatVersion = 3;
+    private const int BoardFormatVersion = 4;
+    private const int SideBoardFormatVersion = 1;
     public const int MaximumPages = 99;
     private const float MinimumGridSpacing = 12f;
     private const float MaximumGridSpacing = 160f;
@@ -257,9 +258,16 @@ public sealed partial class BoardService
         || _images.Any(images => images.Count > 0)
         || _media.Any(media => media.Count > 0);
 
+    /// <summary>当前页是否有可渲染贴回的内容（有墨迹，或含有效数据的图片；视频不参与离线 PNG 合成）。</summary>
+    public bool CurrentPageHasPasteableContent => Current.Document.Count > 0
+        || _images[CurrentIndex].Any(image => image.Data is { Length: > 0 });
+
     public InkController Current => _pages[CurrentIndex];
 
     public IReadOnlyList<InkController> Pages => _pages;
+
+    /// <summary>与主展板一起保存/加载的板中板服务；为 null 时主文件不写 SideBoard 节点。</summary>
+    public BoardService SideBoardSource { get; set; }
 
     /// <summary>Visual state (name/background/grid/view) of the current page.</summary>
     public BoardPageState CurrentState => _states[CurrentIndex];
@@ -876,7 +884,7 @@ public sealed partial class BoardService
         media.Transform = snapshot.Transform?.ToArray();
     }
 
-    private void ApplyBoard(IReadOnlyList<PreparedPage> loadedPages)
+    private void ApplyBoard(IReadOnlyList<PreparedPage> loadedPages, int currentIndex = 0)
     {
         foreach (var page in _pages) page.Dispose();
         _pages.Clear();
@@ -904,7 +912,7 @@ public sealed partial class BoardService
                 ViewTransform = viewTransform,
             });
         }
-        CurrentIndex = 0;
+        CurrentIndex = loadedPages.Count == 0 ? 0 : Math.Clamp(currentIndex, 0, loadedPages.Count - 1);
         PageStructureVersion++;
         PageChanged?.Invoke();
         ImagesChanged?.Invoke();
@@ -1109,6 +1117,7 @@ public sealed partial class BoardService
         public string Background { get; set; }
         public float GridSpacing { get; set; }
         public List<BoardPageFile> Pages { get; set; } = new();
+        public BoardSideFile SideBoard { get; set; }
         public List<BoardBlobReference> Blobs { get; set; } = new();
         public List<StrokeFile> Strokes { get; set; }
     }
@@ -1122,6 +1131,13 @@ public sealed partial class BoardService
         public List<StrokeFile> Strokes { get; set; } = new();
         public List<BoardImageAsset> Images { get; set; } = new();
         public List<BoardMediaAsset> Media { get; set; } = new();
+    }
+
+    private sealed class BoardSideFile
+    {
+        public int Version { get; set; }
+        public int PageIndex { get; set; }
+        public List<BoardPageFile> Pages { get; set; } = new();
     }
 
     private sealed class StrokeFile

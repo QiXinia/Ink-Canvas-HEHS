@@ -37,7 +37,7 @@ public sealed class InfoWindow : Window
         Title = "Ink Canvas Artistry 使用指南";
 
         var rows = new StackPanel();
-        // The exact 12 WPF rows: key, second key, global badge, description.
+        // The exact 12 WPF rows plus the local Alt+A AI 助教 row: key, second key, global badge, description.
         AddRow(rows, "Ctrl", "Z", false, " ——  撤销");
         AddRow(rows, "Ctrl", "Y", false, " ——  重做");
         AddRow(rows, "Ctrl", "E", false, " ——  清屏");
@@ -46,6 +46,8 @@ public sealed class InfoWindow : Window
         AddRow(rows, "Alt", "D", true, " ——  切换至批注模式 / 显示或关闭调色板（Draw）");
         AddRow(rows, "Alt", "Q", true, " ——  退出批注模式（Quit）");
         AddRow(rows, "Alt", "B", true, " ——  进入/退出 画板（Board）");
+        AddRow(rows, "Alt", "N", true, " ——  板中板（侧边子展板）");
+        AddRow(rows, "Alt", "A", true, " ——  AI 助教");
         AddRow(rows, "Alt", "S", false, " ——  切换至选择模式（Select）");
         AddRow(rows, "Alt", "E", false, " ——  切换至面积擦/墨迹擦功能（Eraser）");
         AddRow(rows, "Alt", "L", false, " ——  切换至单次直线绘制功能（Line）");

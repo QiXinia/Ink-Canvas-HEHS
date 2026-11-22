@@ -1,3 +1,4 @@
+using InkCanvas.Core.Diagnostics;
 using InkCanvas.Platform.Interop;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -15,7 +16,71 @@ namespace InkCanvas.App.Services;
 /// </summary>
 public static class WindowChrome
 {
-    public static IntPtr GetHwnd(Window window) => WindowNative.GetWindowHandle(window);
+    private const string LogPrefix = "[WindowChrome]";
+
+    // 关闭板时浮条会被多次重排；同一原因在一秒内只记一次 Trace，避免刷日志。
+    private static string _lastGuardKey;
+    private static long _lastGuardTicks;
+
+    public static IntPtr GetHwnd(Window window)
+    {
+        if (window is null) return IntPtr.Zero;
+        // WinUI 在窗口已关闭后取 HWND 会抛 COMException；统一按「无 HWND」处理。
+        try { return WindowNative.GetWindowHandle(window); }
+        catch { return IntPtr.Zero; }
+    }
+
+    /// <summary>读取 AppWindow，并吞掉「窗口已关闭」时 WinUI 抛出的 COMException。</summary>
+    private static bool TryGetAppWindow(Window window, out AppWindow appWindow)
+    {
+        appWindow = null;
+        if (window is null)
+        {
+            LogPlacementSkipped(nameof(TryGetAppWindow), WindowPlacementReasons.WindowMissing);
+            return false;
+        }
+        try { appWindow = window.AppWindow; }
+        catch (Exception ex)
+        {
+            LogPlacementSkipped(nameof(TryGetAppWindow), WindowPlacementReasons.AppWindowUnavailable, ex);
+            return false;
+        }
+        if (appWindow is null)
+        {
+            LogPlacementSkipped(nameof(TryGetAppWindow), WindowPlacementReasons.AppWindowMissing);
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 放置窗口前的统一守卫：窗口为 null、已关闭、AppWindow 不可用或 HWND 已销毁时
+    /// 返回 false 并记 Trace，调用方必须直接 return，绝不抛给 UI 事件链。
+    /// </summary>
+    private static bool TryGetPlaceable(Window window, string operation, out AppWindow appWindow, out IntPtr hwnd)
+    {
+        appWindow = null;
+        hwnd = IntPtr.Zero;
+        bool hasAppWindow = TryGetAppWindow(window, out appWindow);
+        if (hasAppWindow) hwnd = GetHwnd(window);
+        bool alive = hwnd != IntPtr.Zero && IsWindow(hwnd);
+        var state = WindowPlacementGuard.FromHwnd(window is not null, hasAppWindow, hwnd, alive);
+        if (state.CanPlace) return true;
+        LogPlacementSkipped(operation, state.Reason);
+        return false;
+    }
+
+    private static void LogPlacementSkipped(string operation, string reason, Exception exception = null)
+    {
+        if (!FileLog.Enabled) return;
+        string key = $"{operation}:{reason}";
+        long now = Environment.TickCount64;
+        if (key == _lastGuardKey && now - _lastGuardTicks < 1000) return;
+        _lastGuardKey = key;
+        _lastGuardTicks = now;
+        string detail = exception is null ? "" : $" ({exception.GetType().Name}: {exception.Message})";
+        FileLog.WriteLogToFile($"{LogPrefix} 跳过窗口放置：操作={operation}，原因={reason}{detail}", LogType.Trace);
+    }
 
     private sealed class Placement
     {
@@ -45,10 +110,12 @@ public static class WindowChrome
         if (noActivate)
         {
             var activation = new Platform.Windows.NonActivatingWindow(GetHwnd(window));
-            var content = (FrameworkElement)window.Content;
-            // Inherited by controls in the XAML island. Pointer interaction must not request focus.
-            content.AllowFocusOnInteraction = false;
-            content.Loaded += (_, _) => activation.RefreshChildren();
+            if (window.Content is FrameworkElement content)
+            {
+                // Inherited by controls in the XAML island. Pointer interaction must not request focus.
+                content.AllowFocusOnInteraction = false;
+                content.Loaded += (_, _) => activation.RefreshChildren();
+            }
             window.Closed += (_, _) => activation.Dispose();
         }
         // Constructors place windows before the HWND exists, so GetDpiForWindow returns 0 and
@@ -84,9 +151,21 @@ public static class WindowChrome
         if (window.Content is FrameworkElement root) root.Loaded += (_, _) => ApplyInitialPlacement();
     }
 
+    /// <summary>
+    /// Win32 兜底隐藏：WinUI 的 AppWindow.Hide 在 owner 关系下偶发不生效时，
+    /// 直接 ShowWindow(SW_HIDE)，并清 WS_VISIBLE。
+    /// </summary>
+    public static void HideWindow(Window window)
+    {
+        var hwnd = GetHwnd(window);
+        if (hwnd != IntPtr.Zero) NativeMethods.ShowWindow(hwnd, 0 /* SW_HIDE */);
+    }
+
     public static void ShowWithoutActivation(Window window)
     {
-        window.AppWindow.Show(activateWindow: false);
+        if (!TryGetPlaceable(window, nameof(ShowWithoutActivation), out var appWindow, out _)) return;
+        try { appWindow.Show(activateWindow: false); }
+        catch (Exception ex) { LogPlacementSkipped(nameof(ShowWithoutActivation), "show", ex); return; }
         EnsureAbove(window);
     }
 
@@ -157,6 +236,8 @@ public static class WindowChrome
 
     public static void Place(Window window, int x, int y, int width, int height)
     {
+        // 关闭板后浮条重排会从 Closed 回调链进入这里；窗口已销毁时直接丢弃本次放置。
+        if (!TryGetPlaceable(window, nameof(Place), out _, out _)) return;
         Placements.AddOrUpdate(window, new Placement { Kind = 0, X = x, Y = y, W = width, H = height });
         PlaceCore(window, x, y, width, height);
     }
@@ -164,36 +245,47 @@ public static class WindowChrome
     /// <summary>Place content-sized chrome using physical client pixels, excluding the native frame.</summary>
     public static void PlaceClient(Window window, int x, int y, int width, int height)
     {
+        if (!TryGetPlaceable(window, nameof(PlaceClient), out var appWindow, out var hwnd)) return;
         // Establish the target DPI before WinUI calculates non-client metrics.
         var target = ScreenService.FromRect(new(x, y, width, height));
-        MoveToMonitor(window, target);
-        // A borderless presenter can retain a few pixels of non-client frame. MoveAndResize
-        // sizes the outer HWND, so using a measured XAML size there cuts off the bottom/right.
-        var client = window.AppWindow.ClientSize;
-        if (client.Width != width || client.Height != height)
-            window.AppWindow.ResizeClient(new SizeInt32(width, height));
-        var outer = window.AppWindow.Size;
-        var hwnd = GetHwnd(window);
-        var origin = new NativeMethods.POINT();
-        GetWindowRect(hwnd, out var frame);
-        ClientToScreen(hwnd, ref origin);
-        Place(window, x - (origin.X - frame.Left), y - (origin.Y - frame.Top), outer.Width, outer.Height);
+        try
+        {
+            if (ScreenService.FromWindow(hwnd).Handle != target.Handle)
+                appWindow.Move(new PointInt32(target.WorkArea.X, target.WorkArea.Y));
+            // A borderless presenter can retain a few pixels of non-client frame. MoveAndResize
+            // sizes the outer HWND, so using a measured XAML size there cuts off the bottom/right.
+            var client = appWindow.ClientSize;
+            if (client.Width != width || client.Height != height)
+                appWindow.ResizeClient(new SizeInt32(width, height));
+            var outer = appWindow.Size;
+            var origin = new NativeMethods.POINT();
+            if (!GetWindowRect(hwnd, out var frame) || !ClientToScreen(hwnd, ref origin)) return;
+            Place(window, x - (origin.X - frame.Left), y - (origin.Y - frame.Top), outer.Width, outer.Height);
+        }
+        catch (Exception ex)
+        {
+            LogPlacementSkipped(nameof(PlaceClient), "move-or-resize", ex);
+        }
     }
 
     /// <summary>Actual painted element bounds in physical screen pixels, including Viewbox scaling.</summary>
     public static PointInt32 GetClientPosition(Window window)
     {
+        var hwnd = GetHwnd(window);
         var origin = new NativeMethods.POINT();
-        return ClientToScreen(GetHwnd(window), ref origin)
-            ? new PointInt32(origin.X, origin.Y) : window.AppWindow.Position;
+        if (hwnd != IntPtr.Zero && ClientToScreen(hwnd, ref origin)) return new PointInt32(origin.X, origin.Y);
+        // 窗口已关闭时不能回读 AppWindow.Position（COMException）；退回原点由调用方再判空。
+        return TryGetAppWindow(window, out var appWindow) ? appWindow.Position : default;
     }
 
     /// <summary>Actual painted element bounds in physical screen pixels, including Viewbox scaling.</summary>
     public static RectInt32 GetScreenBounds(Window window, FrameworkElement element)
     {
-        var root = (FrameworkElement)window.Content;
+        if (window?.Content is not FrameworkElement root || element is null) return default;
+        var hwnd = GetHwnd(window);
+        if (hwnd == IntPtr.Zero) return default;
         var origin = new NativeMethods.POINT();
-        ClientToScreen(GetHwnd(window), ref origin);
+        if (!ClientToScreen(hwnd, ref origin)) return default;
         double dpi = root.XamlRoot?.RasterizationScale ?? GetDpiScale(window);
         var bounds = element.TransformToVisual(root).TransformBounds(
             new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
@@ -207,7 +299,20 @@ public static class WindowChrome
         => DisplayArea.GetFromRect(anchor, DisplayAreaFallback.Nearest).WorkArea;
 
     public static RectInt32 GetWorkArea(Window window)
-        => DisplayArea.GetFromWindowId(window.AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+    {
+        if (!TryGetPlaceable(window, nameof(GetWorkArea), out var appWindow, out _))
+        {
+            var fallback = Platform.System.ScreenService.WorkArea;
+            return new RectInt32(fallback.X, fallback.Y, fallback.Width, fallback.Height);
+        }
+        try { return DisplayArea.GetFromWindowId(appWindow.Id, DisplayAreaFallback.Nearest).WorkArea; }
+        catch (Exception ex)
+        {
+            LogPlacementSkipped(nameof(GetWorkArea), "display-area", ex);
+            var fallback = Platform.System.ScreenService.WorkArea;
+            return new RectInt32(fallback.X, fallback.Y, fallback.Width, fallback.Height);
+        }
+    }
 
     public static double GetDpiScale(RectInt32 anchor)
         => ScreenService.FromRect(new(anchor.X, anchor.Y, anchor.Width, anchor.Height)).DpiScale;
@@ -222,15 +327,24 @@ public static class WindowChrome
 
     public static void MoveToMonitor(Window window, ScreenInfo target)
     {
-        if (ScreenService.FromWindow(GetHwnd(window)).Handle == target.Handle) return;
-        window.AppWindow.Move(new PointInt32(target.WorkArea.X, target.WorkArea.Y));
+        if (!TryGetPlaceable(window, nameof(MoveToMonitor), out var appWindow, out var hwnd)) return;
+        try
+        {
+            if (ScreenService.FromWindow(hwnd).Handle == target.Handle) return;
+            appWindow.Move(new PointInt32(target.WorkArea.X, target.WorkArea.Y));
+        }
+        catch (Exception ex) { LogPlacementSkipped(nameof(MoveToMonitor), "move", ex); }
     }
 
     public static void CenterOnOwner(Window window, Window owner)
     {
-        var target = ScreenService.FromWindow(GetHwnd(owner));
+        if (!TryGetPlaceable(window, nameof(CenterOnOwner), out var appWindow, out _)) return;
+        var ownerHwnd = GetHwnd(owner);
+        if (ownerHwnd == IntPtr.Zero) return;
+        var target = ScreenService.FromWindow(ownerHwnd);
         double previousDpi = GetDpiScale(window);
-        var size = window.AppWindow.Size;
+        if (previousDpi <= 0) previousDpi = 1;
+        var size = appWindow.Size;
         MoveToMonitor(window, target);
         int width = (int)Math.Ceiling(size.Width / previousDpi * target.DpiScale);
         int height = (int)Math.Ceiling(size.Height / previousDpi * target.DpiScale);
@@ -242,8 +356,9 @@ public static class WindowChrome
 
     public static void KeepVisible(Window window)
     {
-        var pos = window.AppWindow.Position;
-        var size = window.AppWindow.Size;
+        if (!TryGetPlaceable(window, nameof(KeepVisible), out var appWindow, out _)) return;
+        var pos = appWindow.Position;
+        var size = appWindow.Size;
         var rect = new ScreenRect(pos.X, pos.Y, size.Width, size.Height);
         var fit = rect.FitInside(ScreenService.FromRect(rect).WorkArea);
         if (rect != fit) Place(window, fit.X, fit.Y, fit.Width, fit.Height);
@@ -421,9 +536,13 @@ public static class WindowChrome
 
     private static void PlaceCore(Window window, int x, int y, int width, int height)
     {
-        var current = window.AppWindow;
-        if (current.Position.X != x || current.Position.Y != y || current.Size.Width != width || current.Size.Height != height)
-            current.MoveAndResize(new RectInt32(x, y, width, height));
+        if (!TryGetPlaceable(window, nameof(PlaceCore), out var current, out _)) return;
+        try
+        {
+            if (current.Position.X != x || current.Position.Y != y || current.Size.Width != width || current.Size.Height != height)
+                current.MoveAndResize(new RectInt32(x, y, width, height));
+        }
+        catch (Exception ex) { LogPlacementSkipped(nameof(PlaceCore), "move-and-resize", ex); }
     }
 
     /// <summary>Current monitor scale factor (logical DIPs per physical pixel).</summary>
@@ -443,6 +562,7 @@ public static class WindowChrome
     /// </summary>
     public static void PlaceDip(Window window, double xDip, double yDip, double widthDip, double heightDip)
     {
+        if (!TryGetPlaceable(window, nameof(PlaceDip), out _, out _)) return;
         double scale = GetDpiScale(window);
         PlaceClient(window,
             (int)Math.Round(xDip * scale), (int)Math.Round(yDip * scale),
@@ -743,14 +863,41 @@ public static class WindowChrome
     }
 
     /// <summary>
+    /// 把浮窗挂到当前画布窗口之下（owner）。全屏置顶的板窗口若只是同层 topmost，
+    /// 仍可能压住浮窗；owned window 始终位于 owner 之上。AppWindow 无 owner API，用 GWLP_HWNDPARENT。
+    /// </summary>
+    public static void SetOwner(Window window, IntPtr ownerHwnd)
+    {
+        if (ownerHwnd == IntPtr.Zero) return;
+        var hwnd = GetHwnd(window);
+        if (hwnd == IntPtr.Zero || hwnd == ownerHwnd) return;
+        SetWindowLongPtrW(hwnd, -8 /* GWLP_HWNDPARENT */, ownerHwnd);
+    }
+
+    /// <summary>读取 Win32 owner（GWLP_HWNDPARENT），用于诊断浮窗 owner 是否生效。</summary>
+    public static IntPtr GetOwner(Window window)
+    {
+        var hwnd = GetHwnd(window);
+        return hwnd == IntPtr.Zero ? IntPtr.Zero : GetWindowLongPtrW(hwnd, -8 /* GWLP_HWNDPARENT */);
+    }
+
+    /// <summary>
     /// Re-assert topmost without activating. Both the overlay and the chrome are topmost, so
     /// this keeps the chrome above the ink surface without stealing focus from a slideshow.
     /// </summary>
     public static void EnsureAbove(Window window, IntPtr overlay = default)
     {
-        if (window.AppWindow.Presenter is OverlappedPresenter { IsAlwaysOnTop: false }) return;
-        var hwnd = GetHwnd(window);
-        if (hwnd == IntPtr.Zero || !NativeMethods.IsWindowVisible(hwnd)) return;
+        if (!TryGetPlaceable(window, nameof(EnsureAbove), out var appWindow, out var hwnd)) return;
+        try
+        {
+            if (appWindow.Presenter is OverlappedPresenter { IsAlwaysOnTop: false }) return;
+        }
+        catch (Exception ex)
+        {
+            LogPlacementSkipped(nameof(EnsureAbove), "presenter", ex);
+            return;
+        }
+        if (!NativeMethods.IsWindowVisible(hwnd)) return;
         if (overlay != IntPtr.Zero)
         {
             if (!NativeMethods.IsWindowVisible(overlay)) return;
@@ -772,6 +919,7 @@ public static class WindowChrome
 
     public static void CenterOnPrimary(Window window, int widthDip, int heightDip)
     {
+        if (!TryGetPlaceable(window, nameof(CenterOnPrimary), out _, out _)) return;
         Placements.AddOrUpdate(window, new Placement { Kind = 2, W = widthDip, H = heightDip });
         double scale = GetDpiScale(window);
         var work = Platform.System.ScreenService.WorkArea;
@@ -802,8 +950,13 @@ public static class WindowChrome
 
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeMethods.RECT rect);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hwnd, out NativeMethods.RECT rect);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hwnd, ref NativeMethods.POINT point);
     [DllImport("user32.dll")] private static extern int SetWindowRgn(IntPtr hwnd, IntPtr region, bool redraw);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern IntPtr SetWindowLongPtrW(IntPtr hwnd, int index, IntPtr value);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    private static extern IntPtr GetWindowLongPtrW(IntPtr hwnd, int index);
     [DllImport("gdi32.dll")] private static extern IntPtr CreateRectRgn(int left, int top, int right, int bottom);
     [DllImport("gdi32.dll")] private static extern int CombineRgn(IntPtr destination, IntPtr first, IntPtr second, int mode);
 }

@@ -205,6 +205,27 @@ public sealed class PptP0Tests : IDisposable
     }
 
     [Fact]
+    public void Guard_ReportsRetryDelayInsideInterval()
+    {
+        var guard = new NavigationGuard(180, 350);
+        Assert.True(guard.TryEnter(1_000, out long acceptedRetry));
+        Assert.Equal(0, acceptedRetry);
+        guard.Exit(1_000);
+
+        Assert.False(guard.TryEnter(1_060, out long retryAfterMs));
+        Assert.Equal(120, retryAfterMs);
+    }
+
+    [Fact]
+    public void Guard_HeldRequestHasNoRetryDelay()
+    {
+        var guard = new NavigationGuard(180, 350);
+        Assert.True(guard.TryEnter(1_000, out _));
+        Assert.False(guard.TryEnter(5_000, out long retryAfterMs));
+        Assert.Equal(0, retryAfterMs);
+    }
+
+    [Fact]
     public void Guard_SuppressExternal_BlocksUntilExpiry()
     {
         var guard = new NavigationGuard(180, 350);

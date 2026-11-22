@@ -19,6 +19,7 @@ namespace InkCanvas.Controls.Controls;
 public interface IShellActions
 {
     void ToggleBoard();
+    void ToggleSideBoard() { }
     void OpenSettings();
     void OpenTimer();
     void OpenLottery();
@@ -108,9 +109,9 @@ public sealed class FloatingBar : UserControl
     private readonly FontIcon _dragIcon;
 
     private TouchIconButton _cursorButton, _penButton, _highlighterButton, _clearButton;
-    private TouchIconButton _eraserButton, _selectButton, _shapeButton;
+    private TouchIconButton _eraserButton, _selectButton, _aiButton, _shapeButton;
     private TouchIconButton _undoButton, _redoButton, _clearMouseButton;
-    private TouchIconButton _boardButton, _toolsButton, _foldButton, _gestureButton, _hideControlButton, _lrSwitchButton;
+    private TouchIconButton _boardButton, _sideBoardButton, _toolsButton, _foldButton, _gestureButton, _hideControlButton, _lrSwitchButton;
     private TouchIconButton _exitButton;
     private readonly List<TouchIconButton> _captioned = new();
     private readonly List<StackPanel> _gestureOptionRows = new();
@@ -476,6 +477,7 @@ _penButton = AddPrimary(Glyphs.PenWpf, "批注", "批注（选中后再次点击
             PanelRequested?.Invoke(BarPanelKind.Eraser, _eraserOpen);
         });
         _selectButton = AddComposite(_canvasControls, Glyphs.SelectWpf, Glyphs.SelectOverlay, 10 * S, "选择", "选择 — 快捷键 Alt+S", () => SetTool(InkTool.Select));
+        _aiButton = AddPrimary(_canvasControls, Glyphs.Ai, "AI 识别", "AI 识别（先框选内容）", () => Shell?.OpenAiAssistant());
         _shapeButton = AddPrimary(_canvasControls, Glyphs.ShapesWpf, "图形", "图形（选中后再次点击打开选项）", () =>
         {
             bool active = !ClickThroughActive && Controller?.Tool == InkTool.Shape;
@@ -497,6 +499,7 @@ _penButton = AddPrimary(Glyphs.PenWpf, "批注", "批注（选中后再次点击
         _boardButton = AddPrimary(Glyphs.BoardWpf, "画板", "画板 — 快捷键 Alt+B", () => Shell?.ToggleBoard());
         _boardButton.Margin = new Thickness(PartBorder, 0, 0, 0);
         AddBoardDivider(_boardButton);
+        _sideBoardButton = AddPrimary(Glyphs.Add, "板中板", "板中板 — 快捷键 Alt+N", () => Shell?.ToggleSideBoard());
         _toolsButton = AddPrimary(Glyphs.Tools, "工具", "更多设置", ToggleOverflow);
         _foldButton = AddPrimary(Glyphs.FoldWpf, "隐藏", "收纳工具栏到屏幕侧边 — 快捷键 Alt+V", () => Shell?.ToggleFold());
         _foldButton.Margin = new Thickness(-PartGap, 0, -PartGap, 0);

@@ -308,4 +308,53 @@ public sealed class AiAssistantTests
         Assert.Equal(180, width);
         Assert.Equal(38, height);
     }
+
+    [Fact]
+    public void Layout_OffsetAndPlaceInWorkArea_HandleNonZeroClientOrigin()
+    {
+        // 板窗口客户区原点在副屏 (1920, 0)，ViewTransform 得到的客户区 DIP 锚点 (100,100)-(300,200)。
+        var work = new AssistantRect(1920, 0, 3840, 1080);
+        var anchor = AssistantLayout.Offset(new AssistantRect(100, 100, 300, 200), 1920, 0);
+
+        var placement = AssistantLayout.PlaceInWorkArea(anchor, 380, 400, work);
+
+        Assert.Equal(2020, placement.X);
+        Assert.Equal(212, placement.Y);
+    }
+
+    [Fact]
+    public void Layout_PlaceInWorkArea_ClampsInsideNegativeSecondaryWorkArea()
+    {
+        // 副屏位于主屏左侧时工作区原点为负，clamp 必须留在副屏内而不是回到主屏。
+        var work = new AssistantRect(-1920, 40, 0, 1040);
+        var anchor = AssistantLayout.Offset(new AssistantRect(10, 10, 60, 40), -1920, 40);
+
+        var placement = AssistantLayout.PlaceInWorkArea(anchor, 380, 400, work);
+
+        Assert.InRange(placement.X, work.Left + 12, work.Right - 380 - 12);
+        Assert.InRange(placement.Y, work.Top + 12, work.Bottom - 400 - 12);
+    }
+
+    [Fact]
+    public void Layout_DockBottomRight_UsesSecondaryWorkArea()
+    {
+        var work = new AssistantRect(1920, 0, 3840, 1040);
+
+        var placement = AssistantLayout.DockBottomRight(work, 380, 460);
+
+        Assert.Equal(3444, placement.X);
+        Assert.Equal(564, placement.Y);
+        Assert.False(placement.FlippedX);
+        Assert.False(placement.FlippedY);
+    }
+
+    [Fact]
+    public void Layout_ToDips_ConvertsPhysicalClientOrigin()
+    {
+        var dips = AssistantLayout.ToDips(new AssistantRect(2880, 0, 4800, 1620), 1.5);
+
+        Assert.Equal(1920, dips.Left);
+        Assert.Equal(3200, dips.Right);
+        Assert.Equal(1080, dips.Bottom);
+    }
 }

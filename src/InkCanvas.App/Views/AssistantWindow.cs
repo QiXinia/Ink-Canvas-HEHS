@@ -668,27 +668,37 @@ public sealed class AssistantWindow : Window
         };
     }
 
-    /// <summary>按 DIP 定位并显示；高度取工作区高的 <see cref="MaxHeightRatio"/>（上限 460）。</summary>
-    public void ShowAt(AssistantPlacement placement, double dpiScale)
+    /// <summary>按 DIP 定位并显示；高度取目标工作区高的 <see cref="MaxHeightRatio"/>（上限 460）。</summary>
+    public void ShowAt(AssistantPlacement placement, double dpiScale, double workHeightDip = 0)
     {
         double dpi = dpiScale > 0 ? dpiScale : 1.0;
-        var work = InkCanvas.Platform.System.ScreenService.WorkArea;
-        double workHeightDip = work.Height / dpi;
-        double cardHeight = Math.Min(MaxCardHeight, workHeightDip * MaxHeightRatio);
+        double workHeight = workHeightDip > 0
+            ? workHeightDip
+            : InkCanvas.Platform.System.ScreenService.WorkArea.Height / dpi;
+        double cardHeight = Math.Min(MaxCardHeight, workHeight * MaxHeightRatio);
         cardHeight = Math.Max(200, cardHeight);
 
         _scroll.MaxHeight = Math.Max(120, cardHeight - TitleHeight - 104);
 
-        AppWindow.MoveAndResize(new RectInt32(
-            (int)Math.Round(placement.X * dpi),
-            (int)Math.Round(placement.Y * dpi),
-            (int)Math.Round(CardWidth * dpi),
-            (int)Math.Round(cardHeight * dpi)));
-        // 窗口可能在隐藏状态创建；AppWindow.Show 后再 Activate，
-        // 否则首次打开只显示空白原生边框。
-        AppWindow.Show();
-        Activate();
-        ApplyRoundedCorners();
+        try
+        {
+            AppWindow.MoveAndResize(new RectInt32(
+                (int)Math.Round(placement.X * dpi),
+                (int)Math.Round(placement.Y * dpi),
+                (int)Math.Round(CardWidth * dpi),
+                (int)Math.Round(cardHeight * dpi)));
+            // 窗口可能在隐藏状态创建；AppWindow.Show 后再 Activate，
+            // 否则首次打开只显示空白原生边框。
+            AppWindow.Show();
+            Activate();
+            ApplyRoundedCorners();
+        }
+        catch (Exception ex)
+        {
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] ShowAt 异常：{ex}", InkCanvas.Core.Diagnostics.LogType.Error);
+            throw;
+        }
     }
 
     public void Apply(AssistantSession session, string thumbnailBase64, bool preserveScroll = false)

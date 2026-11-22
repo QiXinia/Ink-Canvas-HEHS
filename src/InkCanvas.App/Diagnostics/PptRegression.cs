@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using InkCanvas.App.Services;
 using InkCanvas.App.Views;
+using InkCanvas.Core.Diagnostics;
 using InkCanvas.Core.Ink;
 using InkCanvas.Platform.System;
 using Microsoft.UI.Xaml;
@@ -39,7 +40,10 @@ internal static class PptRegression
             var work = ScreenService.FromWindow(WindowChrome.GetHwnd(bar)).WorkArea;
             var size = bar.AppWindow.ClientSize;
             WindowChrome.PlaceClient(bar, work.X + 37, work.Y + 91, size.Width, size.Height);
-            await Task.Delay(60);
+            // The shell performs its initial DPI placement on Loaded/Activated. Read the baseline
+            // only after that settles, otherwise the restored target is the pre-initial spot
+            // (measured probe: desktop=37,91 vs actual restore target 684,832).
+            await Task.Delay(600);
             var desktop = WindowChrome.GetClientPosition(bar);
             application = Activator.CreateInstance(Type.GetTypeFromProgID("PowerPoint.Application", throwOnError: true));
             dynamic app = application;
@@ -80,18 +84,24 @@ internal static class PptRegression
                 stage = "goto first " + showType;
                 view.GotoSlide(1);
                 stage = "wait first " + showType;
-                await Wait(() => services.PresentationActive && services.Ppt.Snapshot.IsSlideShowRunning && services.Ppt.Snapshot.Slide?.Index == 1);
+                await Wait(() => services.PresentationActive && services.Ppt.Snapshot.IsSlideShowRunning && services.Ppt.Snapshot.Slide?.Index == 1,
+                    stage, DescribeState);
                 await Task.Delay(100);
                 var snapshot = services.Ppt.Snapshot;
                 Check("show detected", snapshot.IsSlideShowRunning && snapshot.WindowHandle != 0 && snapshot.IsWindowedShow == (showType == 4),
                     new { showType, snapshot.State, snapshot.IsWindowedShow, window = snapshot.WindowHandle.ToInt64() });
-                var area = showType == 4 ? WindowChrome.GetClientBounds(snapshot.WindowHandle)
+                // A windowed reading view can extend under the taskbar, but FloatingBarWindow clamps the bar
+// to the desktop work area on purpose. Measure the same clamped rectangle so the check tests
+// "bottom-centre of the usable area" instead of "inside PowerPoint's full client rect".
+                var area = showType == 4
+                    ? Intersect(WindowChrome.GetClientBounds(snapshot.WindowHandle),
+                        ScreenService.FromWindow(snapshot.WindowHandle).WorkArea)
                     : ScreenService.FromWindow(snapshot.WindowHandle).Bounds;
                 var pos = WindowChrome.GetClientPosition(bar);
                 var client = bar.AppWindow.ClientSize;
                 Check("toolbar docked at bottom centre", Math.Abs(pos.X + client.Width / 2d - area.X - area.Width / 2d) <= 2
                     && pos.Y + client.Height <= area.Y + area.Height && area.Y + area.Height - pos.Y - client.Height < 25,
-                    new { showType, x = pos.X, y = pos.Y, width = client.Width, height = client.Height, area });
+                    new { showType, x = pos.X, y = pos.Y, width = client.Width, height = client.Height, area, bar = bar.DescribePlacement() });
                 var ink = services.OverlayInk;
                 shell.Overlay.SetInteractionMode(clickThrough: true, inkVisible: true);
                 ink.Document.ReplaceAll(Enumerable.Range(0, 1200).Select(index => Stroke(40 + index % 40 * 12, 50 + index / 40 * 10)));
@@ -103,7 +113,8 @@ internal static class PptRegression
                     && stableFrames == shell.Overlay.Presenter.PresentedFrames, new { showType, stableFrames, after = shell.Overlay.Presenter.PresentedFrames, ink.Document.Count });
                 var latency = Stopwatch.StartNew();
                 view.GotoSlide(2);
-                await Wait(() => services.Ppt.Snapshot.Slide?.Index == 2 && ink.Document.Count == (secondSlideHasInk ? 1 : 0));
+                await Wait(() => services.Ppt.Snapshot.Slide?.Index == 2 && ink.Document.Count == (secondSlideHasInk ? 1 : 0),
+                    "external GotoSlide(2)", DescribeState);
                 Check("external page navigation switches ink promptly", latency.ElapsedMilliseconds < 250,
                     new { showType, milliseconds = latency.Elapsed.TotalMilliseconds });
                 ink.Document.ReplaceAll(new[] { Stroke(200, 200) });
@@ -114,28 +125,33 @@ internal static class PptRegression
                 ink.Document.Changed += Observe;
                 latency.Restart();
                 shell.PptPrevious();
-                await Wait(() => ink.Document.Count == 1200);
+                await Wait(() => ink.Document.Count == 1200, "PptPrevious back to page 1", DescribeState);
                 ink.Document.Changed -= Observe;
                 Check("page ink replacement is atomic", counts.SequenceEqual(new[] { 1200 })
                     && shell.Overlay.Presenter.PresentedFrames == framesBefore + 1,
                     new { showType, counts, frames = shell.Overlay.Presenter.PresentedFrames - framesBefore, milliseconds = latency.Elapsed.TotalMilliseconds });
                 shell.PptNext();
-                await Wait(() => services.Ppt.Snapshot.Slide?.Index == 2 && ink.Document.Count == 1);
-                Check("returning to page restores its ink", ink.Document.Count == 1);
+                // 6000ms: debounce retry (~180ms) plus COM latency. The probe at 15000ms reported
+                // page 1/ink 1200 with no navigation at all, which is what QueuePptNavigationRetry fixes.
+                await Wait(() => services.Ppt.Snapshot.Slide?.Index == 2 && ink.Document.Count == 1,
+                    "PptNext back to page 2", DescribeState, timeoutMs: 6000);
+                Check("returning to page restores its ink", ink.Document.Count == 1,
+                    new { showType, ink = ink.Document.Count, state = DescribeState() });
                 bar.SetFolded(true);
                 await Task.Delay(30);
                 bar.SetFolded(false);
                 Check("folded presentation toolbar reopens", bar.AppWindow.IsVisible && bar.FoldHandles.Count == 0);
                 ((dynamic)show).View.Exit(); show = null;
-                await Wait(() => !services.PresentationActive);
+                await Wait(() => !services.PresentationActive, "show exit", DescribeState);
                 await Task.Delay(80);
                 Check("exit restores desktop toolbar position", WindowChrome.GetClientPosition(bar).Equals(desktop),
-                    new { showType, desktop, restored = WindowChrome.GetClientPosition(bar) });
+                    new { showType, desktop = new { x = desktop.X, y = desktop.Y }, restored = new { x = WindowChrome.GetClientPosition(bar).X, y = WindowChrome.GetClientPosition(bar).Y }, bar = bar.DescribePlacement() });
                 await Task.Delay(400);
             }
         }
         catch (Exception ex)
         {
+            Environment.ExitCode = 1;
             checks.Add(new { check = "PPT regression exception", passed = false, stage, error = ex.ToString() });
             File.WriteAllText(Path.Combine(directory, "ppt.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -152,8 +168,28 @@ internal static class PptRegression
             keeper.Close(); Application.Current.Exit();
         }
         object Own(object value) { ownedCom.Add(value); return value; }
+        string DescribeState()
+        {
+            var snapshot = services.Ppt.Snapshot;
+            string pptPage;
+            try { pptPage = show is null ? "none" : ((int)((dynamic)show).View.Slide.SlideIndex).ToString(); }
+            catch (Exception ex) { pptPage = "unavailable(" + ex.GetType().Name + ")"; }
+            long lastNav = shell.PptNavigationLastExitMs;
+            string navAge = lastNav == long.MinValue ? "never" : (Environment.TickCount64 - lastNav) + "ms-ago";
+            var floatingBar = shell.OpenWindows.OfType<FloatingBarWindow>().FirstOrDefault();
+            string barPlacement = floatingBar is null ? "bar=none" : floatingBar.DescribePlacement();
+            return $"[state={snapshot.State} attached={snapshot.IsAttached} running={snapshot.IsSlideShowRunning}" +
+                $" index={snapshot.Slide?.Index.ToString() ?? "-"} slideId={snapshot.Slide?.SlideId.ToString() ?? "-"}" +
+                $" position={snapshot.ShowPosition} showState={snapshot.ShowState?.ToString() ?? "-"}" +
+                $" windowed={snapshot.IsWindowedShow} hwnd=0x{snapshot.WindowHandle.ToInt64():X}" +
+                $" pptPage={pptPage} presentationActive={services.PresentationActive}" +
+                $" ink={services.OverlayInk.Document.Count} source={shell.PptNavigationSource}" +
+                $" lastNav={navAge} events={services.Ppt.EventsConnected}" +
+                $" lastFailure={services.Ppt.LastFailure?.Operation}:{services.Ppt.LastFailure?.Message} {barPlacement}]";
+        }
         void Check(string name, bool passed, object detail = null)
         {
+            if (!passed) Environment.ExitCode = 1;
             checks.Add(new { check = name, passed, detail });
             File.AppendAllText(Path.Combine(directory, "progress.log"), name + " " + passed + Environment.NewLine);
             File.WriteAllText(Path.Combine(directory, "ppt.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
@@ -166,13 +202,45 @@ internal static class PptRegression
         stroke.AddPoint(x, y, .5f, 0); stroke.AddPoint(x + 8, y + 4, .5f, 20); stroke.Complete();
         return stroke;
     }
-    private static async Task Wait(Func<bool> condition)
+
+    private static ScreenRect Intersect(ScreenRect a, ScreenRect b)
+    {
+        int left = Math.Max(a.X, b.X), top = Math.Max(a.Y, b.Y);
+        int right = Math.Min(a.X + a.Width, b.X + b.Width);
+        int bottom = Math.Min(a.Y + a.Height, b.Y + b.Height);
+        return right > left && bottom > top ? new ScreenRect(left, top, right - left, bottom - top) : b;
+    }
+    /// <summary>
+    /// Polls until <paramref name="condition"/> holds. On timeout the actual snapshot, ink count,
+    /// live PowerPoint page and a short trace are included so a failure names the stuck state
+    /// instead of only the stage.
+    /// </summary>
+    private static async Task Wait(Func<bool> condition, string stage = "state", Func<string> describe = null,
+        int timeoutMs = 5000)
     {
         var watch = Stopwatch.StartNew();
+        var trace = new List<string>();
+        long nextSampleAtMs = 0;
         while (!condition())
         {
-            if (watch.ElapsedMilliseconds > 5000) throw new TimeoutException("PPT state did not settle.");
+            long elapsed = watch.ElapsedMilliseconds;
+            if (describe is not null && elapsed >= nextSampleAtMs && trace.Count < 24)
+            {
+                nextSampleAtMs = elapsed + 200;
+                trace.Add(elapsed + "ms " + describe());
+            }
+            if (elapsed > timeoutMs)
+            {
+                string actual = describe is null ? string.Empty : " actual=" + describe();
+                string samples = trace.Count == 0 ? string.Empty : " trace=" + string.Join(" | ", trace);
+                FileLog.WriteLogToFile($"[PPT] wait '{stage}' timed out after {elapsed}ms.{actual}{samples}",
+                    LogType.Error);
+                throw new TimeoutException($"PPT state did not settle at '{stage}' after {elapsed}ms.{actual}{samples}");
+            }
             await Task.Delay(5);
         }
+        if (watch.ElapsedMilliseconds > 1000)
+            FileLog.WriteLogToFile($"[PPT] wait '{stage}' settled after {watch.ElapsedMilliseconds}ms (slow)",
+                LogType.Info);
     }
 }

@@ -1,3 +1,4 @@
+using InkCanvas.Core.Settings;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
 using InkCanvas.Platform.Input;
@@ -15,7 +16,9 @@ public sealed class OverlayHost : IDisposable
 private Action _undo, _redo, _togglePen, _toggleEraser, _clear;
     private Action _togglePassThrough, _toggleBoard;
     private Action _pptNext, _pptPrevious, _pptExit, _toggleBlackScreen;
-    private Action _screenshot, _fold, _select, _line, _draw;
+    private Action _screenshot, _fold, _select, _line, _draw, _ai;
+    private Action _sideBoard;
+    private string _sideBoardModifiers, _sideBoardKey;
     private Func<bool> _editingEnabled, _overlayEditingEnabled, _presentationEnabled;
     private bool _presentationKeysEnabled;
 
@@ -167,7 +170,8 @@ public void Hide()
     /// Registers the union of the local teaching shortcuts and the WPF guide's set
     /// (OperatingGuideWindow rows): Ctrl+Z/Y undo/redo, Ctrl+Shift+C clear, Alt+C screenshot,
     /// Alt+V fold, Alt+D draw/palette, Alt+Q (and the local Alt+P) mouse mode, Alt+B board,
-    /// Alt+S select, Alt+E eraser, Alt+L line, Alt+1 pen, F9 black screen.
+    /// Alt+S select, Alt+E eraser, Alt+L line, Alt+1 pen, Alt+A AI 助教, Alt+N 板中板,
+    /// F9 black screen.
     /// PageUp/PageDown/Esc/B are registered separately while a slideshow runs.
     /// Failures are non-fatal (key may be taken).
     /// </summary>
@@ -176,7 +180,8 @@ public void Hide()
         Action pptNext = null, Action pptPrevious = null, Action pptExit = null,
         Action screenshot = null, Action fold = null, Action select = null, Action line = null, Action draw = null,
         Func<bool> editingEnabled = null, Func<bool> overlayEditingEnabled = null, Func<bool> presentationEnabled = null,
-        Action togglePen = null, Action toggleBlackScreen = null)
+        Action togglePen = null, Action toggleBlackScreen = null, Action ai = null,
+        Action sideBoard = null, string sideBoardModifiers = null, string sideBoardKey = null)
     {
         _undo = undo;
         _redo = redo;
@@ -194,6 +199,10 @@ public void Hide()
         _select = select;
         _line = line;
         _draw = draw;
+        _ai = ai;
+        _sideBoard = sideBoard;
+        _sideBoardModifiers = sideBoardModifiers;
+        _sideBoardKey = sideBoardKey;
         _editingEnabled = editingEnabled;
         _overlayEditingEnabled = overlayEditingEnabled;
         _presentationEnabled = presentationEnabled;
@@ -239,6 +248,17 @@ public void Hide()
             Hotkeys.Register(HotkeyModifiers.Alt, 0x51 /* Q */, _togglePassThrough);
         }
         if (_toggleBoard is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x42 /* B */, _toggleBoard);
+        // AI 助教 works from the overlay and from the board (BoardWindow also handles it locally
+        // as a fallback when this registration is rejected by another application).
+        if (_ai is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x41 /* A */, _ai);
+        // 板中板：默认 Alt+N，可在 Settings.hotkey.sideBoard 中改写；无效配置回退默认。
+        if (_sideBoard is not null)
+        {
+            if (!SideBoardHotkey.TryParseModifiers(_sideBoardModifiers, out var sideBoardModifiers))
+                sideBoardModifiers = SideBoardHotkeyModifiers.Alt;
+            Hotkeys.Register((HotkeyModifiers)(uint)sideBoardModifiers,
+                SideBoardHotkey.ParseVirtualKey(_sideBoardKey), _sideBoard);
+        }
         // F9 is the global black-screen toggle and stays available outside a show.
         if (_toggleBlackScreen is not null) Hotkeys.Register(HotkeyModifiers.None, 0x78 /* F9 */, _toggleBlackScreen);
     }

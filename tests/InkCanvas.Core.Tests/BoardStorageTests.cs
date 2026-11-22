@@ -38,7 +38,7 @@ public sealed class BoardStorageTests : IDisposable
             using var reader = new StreamReader(archive.GetEntry("board.json")!.Open());
             string manifest = await reader.ReadToEndAsync();
             Assert.DoesNotContain("\"Data\"", manifest); Assert.DoesNotContain("\"PosterData\"", manifest);
-            Assert.Contains("\"Version\":3", manifest);
+            Assert.Contains("\"Version\":4", manifest);
         }
         var loaded = Board(); await loaded.LoadBoardAsync(path);
         Assert.Equal(2, loaded.PageCount); Assert.Equal(BoardBackground.Grid, loaded.Background); Assert.Equal(56, loaded.GridSpacing);

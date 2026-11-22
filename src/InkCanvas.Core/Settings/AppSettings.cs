@@ -26,6 +26,26 @@ public sealed class AppSettings
     [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
     [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
 
+    private HotkeySettings _hotkey = new();
+
+    /// <summary>可配置热键；旧设置文件缺少该节点（或显式 null）时回退为默认值。</summary>
+    [JsonPropertyName("hotkey")]
+    public HotkeySettings Hotkey
+    {
+        get => _hotkey ??= new HotkeySettings();
+        set => _hotkey = value ?? new HotkeySettings();
+    }
+
+    private SideBoardSettings _sideBoard = new();
+
+    /// <summary>板中板窗口位置/尺寸；缺省或四个值不全时使用默认右侧抽屉。</summary>
+    [JsonPropertyName("sideBoard")]
+    public SideBoardSettings SideBoard
+    {
+        get => _sideBoard ??= new SideBoardSettings();
+        set => _sideBoard = value ?? new SideBoardSettings();
+    }
+
     private AiSettings _ai = new();
 
     /// <summary>AI 助教功能开关；旧设置文件缺少该节点或显式写成 null 时回退为默认（全开）。</summary>
@@ -311,6 +331,38 @@ public sealed class DisplaySettings
 {
     [JsonPropertyName("allDisplays")] public bool AllDisplays { get; set; } = true;
     [JsonPropertyName("enabledDevices")] public List<string> EnabledDevices { get; set; } = new();
+}
+
+/// <summary>快捷键配置。字符串形式便于手工编辑 Settings.json；无效值回退默认。</summary>
+public sealed class HotkeySettings
+{
+    private HotkeyBindingSettings _sideBoard = new();
+
+    [JsonPropertyName("sideBoard")]
+    public HotkeyBindingSettings SideBoard
+    {
+        get => _sideBoard ??= new HotkeyBindingSettings();
+        set => _sideBoard = value ?? new HotkeyBindingSettings();
+    }
+}
+
+/// <summary>单个快捷键：修饰键（Alt/Control/Shift/Win，可用 + 组合）与主键（字母、数字或 F1-F24）。</summary>
+public sealed class HotkeyBindingSettings
+{
+    [JsonPropertyName("modifiers")] public string Modifiers { get; set; } = "Alt";
+    [JsonPropertyName("key")] public string Key { get; set; } = "N";
+}
+
+/// <summary>板中板窗口记忆矩形（物理像素）。任一字段为空即视为未保存。</summary>
+public sealed class SideBoardSettings
+{
+    [JsonPropertyName("x")] public int? X { get; set; }
+    [JsonPropertyName("y")] public int? Y { get; set; }
+    [JsonPropertyName("w")] public int? W { get; set; }
+    [JsonPropertyName("h")] public int? H { get; set; }
+
+    [JsonIgnore]
+    public bool HasSavedBounds => X.HasValue && Y.HasValue && W is > 0 && H is > 0;
 }
 
 public sealed class AppearanceSettings

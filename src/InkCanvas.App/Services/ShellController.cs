@@ -71,6 +71,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private ShapePickerWindow _shapePicker;
     private readonly NavigationGuard _pptGuard = new();
     private readonly SlideSwitchGate _pptGate = new();
+    private DispatcherQueueTimer _pptRetryTimer;
+    private bool _pptRetryQueued;
+    private bool _pptRetryNext;
     private PptNavigationWindow _pptNav;
     private SlideNavigatorWindow _slideNav;
     private SlideContentIndex _slideIndex;
@@ -101,6 +104,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private AiStreamHandle _aiStream;
     private AiStreamHandle _aiRegionStream;
     private AssistantSession _aiSession;
+    private AssistantTarget _aiTarget;
+    private bool _aiHiddenWithSideBoard;
+    private bool _aiAssistantFromSideBoard;
     private AssistantRect _aiAnchor;
     private AiClient _aiClient;
     private string _aiThumb = "";
@@ -150,6 +156,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Overlay.InteractionChanged += RefreshShortcutRegistration;
         Overlay.ConfigureDisplays(services.Settings.Display);
         services.SettingsApplied += ApplyDisplaySettings;
+        services.SettingsApplied += ApplySideBoardDisplaySettings;
         services.SettingsApplied += RefreshPaletteNibModes;
         Overlay.Window.DisplaySettingsChanged += QueueDisplayRefresh;
         _screens = ScreenService.All();
@@ -209,6 +216,17 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _pollTimer.Interval = TimeSpan.FromMilliseconds(900);
         _pollTimer.Tick += (_, _) => Poll();
 
+        // A flip that lands inside the navigation debounce is delivered once here instead of
+        // being dropped; the latest requested direction wins and the timer never repeats.
+        _pptRetryTimer = _dispatcher.CreateTimer();
+        _pptRetryTimer.IsRepeating = false;
+        _pptRetryTimer.Tick += (_, _) =>
+        {
+            _pptRetryTimer.Stop();
+            _pptRetryQueued = false;
+            NavigatePpt(_pptRetryNext);
+        };
+
         _teachingSession = TeachingSession.Create("课堂", Environment.TickCount64);
         _preset = ClassroomPresetLibrary.ForId(Services.Settings.Classroom.PresetId)
             ?? ClassroomPresetLibrary.ForScene(ClassroomSceneKind.Teach);
@@ -259,6 +277,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _shapePicker?.RefreshDisplayPlacement();
             if (_board is not null) foreach (var panel in _board.ToolPanels) panel.Fit();
             _replay?.RefreshDisplayPlacement();
+            EnsureSideBoardOnScreen();
             foreach (var window in OpenWindows)
                 if (window is SettingsWindow or CountdownWindow or LotteryWindow or InfoWindow or ReplayWindow or NoticeWindow or UpdateWindow
                     || _documentWindows.Contains(window))
@@ -292,6 +311,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             foreach (var notice in _notices) yield return notice;
             if (_palette is not null) yield return _palette;
             foreach (var palette in _detachedPalettes) yield return palette;
+            if (_aiAssistant is not null) yield return _aiAssistant;
             if (_shapePicker is not null) yield return _shapePicker;
         }
     }
@@ -436,7 +456,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
             },
             editingEnabled: () => CanvasShortcutsEnabled,
             overlayEditingEnabled: () => OverlayShortcutsEnabled,
-            presentationEnabled: () => PresentationShortcutsEnabled);
+            presentationEnabled: () => PresentationShortcutsEnabled,
+            ai: OpenAiAssistant,
+            sideBoard: ToggleSideBoard,
+            sideBoardModifiers: Services.Settings.Hotkey.SideBoard.Modifiers,
+            sideBoardKey: Services.Settings.Hotkey.SideBoard.Key);
     }
 
     private void OnBarLayoutChanged()
@@ -486,7 +510,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     }
 
     private InkController ActiveController => _board is not null
-        ? Services.Board.Current
+        ? (_sideBoard is { IsShown: true } ? _sideBoard.CurrentController : Services.Board.Current)
         : DocumentActive ? _documentWorkspace.Controller : Services.OverlayInk;
 
     /// <summary>
@@ -809,6 +833,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
                         Services.ApplySettings();
                         if (isShow)
                         {
+                            // Capture the pre-show desktop spot before SetPptModeVisible/Reposition
+                            // reflow the bar; otherwise the restore target becomes the reflowed
+                            // spot and the toolbar never returns where the user left it.
+                            _bar?.SetPresentationMode(true, current.WindowHandle, current.IsWindowedShow);
                             _pptGate.BeginSession();
                             // Re-anchor the capture generation: BeginSession bumped the session, so the
                             // values captured at the top of the poll are no longer current.
@@ -856,7 +884,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
                             _bar?.Bar.RefreshSelection();
                         }
                     }
-                    _bar?.SetPresentationMode(isShow, current.WindowHandle, current.IsWindowedShow);
+                    // The show-start path already applied presentation mode above (before the
+                    // reflow), so only the exit path is handled here, after Reposition.
+                    if (!isShow) _bar?.SetPresentationMode(false, current.WindowHandle, current.IsWindowedShow);
                     if (isShow && _board is null) Overlay.Window.EnsureAbove(current.WindowHandle);
                     UpdatePptNavigation(current);
                 }
@@ -922,6 +952,14 @@ public sealed partial class ShellController : IShellActions, IDisposable
         foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window) && window.AppWindow.IsVisible) WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
         UpdateSettingsDrawingOrder();
         RefreshDesktopMedia();
+        if (_aiAssistant is not null)
+        {
+            if (_aiHiddenWithSideBoard) return;
+            IntPtr anchor = _board is not null ? WindowChrome.GetHwnd(_board) : Overlay.Window.Handle;
+            if (AssistantBelongsToSideBoard && _sideBoard is not null)
+                anchor = WindowChrome.GetHwnd(_sideBoard);
+            WindowChrome.EnsureAbove(_aiAssistant, anchor);
+        }
     }
 
     private const int RpcCallRejected = unchecked((int)0x80010001);
@@ -1166,6 +1204,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
             BindToolbar(_board.CurrentController);
             var boardWindow = _board;
             _board.Closed += (_, _) => OnBoardClosed(boardWindow);
+            boardWindow.Activated += (_, _) => RaiseAssistantAboveBoard(boardWindow);
+            boardWindow.AppWindow.Changed += (_, args) =>
+            {
+                if (args.DidSizeChange || args.DidPositionChange) RaiseAssistantAboveBoard(boardWindow);
+            };
             _board.Activate();
             // The board is opaque and full-screen; the screen overlay would draw over it.
             Overlay.Hide();
@@ -1211,6 +1254,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (!ReferenceEquals(_board, board)) return;
         _board.CurrentPageChanged -= OnBoardPageChanged;
         StopRecording();
+        CloseSideBoardWithBoard();
         _board = null;
         Services.BoardModeActive = false;
         Services.ApplySettings();
@@ -1219,18 +1263,37 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_disposed || _exiting) return;
         _replay?.Close();
         _palette?.Close(); _shapePicker?.Close();
-        BindBoardController(null);
-        BindToolbar(ActiveController);
+        // BindToolbar 会写 FloatingBar.Controller，其 setter 立即抛出 LayoutChanged。
+        // 关闭板时先解绑重排，避免「板已关 / 浮条仍在收尾」时在 Closed 回调链里重排；
+        // 绑定完成后在下面浮条重新显示时再做一次显式重排。
+        var bar = _bar;
+        if (bar is not null) bar.Bar.LayoutChanged -= OnBarLayoutChanged;
+        try
+        {
+            BindBoardController(null);
+            BindToolbar(ActiveController);
+        }
+        finally
+        {
+            if (bar is not null) bar.Bar.LayoutChanged += OnBarLayoutChanged;
+        }
         Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
         if (_documentWorkspace is not null) { _documentWorkspace.Window.Activate(); OnDocumentPageChanged(); }
         else Overlay.Show();
-        if (_bar is not null && !_bar.IsFolded)
+        if (bar is not null && !bar.IsFolded)
         {
-            WindowChrome.ShowWithoutActivation(_bar);
-            _bar.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
-                            Services.Settings.Appearance.FloatingBarScale, recenter: false);
+            WindowChrome.ShowWithoutActivation(bar);
+            bar.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
+                           Services.Settings.Appearance.FloatingBarScale, recenter: false);
         }
         QueueDesktopSelection();
+    }
+
+    /// <summary>板窗口激活或尺寸变化后重新把 AI 浮窗提到板上方，避免被全屏置顶板压住。</summary>
+    private void RaiseAssistantAboveBoard(BoardWindow board)
+    {
+        if (_aiAssistant is null || AssistantBelongsToSideBoard) return;
+        WindowChrome.EnsureAbove(_aiAssistant, WindowChrome.GetHwnd(board));
     }
 
     private void StopRecording()
@@ -1387,6 +1450,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
     }
 
     private void ApplyDisplaySettings() => Overlay.ConfigureDisplays(Services.Settings.Display);
+
+    private void ApplySideBoardDisplaySettings() => EnsureSideBoardOnScreen();
 
     private void RefreshPaletteNibModes()
     {
@@ -2450,6 +2515,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private async Task StartAssistantFromRegionAsync(ScreenRect rect)
     {
+        _aiTarget = CaptureAssistantTarget();
         string thumb = await AssistantCapture.CapturePngBase64Async(
             rect.X, rect.Y, rect.Width, rect.Height);
         double dpi = CurrentDpi() > 0 ? CurrentDpi() : 1.0;
@@ -2881,10 +2947,23 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public void PptPrevious() => NavigatePpt(next: false);
 
+    /// <summary>Diagnostics only: which navigation source the active show currently resolves to.</summary>
+    internal PresentationSourceLevel PptNavigationSource => _pptSources.Active;
+
+    /// <summary>Diagnostics only: tick of the last completed <see cref="NavigatePpt"/> call.</summary>
+    internal long PptNavigationLastExitMs => _pptGuard.LastExitMs;
+
     private void NavigatePpt(bool next)
     {
         long now = Environment.TickCount64;
-        if (!_pptGuard.TryEnter(now)) return;
+        if (!_pptGuard.TryEnter(now, out long retryAfterMs))
+        {
+            // Explicit flips that land inside the debounce window must not vanish: queue exactly
+            // one retry for the remaining interval. Keyboard repeat and toolbar clicks converge
+            // on the latest direction instead of turning into two page flips.
+            if (retryAfterMs > 0) QueuePptNavigationRetry(next, retryAfterMs);
+            return;
+        }
         try
         {
             // The generation guards the screenshot request raised synchronously by the session.
@@ -2906,6 +2985,24 @@ public sealed partial class ShellController : IShellActions, IDisposable
         {
             _pptGuard.Exit(now);
         }
+    }
+
+    /// <summary>
+    /// Delivers a flip that arrived inside <see cref="NavigationGuard"/>'s debounce window.
+    /// Only the latest direction is kept and the timer fires once, so a rapid double click ends
+    /// in a single additional flip instead of being swallowed.
+    /// </summary>
+    private void QueuePptNavigationRetry(bool next, long retryAfterMs)
+    {
+        _pptRetryNext = next;
+        if (_pptRetryQueued) return;
+        _pptRetryQueued = true;
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[PPT] 导航请求落在 {retryAfterMs}ms 节流窗口内，排队补发 {(next ? "Next" : "Previous")}",
+            Core.Diagnostics.LogType.Info);
+        _pptRetryTimer.Stop();
+        _pptRetryTimer.Interval = TimeSpan.FromMilliseconds(retryAfterMs + 10);
+        _pptRetryTimer.Start();
     }
 
     /// <summary>
@@ -3120,6 +3217,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
         _aiStream?.Abort();
         _aiStream = null;
+        _aiTarget = null; // 课件回看保持原有“贴回主展板”行为，不参与板中板路由
         _aiGate.Invalidate();
         _aiSlideId = slideId;
         _aiSlideIndex = entry.Index;
@@ -3427,10 +3525,41 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public void OpenAiAssistant()
     {
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] OpenAiAssistant 入口：board={_board is not null}，assistantExists={_aiAssistant is not null}",
+            Core.Diagnostics.LogType.Info);
+        try
+        {
+            OpenAiAssistantCore();
+        }
+        catch (Exception ex)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教打开失败：{ex}", Core.Diagnostics.LogType.Error);
+            try
+            {
+                ShowAssistantMessage("AI 助教打开失败，请稍后重试。");
+            }
+            catch (Exception inner)
+            {
+                Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教错误提示失败：{inner}", Core.Diagnostics.LogType.Error);
+                _ = NotifyAsync("AI 助教", "打开失败：" + ex.GetBaseException().Message);
+            }
+        }
+    }
+
+    private void OpenAiAssistantCore()
+    {
+        _aiTarget = CaptureAssistantTarget();
         var controller = ActiveController;
         IReadOnlyList<InkStroke> sourceStrokes = controller.Selection;
         var bounds = controller.SelectionBounds;
         string source = "selection";
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] Core 入口：controller={controller?.GetType().Name ?? "null"}，"
+            + $"selection={sourceStrokes.Count}，"
+            + $"bounds=({bounds.Left:0.0},{bounds.Top:0.0},{bounds.Width:0.0}x{bounds.Height:0.0})，source={source}"
+            + $"，target={AssistantTargetPolicy.Describe(_aiTarget)}",
+            Core.Diagnostics.LogType.Info);
 
         if (sourceStrokes.Count == 0 || bounds.Width < 16 || bounds.Height < 16)
         {
@@ -3442,10 +3571,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
             if (sourceStrokes.Count == 0)
             {
                 sourceStrokes = Array.Empty<InkStroke>();
-                bounds = new Rect(
-                    0, 0,
-                    Overlay.Window.Width / Overlay.Window.DpiScale,
-                    Overlay.Window.Height / Overlay.Window.DpiScale);
+                var (targetWork, targetDpi, _, _) = AssistantTarget();
+                double viewWidth = targetWork.Width / targetDpi;
+                double viewHeight = targetWork.Height / targetDpi;
+                Window canvasWindow = TargetCanvasWindow();
+                if (canvasWindow is not null)
+                {
+                    ScreenRect client = WindowChrome.GetClientBounds(WindowChrome.GetHwnd(canvasWindow));
+                    if (client.Width > 0 && client.Height > 0)
+                    {
+                        viewWidth = client.Width / targetDpi;
+                        viewHeight = client.Height / targetDpi;
+                    }
+                }
+                bounds = new Rect(0, 0, (float)viewWidth, (float)viewHeight);
             }
             else
             {
@@ -3483,10 +3622,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
         List<AssistantStroke> strokes = BuildAssistantStrokes(sourceStrokes, matrix);
         double scale = Math.Sqrt(Math.Abs(matrix.GetDeterminant()));
-        double dpi = CurrentDpi();
-
-        int px = (int)Math.Round(viewRect.Left * dpi);
-        int py = (int)Math.Round(viewRect.Top * dpi);
+        var (_, dpi, originXDip, originYDip) = AssistantTarget();
+        // controller.ViewTransform 给的是画布客户区 DIP，截图 API 要屏幕绝对物理像素：
+        // 板窗口客户区原点不在 (0,0)，必须先加客户区原点再乘目标 DPI。
+        int px = (int)Math.Round((viewRect.Left + originXDip) * dpi);
+        int py = (int)Math.Round((viewRect.Top + originYDip) * dpi);
         int pw = (int)Math.Round(viewRect.Width * dpi);
         int ph = (int)Math.Round(viewRect.Height * dpi);
 
@@ -3498,16 +3638,28 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private void ShowAssistantMessage(string message)
     {
-        _aiThumb = "";
-        _aiAnchor = CenterAnchor();
-        _aiSession = AssistantMachine.CreateSession(AssistantMode.Auto, "");
-        AssistantMachine.Fail(_aiSession, message);
-        PrepareAssistantWindow().Apply(_aiSession, _aiThumb);
+        try
+        {
+            _aiTarget = CaptureAssistantTarget();
+            _aiThumb = "";
+            _aiAnchor = CenterAnchor();
+            _aiSession = AssistantMachine.CreateSession(AssistantMode.Auto, "");
+            AssistantMachine.Fail(_aiSession, message);
+            PrepareAssistantWindow().Apply(_aiSession, _aiThumb);
+        }
+        catch (Exception ex)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教提示浮窗失败：{ex}", Core.Diagnostics.LogType.Error);
+            _ = NotifyAsync("AI 助教", message);
+        }
     }
 
     private async Task StartAssistantAsync(
         List<AssistantStroke> strokes, double scale, int px, int py, int pw, int ph, string source)
     {
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 截图开始：px={px},py={py},pw={pw},ph={ph},source={source}",
+            Core.Diagnostics.LogType.Info);
         string thumb;
         try
         {
@@ -3520,7 +3672,18 @@ public sealed partial class ShellController : IShellActions, IDisposable
             thumb = "";
         }
 
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 截图完成：thumb.Length={thumb.Length}",
+            Core.Diagnostics.LogType.Info);
         _aiThumb = thumb;
+
+        if (!AiTargetCanvasAvailable())
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 截图期间目标画布已关闭，丢弃本次请求：target={AssistantTargetPolicy.Describe(_aiTarget)}",
+                Core.Diagnostics.LogType.Info);
+            return;
+        }
 
         var problem = new ProblemContext
         {
@@ -3660,10 +3823,19 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private AssistantWindow PrepareAssistantWindow()
     {
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] Prepare 入口：anchor=({_aiAnchor.Left:0.0},{_aiAnchor.Top:0.0})-({_aiAnchor.Right:0.0},{_aiAnchor.Bottom:0.0})，"
+            + $"regions={_aiProblem?.Count ?? 0}，board={_board is not null}",
+            Core.Diagnostics.LogType.Info);
         if (_aiAssistant is not null) _aiAssistant.Close();
 
+        Core.Diagnostics.FileLog.WriteLogToFile("[AI] 即将构造 AssistantWindow", Core.Diagnostics.LogType.Info);
         var window = new AssistantWindow(Services.Settings.Appearance.Theme, Services.Settings.Features);
         _aiAssistant = window;
+        _aiAssistantFromSideBoard = _aiTarget?.Kind == AssistantCanvasKind.SideBoard;
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] AssistantWindow 构造完成：hwnd=0x{WindowChrome.GetHwnd(window).ToInt64():X}",
+            Core.Diagnostics.LogType.Info);
         window.StopRequested += OnAiStopRequested;
         window.RetryRequested += OnAiRetryRequested;
         window.CopyRequested += OnAiCopyRequested;
@@ -3685,35 +3857,59 @@ public sealed partial class ShellController : IShellActions, IDisposable
         window.SetFavoriteSource(
             CurrentPresentationName(),
             _aiSlideId > 0 ? _aiSlideId : _aiProblem?.SlideId ?? 0,
-            _board is null ? -1 : Services.Board.CurrentIndex);
+            AiFavoriteBoardPage());
 
-        var work = ScreenService.WorkArea;
-        double dpi = CurrentDpi();
-        double workWidth = work.Width / dpi;
-        double workHeight = work.Height / dpi;
+        var (work, dpi, originXDip, originYDip) = AssistantTarget();
+        var workDip = new AssistantRect(work.X / dpi, work.Y / dpi,
+            (work.X + work.Width) / dpi, (work.Y + work.Height) / dpi);
+        double workWidth = workDip.Width;
+        double workHeight = workDip.Height;
         double cardWidth = AssistantWindow.CardWidth;
         double cardHeight = Math.Max(200, Math.Min(460, workHeight * AssistantWindow.MaxHeightRatio));
 
         AssistantRect anchor = _aiAnchor.IsEmpty ? CenterAnchor() : _aiAnchor;
+        // 锚点是客户区 DIP；定位用窗口需要屏幕绝对 DIP 与目标工作区。
+        AssistantRect screenAnchor = AssistantLayout.Offset(anchor, originXDip, originYDip);
 
         AssistantPlacement placement;
         if (anchor.Width > workWidth * 0.6 || anchor.Height > workHeight * 0.6)
         {
             // 整屏/大范围识别时锚点几乎铺满视口，跟随锚点会把浮窗顶到左上角；
-            // 改为固定在右下角，并做边界 clamp。
-            double x = workWidth - cardWidth - 16;
-            double y = workHeight - cardHeight - 16;
-            x = Math.Clamp(x, 12, Math.Max(12, workWidth - cardWidth - 12));
-            y = Math.Clamp(y, 12, Math.Max(12, workHeight - cardHeight - 12));
-            placement = new AssistantPlacement(x, y, false, false, 0);
+            // 改为固定在目标工作区右下角，并按同一工作区做边界 clamp。
+            placement = AssistantLayout.DockBottomRight(workDip, cardWidth, cardHeight);
         }
         else
         {
-            placement = AssistantLayout.Place(
-                anchor, cardWidth, cardHeight, workWidth, workHeight);
+            placement = AssistantLayout.PlaceInWorkArea(screenAnchor, cardWidth, cardHeight, workDip);
         }
 
-        window.ShowAt(placement, dpi);
+        // 目标画布窗口作为 owner：子板/主展板时浮窗随板走；overlay 模式不设 Win32 owner，
+        // 避免此前把 WinUI 浮窗挂到独立 Win32 分层窗口后不可见。
+        Window canvasWindow = TargetCanvasWindow();
+        IntPtr owner = canvasWindow is not null ? WindowChrome.GetHwnd(canvasWindow) : IntPtr.Zero;
+        IntPtr anchorHwnd = owner != IntPtr.Zero ? owner : Overlay.Window.Handle;
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] SetOwner 前：target={AssistantTargetPolicy.Describe(_aiTarget)}，"
+            + $"owner=0x{owner.ToInt64():X}，currentOwner=0x{WindowChrome.GetOwner(window).ToInt64():X}",
+            Core.Diagnostics.LogType.Info);
+        WindowChrome.SetOwner(window, owner);
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] SetOwner 后：currentOwner=0x{WindowChrome.GetOwner(window).ToInt64():X}",
+            Core.Diagnostics.LogType.Info);
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] ShowAt 前：placement=({placement.X:0.0},{placement.Y:0.0})，dpi={dpi:0.###}，workHeight={workHeight:0.0}",
+            Core.Diagnostics.LogType.Info);
+        window.ShowAt(placement, dpi, workHeight);
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] ShowAt 后：appWindowId={window.AppWindow.Id.Value}，isVisible={window.AppWindow.IsVisible}，"
+            + $"position=({window.AppWindow.Position.X},{window.AppWindow.Position.Y})，"
+            + $"size={window.AppWindow.Size.Width}x{window.AppWindow.Size.Height}",
+            Core.Diagnostics.LogType.Info);
+        WindowChrome.EnsureAbove(window, anchorHwnd);
+        _aiHiddenWithSideBoard = false;
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] EnsureAbove 后：isVisible={window.AppWindow.IsVisible}，anchor=0x{anchorHwnd.ToInt64():X}",
+            Core.Diagnostics.LogType.Info);
         ShowLassoAiHintOnce(window);
         return window;
     }
@@ -3761,6 +3957,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _aiSession.RevealedSteps = 0;
         }
 
+        if (_aiTarget is not null) _aiTarget.SessionId = _aiSession?.SessionId ?? "";
+
         _aiAssistant?.Apply(_aiSession, _aiThumb);
         _aiAssistant?.SetBusy(true);
 
@@ -3768,7 +3966,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _aiAssistant?.SetFavoriteSource(
             CurrentPresentationName(),
             _aiSlideId > 0 ? _aiSlideId : _aiProblem?.SlideId ?? 0,
-            _board is null ? -1 : Services.Board.CurrentIndex);
+            AiFavoriteBoardPage());
 
         _aiTwoStage = Services.Settings.Ai.EnableTwoStage
             && (_aiProblem is null || _aiProblem.Count <= 1);
@@ -3846,6 +4044,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnAiEvent(AssistantEvent ev)
     {
         if (_aiSession is null) return;
+        if (!AiTargetStillCurrent(writeBack: false)) return;
         try
         {
             if (_aiTwoStage) ApplyTwoStageEvent(ev);
@@ -3902,6 +4101,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnAiSecondStageStarted()
     {
         if (_aiSession is null || !_aiTwoStage) return;
+        if (!AiTargetStillCurrent(writeBack: false)) return;
 
         _aiPreStageText = _aiSession.Text;
         _aiPreStageSteps = _aiSession.Steps
@@ -4031,6 +4231,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private void OnAiError(string message)
     {
+        if (!AiTargetStillCurrent(writeBack: false)) { _aiAssistant?.SetBusy(false); return; }
         if (_aiSession is null) { _aiAssistant?.SetBusy(false); return; }
         ResetAiPreStage();
         AssistantMachine.Fail(_aiSession, message);
@@ -4041,6 +4242,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private void OnAiDone()
     {
+        if (!AiTargetStillCurrent(writeBack: false)) { _aiAssistant?.SetBusy(false); return; }
         if (_aiSession is null) { _aiAssistant?.SetBusy(false); return; }
         try
         {
@@ -4065,7 +4267,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
         {
             string id = _reRecognizeRegionId;
             _reRecognizeRegionId = null;
-            if (_aiProblem is not null)
+            if (!AiTargetStillCurrent(writeBack: true))
+            {
+                _reRecognizeRegionId = null;
+            }
+            else if (_aiProblem is not null)
             {
                 ProblemRegion region = _aiProblem.Regions.Find(item => item.Id == id);
                 if (region is not null && !string.IsNullOrWhiteSpace(_aiSession?.Text))
@@ -4081,7 +4287,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_variantPending)
         {
             _variantPending = false;
-            _ = PreviewVariantAsync(_aiSession);
+            if (AiTargetStillCurrent(writeBack: true)) _ = PreviewVariantAsync(_aiSession);
         }
     }
 
@@ -4103,7 +4309,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
             _teachingSession?.Link(
                 "ai", _aiSession.SessionId, _aiSlideId, _aiSlideIndex,
-                _board is null ? -1 : Services.Board.CurrentIndex, "", Environment.TickCount64);
+                AiFavoriteBoardPage(), "", Environment.TickCount64);
             SaveTeachingSession();
         }
         catch (Exception ex)
@@ -4137,6 +4343,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private void OnAiStopRequested()
     {
+        if (!AiTargetStillCurrent(writeBack: false)) return;
         _aiStream?.Abort();
         _aiStream = null;
         ResetAiPreStage();
@@ -4154,6 +4361,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnAiTeachingModeChanged(AssistantTeachingMode mode)
     {
         if (_aiSession is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) return;
 
         AssistantMachine.SetTeachingMode(_aiSession, mode);
         Services.Settings.Ai.TeachingMode = AssistantTeachingPolicy.Wire(mode);
@@ -4180,6 +4388,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     /// <summary>基于当前题生成同知识点变式题；结果先预览编辑，不直接贴入。</summary>
     private void OnAiVariantRequested(bool advanced)
     {
+        if (!AiTargetStillCurrent(writeBack: true)) return;
         if (_aiProblem is null || _aiProblem.IsEmpty)
         {
             _aiAssistant?.ShowNotice("先框选一道题，再生成变式题");
@@ -4353,8 +4562,14 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private async Task AddAiRegionAsync()
     {
         if (_aiProblem is null || _aiAssistant is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) return;
 
-        var controller = ActiveController;
+        InkController controller = _aiTarget?.Kind switch
+        {
+            AssistantCanvasKind.SideBoard => Services.SideBoard.Current,
+            AssistantCanvasKind.MainBoard => Services.Board.Current,
+            _ => ActiveController,
+        };
         IReadOnlyList<InkStroke> selection = controller.Selection;
         Rect bounds = controller.SelectionBounds;
         if (selection.Count == 0 || bounds.Width < 16 || bounds.Height < 16)
@@ -4373,10 +4588,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
             Math.Max(topLeft.X, bottomRight.X),
             Math.Max(topLeft.Y, bottomRight.Y));
 
-        double dpi = CurrentDpi();
+        var (_, dpi, originXDip, originYDip) = AssistantTarget();
         string thumb = await AssistantCapture.CapturePngBase64Async(
-            (int)Math.Round(viewRect.Left * dpi),
-            (int)Math.Round(viewRect.Top * dpi),
+            (int)Math.Round((viewRect.Left + originXDip) * dpi),
+            (int)Math.Round((viewRect.Top + originYDip) * dpi),
             (int)Math.Round(viewRect.Width * dpi),
             (int)Math.Round(viewRect.Height * dpi));
 
@@ -4426,6 +4641,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnAiReRecognizeRegion(string id)
     {
         if (_aiProblem is null || _aiAssistant is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) return;
 
         ProblemRegion region = _aiProblem.Regions.Find(item => item.Id == id);
         if (region is null || string.IsNullOrEmpty(region.ImageBase64))
@@ -4483,6 +4699,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private async Task PasteAssistantAsync()
     {
+        if (!AiTargetStillCurrent(writeBack: true)) { _aiAssistant?.SetBusy(false); return; }
         if (_aiSession is null || _aiAssistant is null) return;
         if (_aiSession.State != AssistantState.Done) return;
 
@@ -4494,6 +4711,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
         window.SetBusy(true);
         byte[] png = await PasteCardRenderer.RenderPngAsync("AI 助教", lines, width, height);
         if (!ReferenceEquals(_aiAssistant, window)) return;
+        if (!AiTargetStillCurrent(writeBack: true))
+        {
+            window.SetBusy(false);
+            return;
+        }
 
         if (png is null || png.Length == 0)
         {
@@ -4503,10 +4725,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
             return;
         }
 
-        var work = ScreenService.WorkArea;
-        double dpi = CurrentDpi();
+        var (work, dpi, _, _) = AssistantTarget();
+        double viewWidth = work.Width / dpi;
+        double viewHeight = work.Height / dpi;
+        if (_aiTarget?.Kind == AssistantCanvasKind.SideBoard && _sideBoard is not null)
+        {
+            ScreenRect client = WindowChrome.GetClientBounds(WindowChrome.GetHwnd(_sideBoard));
+            if (client.Width > 0 && client.Height > 0)
+            {
+                viewWidth = client.Width / dpi;
+                viewHeight = client.Height / dpi;
+            }
+        }
         var (left, top, w, h) = PasteCardLayout.Place(
-            _aiAnchor, width, height, work.Width / dpi, work.Height / dpi);
+            _aiAnchor, width, height, viewWidth, viewHeight);
 
         string metadata = "";
         if (Services.Settings.Ai.EnableEditablePaste)
@@ -4522,7 +4754,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
             }
         }
 
-        Services.Board.AddImage(new BoardImageAsset
+        BoardService targetBoard = AiTargetBoard();
+        bool added = targetBoard.AddImage(new BoardImageAsset
         {
             Name = "AI 助教",
             Data = png,
@@ -4533,8 +4766,14 @@ public sealed partial class ShellController : IShellActions, IDisposable
             Height = (float)h,
             Metadata = metadata,
         });
+        if (!added)
+        {
+            window.SetBusy(false);
+            window.ShowNotice("贴回失败：目标画板当前页已失效，请重新框选后再试");
+            return;
+        }
 
-        if (_board is null) ToggleBoard();
+        if (targetBoard == Services.Board && _board is null) ToggleBoard();
 
         window.SetBusy(false);
         window.SetPasted(true);
@@ -4543,6 +4782,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnAiFollowUpRequested(string question)
     {
         if (_aiSession is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) return;
 
         var request = new AssistantRequest
         {
@@ -4565,6 +4805,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _aiRegionStream?.Abort();
         _aiRegionStream = null;
         ResetAiPreStage();
+        _aiAssistantFromSideBoard = false;
+        _aiHiddenWithSideBoard = false;
         _aiAssistant = null;
     }
 
@@ -4579,6 +4821,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             + $"窗口={(receivedWindow is null ? "null" : "ok")}",
             Core.Diagnostics.LogType.Trace);
 
+        if (!AiTargetStillCurrent(writeBack: true)) return;
         if (!Services.Settings.Ai.EnableLocalCorrection) return;
         if (rect.IsEmpty) return;
 
@@ -4657,6 +4900,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
                     _aiRegionStream = null;
                     if (failure || !ReferenceEquals(_aiAssistant, window)) return;
                     if (!ReferenceEquals(_aiSession, session)) return;
+                    if (!AiTargetStillCurrent(writeBack: true)) return;
 
                     string replacement = string.IsNullOrWhiteSpace(formula) ? buffer.ToString() : formula;
                     if (string.IsNullOrWhiteSpace(replacement))
@@ -4723,6 +4967,145 @@ public sealed partial class ShellController : IShellActions, IDisposable
     }
 
 
+    /// <summary>按当前激活画布（子板优先 → 主展板 → overlay）记录本次 AI 请求目标。</summary>
+    private AssistantTarget CaptureAssistantTarget()
+    {
+        AssistantCanvasKind kind = AssistantCanvasKind.Overlay;
+        object canvas = null, page = null;
+        int pageIndex = 0;
+        if (_sideBoard is { IsShown: true } && ReferenceEquals(ActiveController, _sideBoard.CurrentController))
+        {
+            kind = AssistantCanvasKind.SideBoard;
+            canvas = Services.SideBoard;
+            pageIndex = Services.SideBoard.CurrentIndex;
+        }
+        else if (_board is not null && ReferenceEquals(ActiveController, _board.CurrentController))
+        {
+            kind = AssistantCanvasKind.MainBoard;
+            canvas = Services.Board;
+            pageIndex = Services.Board.CurrentIndex;
+        }
+        if (canvas is BoardService board && pageIndex >= 0 && pageIndex < board.Pages.Count)
+            page = board.Pages[pageIndex];
+        return new AssistantTarget
+        {
+            Canvas = canvas, Page = page, Kind = kind, PageIndex = pageIndex,
+            SessionId = _aiSession?.SessionId ?? "",
+        };
+    }
+
+    /// <summary>按已记录目标重建当前快照，用于过期判定；未记录目标时返回 null。</summary>
+    private AssistantTarget SnapshotAssistantTarget()
+    {
+        if (_aiTarget is null) return null;
+        BoardService board = _aiTarget.Kind switch
+        {
+            AssistantCanvasKind.SideBoard => Services.SideBoard,
+            AssistantCanvasKind.MainBoard => Services.Board,
+            _ => null,
+        };
+        int index = board?.CurrentIndex ?? 0;
+        object page = board is not null && index >= 0 && index < board.Pages.Count ? board.Pages[index] : null;
+        return new AssistantTarget
+        {
+            Canvas = board, Page = page, Kind = _aiTarget.Kind, PageIndex = index,
+            SessionId = _aiSession?.SessionId ?? "",
+        };
+    }
+
+    /// <summary>
+    /// 异步响应目标校验。writeBack=true（贴回/局部纠错等写操作）要求同板、同页、
+    /// 同页对象与同会话；流式显示只要求同板同会话，避免切页时浮窗卡在生成中。
+    /// 失败一律写日志，写回失败与跨板失败额外用浮窗提示用户。
+    /// </summary>
+    private bool AiTargetStillCurrent(bool writeBack)
+    {
+        AssistantTarget requested = _aiTarget;
+        if (requested is null) return true; // 聚焦区域/课件回看等旧路径保持原行为
+        requested.SessionId = _aiSession?.SessionId ?? requested.SessionId;
+        AssistantTarget current = SnapshotAssistantTarget();
+        bool sameCanvas = AssistantTargetPolicy.SameCanvas(requested, current);
+        bool sameSession = AssistantTargetPolicy.SameSession(requested, current);
+        bool ok = writeBack
+            ? AssistantTargetPolicy.CanWriteBack(requested, current)
+            : sameCanvas && sameSession;
+        if (ok) return true;
+
+        string notice = AssistantTargetPolicy.StaleNotice(requested, current);
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 丢弃过期响应：writeBack={writeBack}，requested=({AssistantTargetPolicy.Describe(requested)})，"
+            + $"current=({AssistantTargetPolicy.Describe(current)})，notice={notice}",
+            Core.Diagnostics.LogType.Info);
+        if (writeBack || !sameCanvas) _aiAssistant?.ShowNotice(notice);
+        return false;
+    }
+
+    /// <summary>发起请求的目标画布窗口是否仍然存在（截图 await 期间子板/主展板可能已关闭）。</summary>
+    private bool AiTargetCanvasAvailable()
+    {
+        if (_aiTarget is null) return true;
+        return _aiTarget.Kind switch
+        {
+            AssistantCanvasKind.SideBoard => _sideBoard is not null,
+            AssistantCanvasKind.MainBoard => _board is not null,
+            _ => true,
+        };
+    }
+
+    /// <summary>本次 AI 请求是否锚定板中板。</summary>
+    private bool AssistantBelongsToSideBoard
+        => _aiAssistantFromSideBoard
+           || (_aiTarget?.Kind == AssistantCanvasKind.SideBoard
+               && ReferenceEquals(_aiTarget.Canvas, Services.SideBoard));
+
+    /// <summary>收藏来源页：按目标板取页索引；overlay 维持旧语义（主展板未打开为 -1）。</summary>
+    private int AiFavoriteBoardPage()
+        => _aiTarget?.Kind switch
+        {
+            AssistantCanvasKind.SideBoard => Services.SideBoard.CurrentIndex,
+            AssistantCanvasKind.MainBoard => Services.Board.CurrentIndex,
+            _ => _board is null ? -1 : Services.Board.CurrentIndex,
+        };
+
+    /// <summary>贴回等写操作的目标板；overlay/未记录目标回退主展板，保持既有行为。</summary>
+    private BoardService AiTargetBoard()
+        => _aiTarget?.Kind == AssistantCanvasKind.SideBoard ? Services.SideBoard : Services.Board;
+
+    /// <summary>目标画布窗口：子板优先，其次主展板，overlay 返回 null。</summary>
+    private Window TargetCanvasWindow()
+        => _aiTarget?.Kind switch
+        {
+            AssistantCanvasKind.SideBoard => _sideBoard,
+            AssistantCanvasKind.MainBoard => _board,
+            _ => null,
+        };
+
+    /// <summary>
+    /// AI 助教定位与截图的目标几何。板模式取板窗口所在显示器的工作区、DPI 与客户区左上
+    /// 屏幕坐标（换算为 DIP）；overlay 模式保持主屏工作区、(0,0) 客户区原点与 overlay DPI，
+    /// 不改变现有全屏 overlay 行为。
+    /// </summary>
+    private (ScreenRect Work, double Dpi, double OriginXDip, double OriginYDip) AssistantTarget()
+    {
+        Window canvasWindow = TargetCanvasWindow();
+        if (canvasWindow is not null)
+        {
+            IntPtr hwnd = WindowChrome.GetHwnd(canvasWindow);
+            if (hwnd != IntPtr.Zero)
+            {
+                ScreenInfo info = ScreenService.FromWindow(hwnd);
+                if (info.WorkArea.Width > 0 && info.WorkArea.Height > 0)
+                {
+                    double boardDpi = info.DpiScale > 0 ? info.DpiScale : 1.0;
+                    ScreenRect client = WindowChrome.GetClientBounds(hwnd);
+                    return (info.WorkArea, boardDpi, client.X / boardDpi, client.Y / boardDpi);
+                }
+            }
+        }
+
+        return (ScreenService.WorkArea, CurrentDpi(), 0, 0);
+    }
+
     private double CurrentDpi()
     {
         double dpi = Overlay.Window.DpiScale;
@@ -4731,10 +5114,12 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private AssistantRect CenterAnchor()
     {
-        var work = ScreenService.WorkArea;
-        double dpi = CurrentDpi();
-        double centerX = work.Width / dpi / 2.0;
-        double centerY = work.Height / dpi / 2.0;
+        var (work, dpi, originXDip, originYDip) = AssistantTarget();
+        var workDip = new AssistantRect(work.X / dpi, work.Y / dpi,
+            (work.X + work.Width) / dpi, (work.Y + work.Height) / dpi);
+        // 锚点语义保持为客户区 DIP；板模式减去客户区原点，overlay 模式原点为 (0,0)。
+        double centerX = workDip.CenterX - originXDip;
+        double centerY = workDip.CenterY - originYDip;
         return new AssistantRect(centerX - 8, centerY - 8, centerX + 8, centerY + 8);
     }
 
@@ -4851,7 +5236,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 catch (Exception ex) { await NotifyAsync("重启失败", ex.Message); return; }
             }
             _exiting = true;
-            _pollTimer.Stop();
+_pollTimer.Stop();
+        _pptRetryTimer?.Stop();
 
             if (Services.Settings.Automation.IsAutoSaveStrokesAtClear)
                 Services.AutoSave.SaveSnapshot(Services.OverlayInk.Document.Strokes, "exit");
@@ -4866,6 +5252,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        CloseSideBoardForExit();
         StopShortcutTracking();
         Overlay.InteractionChanged -= RefreshShortcutRegistration;
         StopDocumentForegroundTracking();
@@ -4878,6 +5265,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Services.Modules.Changed -= OnExtensionCommandsChanged;
         Services.SettingsApplied -= ApplyDocumentSettings;
         Services.SettingsApplied -= ApplyDisplaySettings;
+        Services.SettingsApplied -= ApplySideBoardDisplaySettings;
         Services.SettingsApplied -= RefreshPaletteNibModes;
         Services.Plugins.Dispose();
         Services.Modules.Dispose();
