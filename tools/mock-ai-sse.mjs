@@ -15,7 +15,74 @@ const LATEX = {
   chat: 'E = mc^2'
 };
 
-function scriptFor(mode) {
+const BOARD_WRITE_PLAN = {
+  type: 'board_plan',
+  schema: 1,
+  intent: 'write',
+  target: { board: 'main', pageIndex: 0 },
+  originals: [
+    '1/2 x² - 3x + 2 = 0',
+    '求根：x = 2 或 x = 3',
+    '判别式 Δ = 1'
+  ],
+  confidence: 0.78,
+  warnings: [
+    '整体置信度 0.78 偏低，请复核公式系数',
+    '原文疑似笔误：第二行 x1 可能应为 x_1'
+  ],
+  blocks: [
+    {
+      id: 'b1',
+      kind: 'formula',
+      latex: '\\frac{1}{2}x^2 - 3x + 2 = 0',
+      rect: { x: 0.06, y: 0.1, w: 0.42, h: 0.14 },
+      style: { fontSize: 28, align: 'center', columns: 1, lineHeight: 1.4 },
+      confidence: 0.72,
+      note: '一次项系数疑似笔误，已按 -3x 整理'
+    },
+    {
+      id: 'b2',
+      kind: 'text',
+      text: '一元二次方程综合讲解',
+      confidence: 0.95,
+      rect: { x: 0.06, y: 0.28, w: 0.42, h: 0.1 },
+      style: { fontSize: 24, align: 'left', columns: 1, lineHeight: 1.4 }
+    },
+    {
+      id: 'b3',
+      kind: 'wordlist',
+      lines: ['判别式', '配方法', '因式分解'],
+      confidence: 0.88,
+      rect: { x: 0.54, y: 0.1, w: 0.24, h: 0.28 },
+      style: { fontSize: 24, align: 'left', columns: 1, lineHeight: 1.4 }
+    },
+    {
+      id: 'b4',
+      kind: 'poem',
+      title: '静夜思',
+      author: '唐·李白',
+      lines: ['床前明月光', '疑是地上霜', '举头望明月', '低头思故乡'],
+      confidence: 0.9,
+      note: '标题根据正文自动生成',
+      rect: { x: 0.54, y: 0.42, w: 0.42, h: 0.3 },
+      style: { fontSize: 26, align: 'center', columns: 1, lineHeight: 1.6 }
+    }
+  ],
+  notes: ['第 2 块标题为自动生成，可按需修改']
+};
+
+function boardWriteScript() {
+  return [
+    { name: 'board_plan', data: BOARD_WRITE_PLAN },
+    { name: 'done', data: { type: 'done' } }
+  ];
+}
+
+function scriptFor(mode, purpose) {
+  if (mode === 'board_write' || purpose === 'board_write') {
+    return boardWriteScript();
+  }
+
   const events = [];
   const token = (text) => events.push({ name: 'token', data: { type: 'token', text } });
   const formula = (latex) => events.push({ name: 'formula', data: { type: 'formula', latex } });
@@ -84,10 +151,14 @@ createServer((req, res) => {
   });
   req.on('end', () => {
     let mode = 'auto';
+    let purpose = '';
     try {
       const payload = JSON.parse(body);
       if (typeof payload.mode === 'string') {
         mode = payload.mode;
+      }
+      if (typeof payload.purpose === 'string') {
+        purpose = payload.purpose;
       }
     } catch (error) {
       void error;
@@ -112,7 +183,7 @@ createServer((req, res) => {
       Connection: 'keep-alive',
       'Access-Control-Allow-Origin': '*'
     });
-    const events = scriptFor(mode);
+    const events = scriptFor(mode, purpose);
     let index = 0;
     let closed = false;
     res.on('close', () => {
@@ -135,5 +206,5 @@ createServer((req, res) => {
   });
 }).listen(PORT, '127.0.0.1', () => {
   console.log('mock-ai-sse listening on http://127.0.0.1:' + PORT);
-  console.log('POST /v1/chat/completions  (mode: auto|formula|solve|shape|chat|error)');
+  console.log('POST /v1/chat/completions  (mode: auto|formula|solve|shape|chat|board_write|error)');
 });

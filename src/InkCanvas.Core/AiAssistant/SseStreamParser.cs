@@ -145,10 +145,17 @@ public sealed class SseStreamParser
             if (root.ValueKind != JsonValueKind.Object)
                 return kind == null ? null : new AssistantEvent { Kind = kind.Value, Text = data };
 
+            string type = ReadString(root, "type") ?? ReadString(root, "event") ?? "";
             if (kind == null)
+                kind = KindFromName(type.Trim().ToLowerInvariant());
+
+            bool hasBlocks = root.TryGetProperty("blocks", out JsonElement blocks) &&
+                             blocks.ValueKind == JsonValueKind.Array;
+            if (kind == AssistantEventKind.BoardPlan ||
+                string.Equals(type.Trim(), "board_plan", StringComparison.OrdinalIgnoreCase) ||
+                hasBlocks)
             {
-                string type = ReadString(root, "type") ?? ReadString(root, "event");
-                kind = KindFromName((type ?? "").Trim().ToLowerInvariant());
+                return new AssistantEvent { Kind = AssistantEventKind.BoardPlan, Text = data };
             }
 
             string content = ReadOpenAiContent(root) ?? ReadString(root, "content") ?? ReadString(root, "text");
@@ -194,6 +201,9 @@ public sealed class SseStreamParser
                 return AssistantEventKind.Done;
             case "error":
                 return AssistantEventKind.Error;
+            case "board_plan":
+            case "boardplan":
+                return AssistantEventKind.BoardPlan;
             default:
                 return null;
         }

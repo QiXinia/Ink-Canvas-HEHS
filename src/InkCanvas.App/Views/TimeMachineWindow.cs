@@ -18,6 +18,7 @@ using Line = Microsoft.UI.Xaml.Shapes.Line;
 using System.Diagnostics;
 using System.Numerics;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 using VirtualKey = Windows.System.VirtualKey;
 using WinRT.Interop;
 
@@ -52,6 +53,11 @@ public sealed class TimeMachineWindow : Window
     private readonly ReplayClock _clock;
     private readonly InkController _replayController = new();
     private readonly InkSurface _surface = new() { IsHitTestVisible = false };
+    private readonly Canvas _objectLayer = new() { IsHitTestVisible = false };
+    private readonly Dictionary<string, BitmapImage> _objectBitmaps = new(StringComparer.Ordinal);
+    private readonly List<InMemoryRandomAccessStream> _objectStreams = new();
+    private readonly HashSet<string> _objectLoading = new(StringComparer.Ordinal);
+    private string _lastObjectKey = "";
     private readonly DispatcherQueueTimer _timer;
     private readonly TouchIconButton _playPause;
     private readonly Slider _progress;
@@ -319,10 +325,13 @@ public sealed class TimeMachineWindow : Window
         canvasHost.Children.Add(_pptImages[1]);
         canvasHost.Children.Add(_gridCanvas);
         canvasHost.Children.Add(_surface);
+        // AI 板书对象叠加层：与笔画同样的视图变换，不参与命中测试。
+        canvasHost.Children.Add(_objectLayer);
         // 窗口尺寸变化时按新尺寸重画网格；同帧内背景层一起刷新，避免切换时闪白。
         canvasHost.SizeChanged += (_, _) =>
         {
             _gridKey = null;
+            _lastObjectKey = "";
             RenderFrame();
         };
 
@@ -763,6 +772,7 @@ public sealed class TimeMachineWindow : Window
         ClassroomScene scene = _timeline.SceneAt(time);
         ApplyBackground(scene);
         ApplyViewState(scene);
+        RenderObjects(time, scene);
 
         int page = scene.PageIndex;
         _pageLabel.Text = $"第 {page + 1} 页 / 共 {_pageCount} 页";
@@ -774,6 +784,135 @@ public sealed class TimeMachineWindow : Window
 
         _timeLabel.Text = $"{Format(time)} / {Format(_timeline.Duration)}";
         UpdateBookmarkHighlight(time);
+    }
+
+    /// <summary>
+    /// 叠加当前时刻的 AI 板书对象：PNG 直接解码为 BitmapImage（录制时已保存，不重新生成），
+    /// 无 PNG/超阈值对象显示占位框；坐标与回放控制器使用同一视图变换。
+    /// </summary>
+    private void RenderObjects(long time, ClassroomScene scene)
+    {
+        IReadOnlyList<TimelineAiObject> objects = _timeline.BuildObjectFrame(time);
+        string key = BuildObjectKey(objects, scene);
+        if (string.Equals(key, _lastObjectKey, StringComparison.Ordinal)) return;
+        _lastObjectKey = key;
+
+        _objectLayer.Children.Clear();
+        if (objects.Count == 0) return;
+
+        double scale = double.IsFinite(scene.ViewScale) && scene.ViewScale > 0 ? scene.ViewScale : 1;
+        double tx = double.IsFinite(scene.ViewTx) ? scene.ViewTx : 0;
+        double ty = double.IsFinite(scene.ViewTy) ? scene.ViewTy : 0;
+
+        foreach (TimelineAiObject item in objects)
+        {
+            FrameworkElement visual = item.HasRenderPng
+                ? CreateObjectImage(item)
+                : CreateObjectPlaceholder(item);
+
+            visual.Width = Math.Max(1, item.Width * scale);
+            visual.Height = Math.Max(1, item.Height * scale);
+            Canvas.SetLeft(visual, item.Left * scale + tx);
+            Canvas.SetTop(visual, item.Top * scale + ty);
+            _objectLayer.Children.Add(visual);
+        }
+    }
+
+    private FrameworkElement CreateObjectImage(TimelineAiObject item)
+    {
+        var image = new Image { Stretch = Stretch.Fill, IsHitTestVisible = false };
+        string key = ObjectBitmapKey(item);
+        if (_objectBitmaps.TryGetValue(key, out BitmapImage cached))
+        {
+            image.Source = cached;
+        }
+        else if (_objectLoading.Add(key))
+        {
+            _ = LoadObjectBitmapAsync(key, item.RenderPngBase64, image);
+        }
+
+        return image;
+    }
+
+    private FrameworkElement CreateObjectPlaceholder(TimelineAiObject item)
+    {
+        string label = string.IsNullOrWhiteSpace(item.Kind) ? "AI 对象" : item.Kind;
+        if (item.RenderMissing) label += " · 回放缺失";
+
+        return new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0x00, 0x67, 0xC0)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0xCC, 0x00, 0x67, 0xC0)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Child = new TextBlock
+            {
+                Text = label,
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x00, 0x67, 0xC0)),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(6),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            },
+        };
+    }
+
+    private async Task LoadObjectBitmapAsync(string key, string base64, Image target)
+    {
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(base64);
+            var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+                await writer.FlushAsync();
+                writer.DetachStream();
+            }
+
+            stream.Seek(0);
+            var bitmap = new BitmapImage();
+            await bitmap.SetSourceAsync(stream);
+            _objectBitmaps[key] = bitmap;
+            _objectStreams.Add(stream);
+            if (target is not null) target.Source = bitmap;
+        }
+        catch (Exception)
+        {
+            // 单张 PNG 解码失败时保留占位框，不影响其他对象与笔画回放。
+        }
+        finally
+        {
+            _objectLoading.Remove(key);
+        }
+    }
+
+    private static string ObjectBitmapKey(TimelineAiObject item)
+        => item.Id + ":" + item.RenderPngBase64.Length + ":"
+           + (item.RenderPngBase64.Length > 0 ? item.RenderPngBase64[0] : '\0');
+
+    private static string BuildObjectKey(IReadOnlyList<TimelineAiObject> objects, ClassroomScene scene)
+    {
+        if (objects.Count == 0) return "empty";
+
+        var builder = new System.Text.StringBuilder(64 + objects.Count * 24);
+        builder.Append(scene.ViewScale.ToString("0.###")).Append('|')
+            .Append(scene.ViewTx.ToString("0.##")).Append('|')
+            .Append(scene.ViewTy.ToString("0.##"));
+        foreach (TimelineAiObject item in objects)
+        {
+            builder.Append('|').Append(item.Id)
+                .Append(':').Append(item.Left.ToString("0.##"))
+                .Append(',').Append(item.Top.ToString("0.##"))
+                .Append(',').Append(item.Width.ToString("0.##"))
+                .Append(',').Append(item.Height.ToString("0.##"))
+                .Append(':').Append(item.RenderPngBase64.Length)
+                .Append(item.RenderMissing ? "m" : "p");
+        }
+
+        return builder.ToString();
     }
 
     private static string BoardOnlyLabel(bool boardOnly) => boardOnly ? "仅板书" : "完整课堂";
@@ -1292,6 +1431,14 @@ public sealed class TimeMachineWindow : Window
         try { _seekCts?.Cancel(); } catch { /* 取消定位失败不应影响关闭 */ }
         _seekCts?.Dispose();
         _seekCts = null;
+        foreach (InMemoryRandomAccessStream stream in _objectStreams)
+        {
+            try { stream.Dispose(); }
+            catch { /* 对象流释放失败不影响关闭 */ }
+        }
+
+        _objectStreams.Clear();
+        _objectBitmaps.Clear();
         _replayController.Dispose();
         try
         {

@@ -1,5 +1,6 @@
 using InkCanvas.Core.Classroom;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
 using InkCanvas.Ink;
 using System.Diagnostics;
@@ -21,6 +22,7 @@ public sealed class InkRecorder : IDisposable
     private const long SnapshotIntervalMs = 2_000;
 
     private readonly BoardService _board;
+    private readonly int _boardId;
     private readonly Stopwatch _clock = new();
     private readonly object _gate = new();
     private InkController _controller;
@@ -38,9 +40,10 @@ public sealed class InkRecorder : IDisposable
     private const int DedupeSignaturePrefixLength = 64;
 
 
-    public InkRecorder(BoardService board)
+    public InkRecorder(BoardService board, int boardId = 0)
     {
         _board = board ?? throw new ArgumentNullException(nameof(board));
+        _boardId = boardId;
     }
 
     public ClassroomSession Session { get; private set; }
@@ -147,6 +150,7 @@ public sealed class InkRecorder : IDisposable
 
         _board.PageChanged += OnBoardPageChanged;
         _board.BackgroundChanged += OnBoardBackgroundChanged;
+        _board.AiObjectsChanged += OnAiObjectsChanged;
     }
 
     /// <summary>
@@ -163,6 +167,7 @@ public sealed class InkRecorder : IDisposable
 
         _board.PageChanged -= OnBoardPageChanged;
         _board.BackgroundChanged -= OnBoardBackgroundChanged;
+        _board.AiObjectsChanged -= OnAiObjectsChanged;
         UnbindController();
         FinishJournal();
     }
@@ -376,7 +381,8 @@ public sealed class InkRecorder : IDisposable
 
     private void AddEvent(TimelineEventKind kind, int page,
         string strokeId = null, string strokeJson = null,
-        IReadOnlyList<string> ids = null, string payload = null)
+        IReadOnlyList<string> ids = null, string payload = null,
+        int? boardId = null)
     {
         if (!IsRecording || IsPaused || Session is null) return;
 
@@ -384,12 +390,84 @@ public sealed class InkRecorder : IDisposable
         {
             TimeMs = ElapsedMs,
             PageIndex = page,
+            BoardId = boardId ?? _boardId,
             Kind = kind,
             StrokeId = strokeId,
             StrokeJson = strokeJson,
             StrokeIds = ids,
             Payload = payload,
         });
+    }
+
+    /// <summary>
+    /// AI 板书对象变化：replace 先补写既有 StrokesRemoved（删除原笔画），再写一条结构化
+    /// AiStep；对象 PNG 直接来自 <see cref="BoardImageAsset.Data"/>，超过 400 KB 时只记录
+    /// renderMissing=true 并告警，回放退化为占位框，不请求模型。
+    /// </summary>
+    private void OnAiObjectsChanged(BoardAiObjectChange change)
+    {
+        if (!IsRecording || IsPaused || change is null) return;
+        if (change.Objects is null || change.Objects.Count == 0) return;
+
+        int page = change.PageIndex >= 0 ? change.PageIndex : _board.CurrentIndex;
+
+        if (change.RemovedStrokes is { Count: > 0 })
+        {
+            var removedIds = change.RemovedStrokes
+                .Where(stroke => stroke is not null)
+                .Select(stroke => stroke.Id.ToString())
+                .ToList();
+            if (removedIds.Count > 0)
+            {
+                foreach (string id in removedIds) _knownIds.Remove(id);
+                AddEvent(TimelineEventKind.StrokesRemoved, page, ids: removedIds);
+            }
+        }
+
+        var objects = change.Objects
+            .Where(image => image is not null)
+            .Select(image => ToTimelineObject(image, page))
+            .ToList();
+        if (objects.Count == 0) return;
+
+        string payload = AiObjectPayloadCodec.Encode(change.Action, page, _boardId, objects);
+        if (string.IsNullOrEmpty(payload)) return;
+        AddEvent(TimelineEventKind.AiStep, page, payload: payload);
+    }
+
+    private static TimelineAiObject ToTimelineObject(BoardImageAsset image, int pageIndex)
+    {
+        AiPasteMetadata metadata = AiPasteMetadata.TryParse(image.Metadata);
+        string kind = metadata?.Kind.ToString() ?? "image";
+
+        bool tooLarge = image.Data is { Length: > AiObjectPayloadCodec.MaxRenderPngBytes };
+        string png = "";
+        if (!tooLarge && image.Data is { Length: > 0 })
+            png = Convert.ToBase64String(image.Data);
+        if (tooLarge)
+        {
+            Log($"[AI] 板书回放对象超过 PNG 阈值，回放显示占位：id={image.Id}，"
+                + $"bytes={image.Data.Length}，limit={AiObjectPayloadCodec.MaxRenderPngBytes}");
+        }
+
+        return new TimelineAiObject
+        {
+            Id = image.Id.ToString(),
+            Kind = kind,
+            PageIndex = pageIndex,
+            BoardId = 0,
+            Left = image.Left,
+            Top = image.Top,
+            Width = image.Width,
+            Height = image.Height,
+            LayerOrder = image.LayerOrder,
+            Latex = metadata?.Latex ?? "",
+            Text = metadata?.Text ?? "",
+            Lines = metadata is null ? Array.Empty<string>() : metadata.Lines,
+            RenderPngBase64 = png,
+            RenderMissing = tooLarge || string.IsNullOrEmpty(png),
+            Notes = metadata is null ? Array.Empty<string>() : metadata.Notes,
+        };
     }
 
     /// <summary>
@@ -448,6 +526,11 @@ public sealed class InkRecorder : IDisposable
     {
         if (a.Kind != b.Kind || a.TimeMs != b.TimeMs) return false;
         if (!string.Equals(a.StrokeId, b.StrokeId, StringComparison.Ordinal)) return false;
+
+        // AI 对象事件以 objectId+action 开头，但同一对象连续 update 仍可能前缀相同；
+        // 这里按完整 payload 比较，避免 64 字符截断把合法事件误判为重复。
+        if (a.Kind == TimelineEventKind.AiStep)
+            return string.Equals(a.Payload ?? "", b.Payload ?? "", StringComparison.Ordinal);
 
         string pa = a.Payload ?? "";
         string pb = b.Payload ?? "";

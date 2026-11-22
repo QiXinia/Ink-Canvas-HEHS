@@ -48,6 +48,8 @@ public sealed class InkTimeline
         public int Order;
     }
 
+    // AI 板书对象记录由事件流按需解析，不做跨时间缓存，避免把晚于目标时刻的 update 提前显示。
+
     // 已解析笔画缓存。为避免长会话首次定位把全部 StrokeJson 反序列化进内存，
     // 该缓存只保存「最近需要过的」笔画，并由 MaxCachedStrokes 限制上限。
     private readonly Dictionary<string, StrokeRecord> _registry = new();
@@ -63,12 +65,19 @@ public sealed class InkTimeline
     // 笔画 id -> 首次登记的事件索引，用于保持帧内笔画顺序，也作为按需解析时查找 JSON 的起点。
     private readonly Dictionary<string, int> _strokeOrder = new();
 
+    // AI 对象 id -> 页码 / 画板 / 首次登记索引。对象数量远小于笔画，不做容量淘汰。
+    private readonly Dictionary<string, int> _objectPages = new();
+    private readonly Dictionary<string, int> _objectBoards = new();
+    private readonly Dictionary<string, int> _objectOrder = new();
+
+
     // 缓存插入顺序（FIFO），超出上限时据此淘汰最旧的未使用记录。
     private readonly Queue<string> _cacheQueue = new();
 
     // 增量生成检查点的游标与状态。
     private int _checkpointAppliedIndex;
     private readonly HashSet<string> _checkpointAlive = new();
+    private readonly HashSet<string> _checkpointObjectAlive = new();
     private long _checkpointLastTime = long.MinValue;
 
     public InkTimeline(ClassroomSession session)
@@ -98,6 +107,18 @@ public sealed class InkTimeline
         {
             _checkpointAppliedIndex = _events.Count;
             _checkpointAlive = new HashSet<string>(_session.Checkpoints[^1].LiveStrokeIds ?? Array.Empty<string>());
+
+            // 旧检查点没有 LiveObjectIds：对象状态从事件流起点重建，避免漏掉此前的 AI 卡片。
+            _checkpointObjectAlive.Clear();
+            if (_session.Checkpoints[^1].LiveObjectIds is { } liveObjects)
+            {
+                foreach (string id in liveObjects) _checkpointObjectAlive.Add(id);
+            }
+            else
+            {
+                foreach (string id in RebuildObjectAlive()) _checkpointObjectAlive.Add(id);
+            }
+
             for (int i = 0; i < _events.Count; i++) EnsureEventRegistered(_events[i], i);
             _registryIndex = _events.Count;
         }
@@ -209,6 +230,75 @@ public sealed class InkTimeline
         result.Sort((a, b) => a.Order.CompareTo(b.Order));
         TrimCache(frameIds);
         return result.Select(x => x.Stroke).ToList();
+    }
+
+    /// <summary>
+    /// 目标时刻当前页的 AI 板书对象（默认主展板）。只读取录制事件中的对象快照与 PNG，
+    /// 不调用模型、不重新渲染；无 PNG 或超阈值对象由调用方显示占位。
+    /// </summary>
+    public IReadOnlyList<TimelineAiObject> BuildObjectFrame(long timeMs) => BuildObjectFrame(timeMs, 0);
+
+    /// <summary>
+    /// 取指定画板（0 = 主展板，1 = 板中板）在目标时刻仍存在的 AI 对象。
+    /// 旧会话/旧检查点缺少对象字段时，从事件流起点重建对象状态。
+    /// </summary>
+    public IReadOnlyList<TimelineAiObject> BuildObjectFrame(long timeMs, int boardId)
+    {
+        EnsureCheckpoints();
+        EnsureRegistry();
+
+        int cutoff = IndexAt(timeMs);
+        if (cutoff < 0) return Array.Empty<TimelineAiObject>();
+
+        int page = PageAt(timeMs);
+        SessionCheckpoint checkpoint = NearestObjectCheckpoint(timeMs);
+
+        HashSet<string> alive;
+        int start;
+        if (checkpoint is not null)
+        {
+            alive = new HashSet<string>(checkpoint.LiveObjectIds ?? Array.Empty<string>());
+            start = checkpoint.EventIndex + 1;
+        }
+        else
+        {
+            alive = new HashSet<string>();
+            start = 0;
+        }
+
+        // 增量窗口内出现的对象快照是目标时刻的最新状态；检查点之前就存在的对象
+        // 再从首次登记位置解析到检查点索引，确保不会把晚于目标时刻的 update 提前显示。
+        var latest = new Dictionary<string, TimelineAiObject>(StringComparer.Ordinal);
+        for (int i = start; i <= cutoff; i++)
+        {
+            ApplyObjectEvent(alive, _events[i]);
+            if (_events[i].Kind != TimelineEventKind.AiStep) continue;
+            if (!AiObjectPayloadCodec.TryDecode(_events[i].Payload, out AiObjectsPayload payload)) continue;
+            foreach (TimelineAiObject snapshot in payload.Objects) latest[snapshot.Id] = snapshot;
+        }
+
+        int fallbackIndex = checkpoint?.EventIndex ?? cutoff;
+        var result = new List<(TimelineAiObject Object, long LayerOrder, int Order)>();
+        foreach (string id in alive)
+        {
+            if (!_objectPages.TryGetValue(id, out int objectPage) || objectPage != page) continue;
+            if (_objectBoards.TryGetValue(id, out int objectBoard) && objectBoard != boardId) continue;
+
+            TimelineAiObject item = latest.TryGetValue(id, out TimelineAiObject snapshotItem)
+                ? snapshotItem
+                : ResolveObjectAt(id, fallbackIndex);
+            if (item is null) continue;
+
+            int order = _objectOrder.TryGetValue(id, out int knownOrder) ? knownOrder : int.MaxValue;
+            result.Add((item, item.LayerOrder ?? long.MaxValue, order));
+        }
+
+        result.Sort((a, b) =>
+        {
+            int byLayer = a.LayerOrder.CompareTo(b.LayerOrder);
+            return byLayer != 0 ? byLayer : a.Order.CompareTo(b.Order);
+        });
+        return result.Select(item => item.Object).ToList();
     }
 
     /// <summary>目标时刻所在的页码。</summary>
@@ -771,6 +861,10 @@ public sealed class InkTimeline
         int cutoff = IndexAt(timeMs);
         var alive = new HashSet<string>();
         for (int i = 0; i <= cutoff; i++) ApplyEvent(alive, _events[i]);
+
+        var objectAlive = new HashSet<string>();
+        for (int i = 0; i <= cutoff; i++) ApplyObjectEvent(objectAlive, _events[i]);
+
         var checkpoint = new SessionCheckpoint
         {
             TimeMs = cutoff < 0 ? 0 : _events[cutoff].TimeMs,
@@ -779,12 +873,15 @@ public sealed class InkTimeline
             PageIndex = PageAt(timeMs),
             Background = BackgroundAt(timeMs),
             LiveStrokeIds = alive.ToList(),
+            LiveObjectIds = objectAlive.ToList(),
         };
         _session.Checkpoints.Add(checkpoint);
         // 同步增量游标，后续 EnsureCheckpoints 从该检查点继续。
         _checkpointAppliedIndex = cutoff + 1;
         _checkpointAlive.Clear();
         foreach (var id in alive) _checkpointAlive.Add(id);
+        _checkpointObjectAlive.Clear();
+        foreach (var id in objectAlive) _checkpointObjectAlive.Add(id);
         _checkpointLastTime = checkpoint.TimeMs;
         return checkpoint;
     }
@@ -826,7 +923,54 @@ public sealed class InkTimeline
                 foreach (var id in e.StrokeIds ?? Array.Empty<string>()) alive.Remove(id);
                 foreach (var id in DecodeAddedIds(e.Payload)) alive.Add(id);
                 break;
+
+            case TimelineEventKind.AiStep:
+                // AI 对象在独立注册表/覆盖层中维护，不参与笔画存活集合。
+                break;
         }
+    }
+
+    /// <summary>按 add/replace/update/remove 增量维护 AI 对象存活集合。</summary>
+    private void ApplyObjectEvent(HashSet<string> alive, TimelineEvent e)
+    {
+        if (e is null || e.Kind != TimelineEventKind.AiStep) return;
+        if (!AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload)) return;
+
+        bool remove = string.Equals(payload.Action, "remove", StringComparison.OrdinalIgnoreCase);
+        foreach (TimelineAiObject item in payload.Objects)
+        {
+            if (string.IsNullOrEmpty(item.Id)) continue;
+            if (remove) alive.Remove(item.Id);
+            else alive.Add(item.Id);
+        }
+    }
+
+    private HashSet<string> RebuildObjectAlive()
+    {
+        var alive = new HashSet<string>();
+        foreach (TimelineEvent e in _events) ApplyObjectEvent(alive, e);
+        return alive;
+    }
+
+    /// <summary>
+    /// 最近一个包含对象状态的检查点。旧检查点（LiveObjectIds 为 null）会被跳过，
+    /// 让对象回退到事件流起点重建，避免旧会话丢对象。
+    /// </summary>
+    private SessionCheckpoint NearestObjectCheckpoint(long timeMs)
+    {
+        int cutoff = IndexAt(timeMs);
+        if (cutoff < 0) return null;
+
+        SessionCheckpoint best = null;
+        foreach (SessionCheckpoint cp in _session.Checkpoints)
+        {
+            if (cp is null || cp.EventIndex > cutoff || cp.TimeMs > timeMs) continue;
+            if (cp.LiveObjectIds is null) continue;
+            if (best is null || cp.TimeMs > best.TimeMs
+                || (cp.TimeMs == best.TimeMs && cp.EventIndex > best.EventIndex))
+                best = cp;
+        }
+        return best;
     }
 
     private void EnsureRegistry()
@@ -870,6 +1014,26 @@ public sealed class InkTimeline
                     CacheStroke(id, stroke, _strokePages[id], _strokeOrder[id]);
             }
         }
+
+        if (e.Kind == TimelineEventKind.AiStep &&
+            AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload))
+        {
+            int payloadPage = payload.PageIndex >= 0 ? payload.PageIndex : e.PageIndex;
+            foreach (TimelineAiObject item in payload.Objects)
+            {
+                if (string.IsNullOrEmpty(item.Id)) continue;
+                if (!_objectOrder.ContainsKey(item.Id))
+                {
+                    _objectPages[item.Id] = payloadPage;
+                    _objectBoards[item.Id] = e.BoardId;
+                    _objectOrder[item.Id] = index;
+                }
+                else
+                {
+                    _objectPages[item.Id] = payloadPage;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -911,6 +1075,29 @@ public sealed class InkTimeline
             return stroke;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 按需解析 AI 对象：从首次登记索引扫描到 <paramref name="upToIndex"/>，取该时刻之前的
+    /// 最新对象快照。快照里的 PNG 直接来自录制事件，不做重新渲染或网络请求。
+    /// </summary>
+    private TimelineAiObject ResolveObjectAt(string id, int upToIndex)
+    {
+        if (!_objectOrder.TryGetValue(id, out int start)) return null;
+
+        TimelineAiObject latest = null;
+        int limit = Math.Min(upToIndex, _events.Count - 1);
+        for (int i = start; i <= limit; i++)
+        {
+            TimelineEvent e = _events[i];
+            if (e is null || e.Kind != TimelineEventKind.AiStep) continue;
+            if (!AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload)) continue;
+
+            foreach (TimelineAiObject item in payload.Objects)
+                if (item.Id == id) latest = item;
+        }
+
+        return latest;
     }
 
     private static InkStroke TryDeserialize(string json)
@@ -971,6 +1158,7 @@ public sealed class InkTimeline
         {
             int index = _checkpointAppliedIndex;
             ApplyEvent(_checkpointAlive, _events[index]);
+            ApplyObjectEvent(_checkpointObjectAlive, _events[index]);
             _checkpointAppliedIndex++;
 
             long time = _events[index].TimeMs;
@@ -992,6 +1180,7 @@ public sealed class InkTimeline
                     PageIndex = PageAt(time),
                     Background = BackgroundAt(time),
                     LiveStrokeIds = _checkpointAlive.ToList(),
+                    LiveObjectIds = _checkpointObjectAlive.ToList(),
                 });
                 _checkpointLastTime = time;
             }

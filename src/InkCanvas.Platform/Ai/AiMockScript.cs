@@ -9,6 +9,69 @@ namespace InkCanvas.Platform.Ai;
 /// </summary>
 public static class AiMockScript
 {
+    /// <summary>板书书写 mock：formula / text / wordlist / poem 各一块，附一条备注。</summary>
+    internal const string BoardWritePlanJson =
+        """
+        {
+          "type": "board_plan",
+          "schema": 1,
+          "intent": "write",
+          "target": { "board": "main", "pageIndex": 0 },
+          "originals": [
+            "1/2 x² - 3x + 2 = 0",
+            "求根：x = 2 或 x = 3",
+            "判别式 Δ = 1"
+          ],
+          "confidence": 0.78,
+          "warnings": [
+            "整体置信度 0.78 偏低，请复核公式系数",
+            "原文疑似笔误：第二行 x1 可能应为 x_1"
+          ],
+          "blocks": [
+            {
+              "id": "b1",
+              "kind": "formula",
+              "latex": "\\frac{1}{2}x^2 - 3x + 2 = 0",
+              "rect": { "x": 0.06, "y": 0.10, "w": 0.42, "h": 0.14 },
+              "style": { "fontSize": 28, "align": "center", "columns": 1, "lineHeight": 1.4 },
+              "confidence": 0.72,
+              "note": "一次项系数疑似笔误，已按 -3x 整理"
+            },
+            {
+              "id": "b2",
+              "kind": "text",
+              "text": "一元二次方程综合讲解",
+              "confidence": 0.95,
+              "rect": { "x": 0.06, "y": 0.28, "w": 0.42, "h": 0.10 },
+              "style": { "fontSize": 24, "align": "left", "columns": 1, "lineHeight": 1.4 }
+            },
+            {
+              "id": "b3",
+              "kind": "wordlist",
+              "lines": ["判别式", "配方法", "因式分解"],
+              "confidence": 0.88,
+              "rect": { "x": 0.54, "y": 0.10, "w": 0.24, "h": 0.28 },
+              "style": { "fontSize": 24, "align": "left", "columns": 1, "lineHeight": 1.4 }
+            },
+            {
+              "id": "b4",
+              "kind": "poem",
+              "title": "静夜思",
+              "author": "唐·李白",
+              "lines": ["床前明月光", "疑是地上霜", "举头望明月", "低头思故乡"],
+              "confidence": 0.9,
+              "note": "标题根据正文自动生成",
+              "rect": { "x": 0.54, "y": 0.42, "w": 0.42, "h": 0.30 },
+              "style": { "fontSize": 26, "align": "center", "columns": 1, "lineHeight": 1.6 }
+            }
+          ],
+          "notes": ["第 2 块标题为自动生成，可按需修改"]
+        }
+        """;
+
+    /// <summary>SSE 以 LF 重组 data 行，mock 统一为 LF，避免 Windows 源码换行造成回放差异。</summary>
+    private static readonly string BoardWritePlan = BoardWritePlanJson.Replace("\r\n", "\n");
+
     /// <summary>
     /// 按模式返回固定的 mock 事件序列，最后一条恒为 <see cref="AssistantEventKind.Done"/>。
     /// 讲题模式为 <see cref="AssistantTeachingMode.Hint"/> 时只回放文字提示，
@@ -21,6 +84,17 @@ public static class AiMockScript
         string difficulty = "")
     {
         var events = new List<AssistantEvent>();
+
+        if (string.Equals(purpose, "board_write", StringComparison.OrdinalIgnoreCase))
+        {
+            events.Add(new AssistantEvent
+            {
+                Kind = AssistantEventKind.BoardPlan,
+                Text = BoardWritePlan,
+            });
+            events.Add(new AssistantEvent { Kind = AssistantEventKind.Done });
+            return events;
+        }
 
         if (string.Equals(purpose, "region", StringComparison.OrdinalIgnoreCase))
         {

@@ -1,5 +1,6 @@
 using InkCanvas.Core.History;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.AiAssistant;
 using InkCanvas.Ink;
 using System.Numerics;
 using System.Text.Json;
@@ -10,6 +11,24 @@ public enum BoardBackground { Black, White, Grid, Lined, Green, Cream, Coordinat
 
 public sealed record BoardPageInfo(InkController Controller, BoardBackground Background, float GridSpacing,
     IReadOnlyList<BoardImageAsset> Images, IReadOnlyList<BoardMediaAsset> Media);
+
+/// <summary>
+/// AI 板书对象变化：供课堂录制器写 <c>TimelineEventKind.AiStep</c>，与 <c>ImagesChanged</c>
+/// 分离，避免普通图片变化污染时光机对象层。
+/// </summary>
+public sealed class BoardAiObjectChange
+{
+    /// <summary>add / replace / update / remove。</summary>
+    public string Action { get; init; } = "";
+
+    public int PageIndex { get; init; }
+
+    /// <summary>本次变化涉及的对象快照；remove 时用于保留被删除对象。</summary>
+    public IReadOnlyList<BoardImageAsset> Objects { get; init; } = Array.Empty<BoardImageAsset>();
+
+    /// <summary>replace 时被删除的笔画；录制器据此补写既有 StrokesRemoved 事件。</summary>
+    public IReadOnlyList<InkStroke> RemovedStrokes { get; init; } = Array.Empty<InkStroke>();
+}
 
 /// <summary>A bitmap or SVG image placed on a board page; position and size are device-independent pixels.</summary>
 public sealed class BoardImageAsset
@@ -338,6 +357,9 @@ public sealed partial class BoardService
 
     public event Action ImagesChanged;
 
+    /// <summary>AI 板书对象增删改（AI 卡片带 <see cref="AiPasteMetadata"/>）；普通图片不触发。</summary>
+    public event Action<BoardAiObjectChange> AiObjectsChanged;
+
     public bool UndoPage() => _pageHistory.Undo();
 
     public bool RedoPage() => _pageHistory.Redo();
@@ -626,12 +648,22 @@ public sealed partial class BoardService
         var page = Current;
         page.CancelLassoErase(); page.ClearSelection();
         var pageImages = _images[CurrentIndex]; var pageMedia = _media[CurrentIndex];
+        int pageIndex = CurrentIndex;
         var strokes = page.Document.Strokes.ToList(); var images = pageImages.ToList(); var media = pageMedia.ToList();
+        BoardImageAsset[] aiImages = images.Where(IsAiBoardImage).ToArray();
         if (strokes.Count + images.Count + media.Count == 0) return;
         Apply();
         page.History.Push(new DelegateAction("clear board page", Apply, Revert));
-        void Apply() { page.Document.Clear(); pageImages.Clear(); pageMedia.Clear(); ImagesChanged?.Invoke(); }
-        void Revert() { page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media); ImagesChanged?.Invoke(); }
+        void Apply()
+        {
+            page.Document.Clear(); pageImages.Clear(); pageMedia.Clear(); ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, aiImages);
+        }
+        void Revert()
+        {
+            page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media); ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("add", pageIndex, aiImages);
+        }
     }
 
 
@@ -742,17 +774,179 @@ public sealed partial class BoardService
         return true;
     }
 
+    /// <summary>
+    /// 一次插入多张图片并只记录一个撤销步骤（AI 板书整体写入）。
+    /// Undo 移除全部、Redo 原顺序插回；返回首次插入的页内索引。
+    /// </summary>
+    public IReadOnlyList<int> AddImagesAtomic(IReadOnlyList<BoardImageAsset> images, string actionName)
+    {
+        if (images is null || images.Count == 0) return Array.Empty<int>();
+
+        var inserted = images.Where(IsValidImage).ToArray();
+        if (inserted.Length == 0) return Array.Empty<int>();
+
+        var pageImages = _images[CurrentIndex];
+        int pageIndex = CurrentIndex;
+        int start = pageImages.Count;
+        long layerOrder = Current.NextLayerOrder();
+        for (int index = 0; index < inserted.Length; index++)
+        {
+            inserted[index].LayerOrder = layerOrder + index;
+            pageImages.Add(inserted[index]);
+        }
+
+        string name = string.IsNullOrWhiteSpace(actionName) ? "AI 板书" : actionName.Trim();
+        void ApplyInsert()
+        {
+            int at = Math.Clamp(start, 0, pageImages.Count);
+            pageImages.InsertRange(at, inserted);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("add", pageIndex, inserted);
+        }
+
+        void RevertInsert()
+        {
+            foreach (BoardImageAsset image in inserted) pageImages.Remove(image);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, inserted);
+        }
+
+        Current.History.Push(new DelegateAction(name, ApplyInsert, RevertInsert));
+        ImagesChanged?.Invoke();
+        RaiseAiObjectsChanged("add", pageIndex, inserted);
+        return Enumerable.Range(start, inserted.Length).ToArray();
+    }
+
+    /// <summary>
+    /// 用图片原子替换原笔画：一次 <see cref="DelegateAction"/> 内删除 <paramref name="strokesToRemove"/>
+    /// 并插入 <paramref name="images"/>。传空/null 笔画列表表示删除当前页全部笔画（“替换整页”语义）；
+    /// 图片为空或页面没有可删除笔画时返回 <c>false</c>，不会只删不写或只写不删。
+    /// Undo 移除新图片并按原索引恢复笔画，Redo 反向，均只占一步。
+    /// </summary>
+    public bool ReplaceStrokesWithImagesAtomic(
+        IReadOnlyList<InkStroke> strokesToRemove,
+        IReadOnlyList<BoardImageAsset> images,
+        string actionName)
+    {
+        if (images is null || images.Count == 0) return false;
+
+        var inserted = images.Where(IsValidImage).ToArray();
+        if (inserted.Length == 0) return false;
+
+        var page = Current;
+        var pageImages = _images[CurrentIndex];
+        int pageIndex = CurrentIndex;
+        var document = page.Document;
+
+        InkStroke[] removed = strokesToRemove is { Count: > 0 }
+            ? strokesToRemove
+                .Where(stroke => stroke is not null && document.Strokes.Contains(stroke))
+                .Distinct()
+                .ToArray()
+            : document.Strokes.ToArray();
+
+        if (removed.Length == 0) return false;
+
+        var removedSet = new HashSet<InkStroke>(removed);
+        (int Index, InkStroke Stroke)[] indexed = document.Strokes
+            .Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => removedSet.Contains(item.Stroke))
+            .ToArray();
+
+        int start = pageImages.Count;
+        long layerOrder = page.NextLayerOrder();
+        for (int index = 0; index < inserted.Length; index++)
+            inserted[index].LayerOrder = layerOrder + index;
+
+        void Apply()
+        {
+            document.RemoveAll(removed);
+            int at = Math.Clamp(start, 0, pageImages.Count);
+            pageImages.InsertRange(at, inserted);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("replace", pageIndex, inserted, removed);
+        }
+
+        void Revert()
+        {
+            foreach (BoardImageAsset image in inserted) pageImages.Remove(image);
+            document.InsertRange(indexed.Select(item => (item.Index, item.Stroke)));
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, inserted);
+        }
+
+        Apply();
+        page.ClearSelection();
+
+        string name = string.IsNullOrWhiteSpace(actionName) ? "AI 板书替换" : actionName.Trim();
+        page.History.Push(new DelegateAction(name, Apply, Revert));
+        return true;
+    }
+
+    /// <summary>
+    /// 当前页内容包围盒（笔画 + 图片 + 媒体，世界坐标），语义与
+    /// <c>SideBoardWindow.CurrentPageContentBounds</c> 一致；图片/媒体按轴对齐矩形计，
+    /// 不含旋转后的精确外接框。空页返回 <see cref="Rect.Empty"/>。
+    /// </summary>
+    public Rect GetContentBounds() => GetContentBoundsExcept(null);
+
+    /// <summary>
+    /// 同 <see cref="GetContentBounds"/>，但忽略 <paramref name="excludedStrokes"/>（替换原板书前
+    /// 用“将被删除的笔画”之外的内容计算自动落点，避免旧笔迹占位导致误判空间不足）。
+    /// </summary>
+    public Rect GetContentBoundsExcept(IReadOnlyCollection<InkStroke> excludedStrokes)
+    {
+        HashSet<InkStroke> excluded = excludedStrokes is { Count: > 0 }
+            ? new HashSet<InkStroke>(excludedStrokes)
+            : null;
+
+        Rect bounds = Rect.Empty;
+        foreach (InkStroke stroke in Current.Document.Strokes)
+        {
+            if (excluded is not null && excluded.Contains(stroke)) continue;
+            bounds = bounds.Union(stroke.Bounds);
+        }
+
+        foreach (BoardImageAsset image in _images[CurrentIndex])
+        {
+            if (image.Data is not { Length: > 0 } || image.Width <= 0 || image.Height <= 0) continue;
+            bounds = bounds.Union(new Rect(image.Left, image.Top, image.Left + image.Width, image.Top + image.Height));
+        }
+
+        foreach (BoardMediaAsset media in _media[CurrentIndex])
+        {
+            if (media.Width <= 0 || media.Height <= 0) continue;
+            bounds = bounds.Union(new Rect(media.Left, media.Top, media.Left + media.Width, media.Top + media.Height));
+        }
+
+        return bounds;
+    }
+
     public void RemoveImage(BoardImageAsset image)
     {
         if (image is null) return;
         var pageImages = _images[CurrentIndex];
         int index = pageImages.IndexOf(image);
         if (index < 0) return;
+
+        int pageIndex = CurrentIndex;
+        bool ai = IsAiBoardImage(image);
         pageImages.RemoveAt(index);
         Current.History.Push(new DelegateAction("delete image",
-            () => { pageImages.Remove(image); ImagesChanged?.Invoke(); },
-            () => { pageImages.Insert(Math.Clamp(index, 0, pageImages.Count), image); ImagesChanged?.Invoke(); }));
+            () =>
+            {
+                pageImages.Remove(image);
+                ImagesChanged?.Invoke();
+                if (ai) RaiseAiObjectsChanged("remove", pageIndex, new[] { image });
+            },
+            () =>
+            {
+                pageImages.Insert(Math.Clamp(index, 0, pageImages.Count), image);
+                ImagesChanged?.Invoke();
+                if (ai) RaiseAiObjectsChanged("add", pageIndex, new[] { image });
+            }));
         ImagesChanged?.Invoke();
+        if (ai) RaiseAiObjectsChanged("remove", pageIndex, new[] { image });
     }
 
     /// <summary>
@@ -769,14 +963,25 @@ public sealed partial class BoardService
 
         var previousData = target.Data;
         var previousMetadata = target.Metadata ?? "";
+        int pageIndex = CurrentIndex;
+        bool ai = IsAiBoardImage(target);
         string metadata = newMetadata ?? "";
         target.Data = newData;
         target.Metadata = metadata;
 
         Current.History.Push(new DelegateAction("update image",
-            () => SetImageContent(target, newData, metadata),
-            () => SetImageContent(target, previousData, previousMetadata)));
+            () =>
+            {
+                SetImageContent(target, newData, metadata);
+                if (ai) RaiseAiObjectsChanged("update", pageIndex, new[] { target });
+            },
+            () =>
+            {
+                SetImageContent(target, previousData, previousMetadata);
+                if (ai) RaiseAiObjectsChanged("update", pageIndex, new[] { target });
+            }));
         ImagesChanged?.Invoke();
+        if (ai) RaiseAiObjectsChanged("update", pageIndex, new[] { target });
         return true;
     }
 
@@ -1041,6 +1246,27 @@ public sealed partial class BoardService
         image.Data = data;
         image.Metadata = metadata ?? "";
         ImagesChanged?.Invoke();
+    }
+
+    /// <summary>AI 卡片判定：metadata 必须是 <see cref="AiPasteMetadata"/> 风格且包含 kind 字段。</summary>
+    private static bool IsAiBoardImage(BoardImageAsset image)
+    {
+        if (image is null || string.IsNullOrWhiteSpace(image.Metadata)) return false;
+        if (image.Metadata.IndexOf("\"kind\"", StringComparison.OrdinalIgnoreCase) < 0) return false;
+        return AiPasteMetadata.TryParse(image.Metadata) is not null;
+    }
+
+    private void RaiseAiObjectsChanged(string action, int pageIndex,
+        IReadOnlyList<BoardImageAsset> objects, IReadOnlyList<InkStroke> removedStrokes = null)
+    {
+        if (objects is null || objects.Count == 0) return;
+        AiObjectsChanged?.Invoke(new BoardAiObjectChange
+        {
+            Action = action,
+            PageIndex = pageIndex,
+            Objects = objects.ToArray(),
+            RemovedStrokes = removedStrokes ?? Array.Empty<InkStroke>(),
+        });
     }
     private static bool IsValidMedia(BoardMediaAsset media)
         => media is not null && media.Data is { Length: > 0 } && media.Width > 0 && media.Height > 0

@@ -78,6 +78,12 @@ public sealed class TimelineEvent
 
     public int PageIndex { get; set; }
 
+    /// <summary>
+    /// 画板归属：0 = 主展板，1 = 板中板。旧会话没有该字段，反序列化为 0（主展板）；
+    /// 录制器可按构造参数写入子板 id。
+    /// </summary>
+    public int BoardId { get; set; }
+
     /// <summary>课件归属：事件发生时所处 PPT 幻灯片 id；0 表示不属于课件。</summary>
     public int PptSlideId { get; set; }
 
@@ -109,6 +115,12 @@ public sealed class SessionCheckpoint
 
     /// <summary>该时刻仍存在的全部笔画 id（跨页）。</summary>
     public IReadOnlyList<string> LiveStrokeIds { get; set; }
+
+    /// <summary>
+    /// 该时刻仍存在的全部 AI 板书对象 id（跨页）。旧会话没有该字段（null），
+    /// 回放对象时从事件流起点重建，避免旧检查点丢失此前的 AI 卡片。
+    /// </summary>
+    public IReadOnlyList<string> LiveObjectIds { get; set; }
 }
 
 /// <summary>

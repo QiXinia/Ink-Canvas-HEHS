@@ -6,6 +6,7 @@ using InkCanvas.Controls.Theming;
 using InkCanvas.Core.Diagnostics;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Settings;
+using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
@@ -18,6 +19,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Windows.Storage.Streams;
 
@@ -56,6 +58,9 @@ public sealed class SideBoardWindow : Window
     private DispatcherQueueTimer _clampTimer;
     private InkController _boundController;
     private Matrix3x2 _lastTransform = Matrix3x2.Identity;
+    private long _lastImageTapTicks;
+    private Windows.Foundation.Point _lastImageTapPoint;
+    private bool _editingAiCard;
     private MinSizeHook _minSize;
     private bool _closed, _visible, _animating, _pagePaneOpen;
 
@@ -82,6 +87,10 @@ public sealed class SideBoardWindow : Window
         _media.LayerIndex = _drawingLayers.LayerIndex;
         _surface.DrawCommitted = false;
         _surfaceHost.Children.Add(_surface);
+
+        // 板中板没有选择工具，图片由场景层渲染；在画布宿主上监听双击并反变换到世界坐标命中。
+        _surfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnAiCardPointerPressed), true);
+        _surfaceHost.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnAiCardDoubleTapped), true);
 
         PageNavigator = new BoardPageNavigator(_board,
             () => new Vector2(Math.Max(1, (float)_surfaceHost.ActualWidth), Math.Max(1, (float)_surfaceHost.ActualHeight)),
@@ -361,6 +370,107 @@ BindPage();
 
     private void OnSelectionChanged() => _images.SetSelection(
         _board.Current.SelectedElements.OfType<BoardSelectionElement>().Where(e => e.Image is not null).Select(e => e.Image));
+
+    // ---- AI 卡片双击编辑 -------------------------------------------------
+
+    private void OnAiCardPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(_surfaceHost).Position;
+        long now = Environment.TickCount64;
+        bool isDoubleTap = now - _lastImageTapTicks <= 450
+            && Math.Abs(point.X - _lastImageTapPoint.X) <= 6
+            && Math.Abs(point.Y - _lastImageTapPoint.Y) <= 6;
+        _lastImageTapTicks = isDoubleTap ? 0 : now;
+        _lastImageTapPoint = point;
+        if (!isDoubleTap) return;
+        if (TryEditAiCardAt(point, "手动双击判定")) e.Handled = true;
+    }
+
+    private void OnAiCardDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        var point = e.GetPosition(_surfaceHost);
+        if (TryEditAiCardAt(point, "DoubleTapped")) e.Handled = true;
+    }
+
+    private bool TryEditAiCardAt(Windows.Foundation.Point point, string source)
+    {
+        if (_boundController is null) return false;
+        if (!Matrix3x2.Invert(_boundController.ViewTransform, out Matrix3x2 inverse)) return false;
+        Vector2 world = Vector2.Transform(new Vector2((float)point.X, (float)point.Y), inverse);
+
+        BoardImageAsset asset = BoardImageHitTest.HitTest(_board.CurrentImages, world.X, world.Y);
+        if (asset is null)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片双击（{source}）：view=({point.X:0.0},{point.Y:0.0}) "
+                + $"world=({world.X:0.0},{world.Y:0.0}) 未命中资产",
+                LogType.Trace);
+            return false;
+        }
+
+        if (!string.Equals(asset.ContentType, "image/png", StringComparison.OrdinalIgnoreCase))
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片双击（{source}）：命中 {asset.Name}，"
+                + $"ContentType={asset.ContentType} 非 image/png，忽略",
+                LogType.Trace);
+            return false;
+        }
+
+        AiPasteMetadata metadata = AiPasteMetadata.TryParse(asset.Metadata);
+        if (metadata is null)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片双击（{source}）：命中 {asset.Name}，"
+                + $"Metadata 无法解析（长度 {asset.Metadata?.Length ?? 0}），忽略",
+                LogType.Trace);
+            return false;
+        }
+
+        FileLog.WriteLogToFile(
+            $"[AI] 板中板 AI 卡片双击（{source}）：命中 {asset.Name}，Kind={metadata.Kind}，进入编辑",
+            LogType.Event);
+        _ = EditAiCardAsync(asset, metadata);
+        return true;
+    }
+
+    private async Task EditAiCardAsync(BoardImageAsset asset, AiPasteMetadata metadata)
+    {
+        if (_editingAiCard) return;
+
+        if (Content is not FrameworkElement root || root.XamlRoot is null)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片编辑：XamlRoot 为空（Content={Content?.GetType().Name ?? "null"}）",
+                LogType.Error);
+            return;
+        }
+
+        _editingAiCard = true;
+        try
+        {
+            bool updated = await AiCardEditor.EditAsync(_board, asset, metadata, root.XamlRoot);
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片编辑：{asset.Name}，updated={updated}",
+                updated ? LogType.Event : LogType.Trace);
+
+            if (updated)
+            {
+                _paper.Invalidate();
+                _drawingLayers.Invalidate();
+            }
+        }
+        catch (Exception ex)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板 AI 卡片编辑失败：{asset.Name}，{ex.Message ?? ex.GetType().Name}",
+                LogType.Error);
+        }
+        finally
+        {
+            _editingAiCard = false;
+        }
+    }
 
     private static Microsoft.UI.Xaml.Media.Matrix ToUiMatrix(Matrix3x2 m)
         => new(m.M11, m.M12, m.M21, m.M22, m.M31, m.M32);

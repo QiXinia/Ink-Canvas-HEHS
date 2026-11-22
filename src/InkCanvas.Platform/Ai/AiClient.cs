@@ -172,6 +172,8 @@ public sealed class AiClient : IDisposable
             Images = request.Images,
             Teaching = request.Teaching,
             Purpose = request.Purpose ?? "",
+            Instruction = request.Instruction ?? "",
+            TargetPageIndex = request.TargetPageIndex,
             Difficulty = request.Difficulty ?? "",
             SlideContext = request.SlideContext,
         };
@@ -211,6 +213,10 @@ public sealed class AiClient : IDisposable
             writer.WriteString("teaching", AssistantTeachingPolicy.Wire(request.Teaching));
             if (!string.IsNullOrEmpty(request.Purpose))
                 writer.WriteString("purpose", request.Purpose);
+            if (!string.IsNullOrEmpty(request.Instruction))
+                writer.WriteString("instruction", request.Instruction);
+            if (request.TargetPageIndex >= 0)
+                writer.WriteNumber("targetPageIndex", request.TargetPageIndex);
             if (!string.IsNullOrEmpty(request.Difficulty))
                 writer.WriteString("difficulty", request.Difficulty);
             if (request.SlideContext is not null)
@@ -554,7 +560,7 @@ internal sealed class HttpStream
                 AssistantEvent item = events[i];
                 if (item == null) continue;
 
-                if (item.Kind == AssistantEventKind.Token)
+                if (item.Kind is AssistantEventKind.Token or AssistantEventKind.BoardPlan)
                 {
                     _gotToken = true;
                     StopTimer();

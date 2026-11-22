@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
+using Windows.Storage.Streams;
 
 namespace InkCanvas.Features.Classroom;
 
@@ -412,6 +413,7 @@ public static class TimeMachineExporter
                 var sceneCursor = new SceneCursor(session);
                 CanvasBitmap pptBitmap = null;
                 string pptBitmapPath = "";
+                var aiBitmaps = new Dictionary<string, CanvasBitmap>(StringComparer.Ordinal);
 
                 Mf.SinkWriter writer = null;
                 if (hasAudio)
@@ -473,6 +475,11 @@ public static class TimeMachineExporter
                             foreach (var stroke in timeline.BuildFrame(timeMs))
                                 renderer.Draw(drawing, stroke, Matrix3x2.Identity);
 
+                            // AI 板书对象：只绘制录制时保存的 PNG；缺失时画占位框，
+                            // 不在导出路径调用模型或网络。
+                            foreach (TimelineAiObject aiObject in timeline.BuildObjectFrame(timeMs))
+                                DrawAiObject(drawing, device, aiObject, aiBitmaps);
+
                             // 可选叠加：章节信息与书写光标。二者都不改变笔画集合，
                             // 只影响像素外观，因此 BoardOnly / 区间语义不受影响。
                             if (options.ShowChapterInfo)
@@ -517,6 +524,8 @@ public static class TimeMachineExporter
                     writer?.Dispose();
                     pptBitmap?.Dispose();
                     pptBitmap = null;
+                    foreach (CanvasBitmap bitmap in aiBitmaps.Values) bitmap.Dispose();
+                    aiBitmaps.Clear();
                 }
             }
             finally
@@ -599,6 +608,7 @@ public static class TimeMachineExporter
         return Windows.UI.Color.FromArgb(255, 0xFA, 0xFA, 0xFA);
     }
 
+
     /// <summary>
     /// 按需加载 PPT 截图。BoardOnly（或截图不存在 / 已失效）时释放缓存并回退纯色背景，
     /// 避免把上一页的图片带进后续帧。
@@ -634,6 +644,72 @@ public static class TimeMachineExporter
             bitmap = null;
             loadedPath = "";
         }
+    }
+
+    /// <summary>
+    /// 绘制一个 AI 板书对象：PNG 直接来自录制事件；缺失或解码失败时画占位框。
+    /// 导出过程不调用模型/网络，也不重新生成内容。
+    /// </summary>
+    private static void DrawAiObject(CanvasDrawingSession drawing, CanvasDevice device, TimelineAiObject item,
+        Dictionary<string, CanvasBitmap> cache)
+    {
+        var rect = new Windows.Foundation.Rect(
+            item.Left, item.Top, Math.Max(1, item.Width), Math.Max(1, item.Height));
+        CanvasBitmap bitmap = LoadAiBitmap(device, item, cache, out bool failed);
+        if (bitmap is not null)
+        {
+            drawing.DrawImage(bitmap, rect,
+                new Windows.Foundation.Rect(0, 0, bitmap.SizeInPixels.Width, bitmap.SizeInPixels.Height));
+            return;
+        }
+
+        DrawAiPlaceholder(drawing, item, rect, failed ? "解码失败" : "回放缺失");
+    }
+
+    private static CanvasBitmap LoadAiBitmap(CanvasDevice device, TimelineAiObject item,
+        Dictionary<string, CanvasBitmap> cache, out bool failed)
+    {
+        failed = false;
+        if (!item.HasRenderPng) return null;
+
+        string key = item.Id + ":" + item.RenderPngBase64.Length + ":"
+            + (item.RenderPngBase64.Length > 0 ? item.RenderPngBase64[0] : '\0');
+        if (cache.TryGetValue(key, out CanvasBitmap cached)) return cached;
+
+        try
+        {
+            byte[] bytes = Convert.FromBase64String(item.RenderPngBase64);
+            using var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream))
+            {
+                writer.WriteBytes(bytes);
+                writer.StoreAsync().AsTask().GetAwaiter().GetResult();
+                writer.FlushAsync().AsTask().GetAwaiter().GetResult();
+                writer.DetachStream();
+            }
+
+            stream.Seek(0);
+            CanvasBitmap bitmap = CanvasBitmap.LoadAsync(device, stream).AsTask().GetAwaiter().GetResult();
+            cache[key] = bitmap;
+            return bitmap;
+        }
+        catch
+        {
+            failed = true;
+            return null;
+        }
+    }
+
+    private static void DrawAiPlaceholder(CanvasDrawingSession drawing, TimelineAiObject item,
+        Windows.Foundation.Rect rect, string reason)
+    {
+        drawing.FillRectangle(rect, Windows.UI.Color.FromArgb(0x33, 0x00, 0x67, 0xC0));
+        drawing.DrawRectangle(rect, Windows.UI.Color.FromArgb(0xCC, 0x00, 0x67, 0xC0), 1.5f);
+
+        string label = (string.IsNullOrWhiteSpace(item.Kind) ? "AI 对象" : item.Kind) + " · " + reason;
+        using var format = new CanvasTextFormat { FontSize = 18, WordWrapping = CanvasWordWrapping.NoWrap };
+        drawing.DrawText(label, (float)rect.X + 10, (float)rect.Y + 8,
+            Windows.UI.Color.FromArgb(0xFF, 0x00, 0x67, 0xC0), format);
     }
 
     /// <summary>按回放背景样式绘制网格 / 坐标轴（与时光机窗口 40 px 间距一致）。</summary>

@@ -7,6 +7,7 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
@@ -37,6 +38,8 @@ public sealed class AssistantWindow : Window
     private const double MaxThumbnailHeight = 96;
     private const double MinRegionSize = 6;
     private const double DragThreshold = 4;
+    private const int MaxBoardPlanPreviewBlocks = 8;
+
     private static readonly TimeSpan HighlightDuration = TimeSpan.FromSeconds(1.6);
 
     private readonly Grid _titleBar;
@@ -79,6 +82,31 @@ public sealed class AssistantWindow : Window
     private readonly Button _paste;
     private readonly Button _favorite;
     private readonly Button _revealNext;
+    private readonly Button _organizeBoard;
+    private readonly Button _aiWrite;
+    private readonly Button _boardWriteConfirm;
+    private readonly Button _boardWriteCancel;
+    private readonly Border _boardPlanPreview;
+    private readonly TextBlock _boardPlanTitle;
+    private readonly StackPanel _boardPlanList;
+    private readonly Button _boardWriteSelected;
+    private readonly Button _boardPlanFontUp;
+    private readonly Button _boardPlanFontDown;
+    private readonly Button _boardPlanTwoColumns;
+    private readonly Button _boardPlanKeepFormula;
+    private readonly Button _boardPlanMoveTarget;
+    private readonly CheckBox _replaceOriginal;
+    private readonly StackPanel _boardPlanWarnings;
+    private readonly StackPanel _boardPlanOriginalList;
+    private readonly StackPanel _boardPlanOriginalPane;
+    private readonly StackPanel _boardPlanResultPane;
+    private readonly Grid _boardPlanPair;
+    private readonly List<(string Id, CheckBox Box)> _boardPlanChecks = new();
+    private static readonly Brush ReviewBrush =
+        new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xE6, 0x8A, 0x00));
+    private bool _boardPlanWideLayout;
+    private AssistantBoardPlan _boardPlan;
+    private bool _boardPlanBusy;
     private readonly Button _close;
     private readonly TextBlock _cursor;
     private readonly DispatcherTimer _cursorTimer;
@@ -134,6 +162,24 @@ public sealed class AssistantWindow : Window
     public event Action CopyRequested;
 
     public event Action<string> FollowUpRequested;
+
+    /// <summary>请求整理板书或 AI 书写；参数为 (instruction, intent)，intent 为 organize / write。</summary>
+    public event Action<string, string> BoardWriteRequested;
+
+    /// <summary>
+    /// 阶段 3 确认写入：<c>selectedIds</c> 为勾选的块 id（部分采用），
+    /// <c>replaceOriginal</c> 表示删除原笔画后替换。UI 只触发本事件。
+    /// </summary>
+    public event Action<IReadOnlyList<string>, bool> BoardWriteConfirmedSelection;
+
+    /// <summary>
+    /// 阶段 5 本地调整预览（字号/列/过滤/移动/行距）；Shell 只应用
+    /// <c>BoardPlanEditPolicy</c>，不调用 AI。
+    /// </summary>
+    public event Action<string> BoardPlanEditRequested;
+
+    /// <summary>取消当前板书预览；ShellController 保留指令以便重试。</summary>
+    public event Action BoardWriteCancelled;
 
     /// <summary>讲题模式切换请求；由 ShellController 决定是否重发请求。</summary>
     public event Action<AssistantTeachingMode> TeachingModeRequested;
@@ -457,6 +503,151 @@ public sealed class AssistantWindow : Window
             Visibility = Visibility.Collapsed,
         };
 
+        _boardPlanTitle = new TextBlock
+        {
+            Text = "板书计划",
+            FontSize = 11.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = _textPrimary,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        _boardPlanWarnings = new StackPanel { Spacing = 2, Visibility = Visibility.Collapsed };
+        _boardPlanOriginalList = new StackPanel { Spacing = 3 };
+        _boardPlanList = new StackPanel { Spacing = 4 };
+
+        _boardPlanOriginalPane = new StackPanel { Spacing = 3, MinWidth = 0 };
+        _boardPlanOriginalPane.Children.Add(BoardPlanSectionLabel("原始内容"));
+        _boardPlanOriginalPane.Children.Add(_boardPlanOriginalList);
+
+        _boardPlanResultPane = new StackPanel { Spacing = 3, MinWidth = 0 };
+        _boardPlanResultPane.Children.Add(BoardPlanSectionLabel("整理结果"));
+        _boardPlanResultPane.Children.Add(_boardPlanList);
+
+        _boardPlanPair = new Grid { ColumnSpacing = 10, RowSpacing = 6 };
+        _boardPlanPair.Children.Add(_boardPlanOriginalPane);
+        _boardPlanPair.Children.Add(_boardPlanResultPane);
+        ApplyBoardPlanOrientation(CardWidth);
+
+        _replaceOriginal = new CheckBox
+        {
+            Content = "替换原板书（删除原笔画）",
+            FontSize = 11,
+            IsChecked = false,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        AutomationProperties.SetName(_replaceOriginal, "替换原板书");
+        ToolTipService.SetToolTip(_replaceOriginal,
+            "勾选后写入时删除当前页原笔画（有选区时仅删除选区），一次撤销即可恢复");
+
+        _boardWriteConfirm = CreatePrimaryButton("全部采用");
+        _boardWriteConfirm.Height = 28;
+        _boardWriteConfirm.MinHeight = 28;
+        AutomationProperties.SetName(_boardWriteConfirm, "全部采用整理结果");
+        _boardWriteConfirm.Click += (_, _) => _ = ConfirmBoardWriteSelectionAsync(all: true);
+
+        _boardWriteSelected = CreateSecondaryButton("仅采用选中");
+        _boardWriteSelected.Height = 28;
+        _boardWriteSelected.MinHeight = 28;
+        AutomationProperties.SetName(_boardWriteSelected, "仅采用选中的整理结果");
+        _boardWriteSelected.Click += (_, _) => _ = ConfirmBoardWriteSelectionAsync(all: false);
+
+        _boardWriteCancel = CreateSecondaryButton("取消");
+        _boardWriteCancel.Height = 28;
+        _boardWriteCancel.MinHeight = 28;
+        AutomationProperties.SetName(_boardWriteCancel, "取消板书写入");
+        _boardWriteCancel.Click += (_, _) =>
+        {
+            ClearBoardPlanPreview();
+            BoardWriteCancelled?.Invoke();
+        };
+
+        Button CreateBoardPlanQuickButton(string label, string instruction, string tooltip)
+        {
+            Button button = CreateSecondaryButton(label);
+            button.Height = 26;
+            button.MinHeight = 26;
+            button.FontSize = 11;
+            button.Padding = new Thickness(8, 0, 8, 0);
+            AutomationProperties.SetName(button, tooltip);
+            ToolTipService.SetToolTip(button, tooltip);
+            button.Click += (_, _) => BoardPlanEditRequested?.Invoke(instruction);
+            return button;
+        }
+
+        _boardPlanFontUp = CreateBoardPlanQuickButton("A+", "字号大一点", "字号放大（本地调整，不重新生成）");
+        _boardPlanFontDown = CreateBoardPlanQuickButton("A-", "字号小一点", "字号缩小（本地调整）");
+        _boardPlanTwoColumns = CreateBoardPlanQuickButton("两列", "改成两列", "改为两列排版（本地调整）");
+        _boardPlanKeepFormula = CreateBoardPlanQuickButton("只保留公式", "只保留公式", "过滤为只保留公式块（本地调整）");
+
+        _boardPlanMoveTarget = CreateSecondaryButton("移到板中板");
+        _boardPlanMoveTarget.Height = 26;
+        _boardPlanMoveTarget.MinHeight = 26;
+        _boardPlanMoveTarget.FontSize = 11;
+        _boardPlanMoveTarget.Padding = new Thickness(8, 0, 8, 0);
+        AutomationProperties.SetName(_boardPlanMoveTarget, "切换写入目标画板");
+        ToolTipService.SetToolTip(_boardPlanMoveTarget, "切换写入目标（本地调整，不改变内容）");
+        _boardPlanMoveTarget.Click += (_, _) =>
+            BoardPlanEditRequested?.Invoke(
+                string.Equals(_boardPlan?.TargetBoard, "side", StringComparison.OrdinalIgnoreCase)
+                    ? "移到主展板"
+                    : "移到板中板");
+
+        var adjustRowOne = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(0, 4, 0, 0),
+        };
+        adjustRowOne.Children.Add(_boardPlanFontUp);
+        adjustRowOne.Children.Add(_boardPlanFontDown);
+        adjustRowOne.Children.Add(_boardPlanTwoColumns);
+
+        var adjustRowTwo = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        adjustRowTwo.Children.Add(_boardPlanKeepFormula);
+        adjustRowTwo.Children.Add(_boardPlanMoveTarget);
+
+        var confirmRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 6, 0, 0),
+        };
+        confirmRow.Children.Add(_boardWriteConfirm);
+        confirmRow.Children.Add(_boardWriteSelected);
+
+        var cancelRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        cancelRow.Children.Add(_boardWriteCancel);
+
+        var boardPlanStack = new StackPanel { Spacing = 4 };
+        boardPlanStack.Children.Add(_boardPlanTitle);
+        boardPlanStack.Children.Add(_boardPlanWarnings);
+        boardPlanStack.Children.Add(_boardPlanPair);
+        boardPlanStack.Children.Add(adjustRowOne);
+        boardPlanStack.Children.Add(adjustRowTwo);
+        boardPlanStack.Children.Add(_replaceOriginal);
+        boardPlanStack.Children.Add(confirmRow);
+        boardPlanStack.Children.Add(cancelRow);
+
+        _boardPlanPreview = new Border
+        {
+            Background = _accentSoftBrush,
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8),
+            Margin = new Thickness(0, 4, 0, 0),
+            Visibility = Visibility.Collapsed,
+            Child = boardPlanStack,
+        };
+
         _cursor = new TextBlock
         {
             Text = "▍",
@@ -476,6 +667,8 @@ public sealed class AssistantWindow : Window
 
         _body.Children.Add(_formulaCard);
 
+        _body.Children.Add(_boardPlanPreview);
+
         _scroll = new ScrollViewer
         {
             Content = _body,
@@ -483,6 +676,8 @@ public sealed class AssistantWindow : Window
             HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Padding = new Thickness(12, 8, 12, 8),
         };
+
+        _scroll.SizeChanged += (_, e) => ApplyBoardPlanOrientation(e.NewSize.Width);
 
         // ---- footer actions ---------------------------------------------
         _paste = CreatePrimaryButton("贴回白板");
@@ -494,6 +689,18 @@ public sealed class AssistantWindow : Window
         _variantBasic = CreateSecondaryButton("基础变式");
         _variantAdvanced = CreateSecondaryButton("提高变式");
         _toggleAnnotations = CreateSecondaryButton("隐藏标注");
+
+        _organizeBoard = CreateSecondaryButton("整理板书");
+        _organizeBoard.Height = 30;
+        AutomationProperties.SetName(_organizeBoard, "整理板书");
+        ToolTipService.SetToolTip(_organizeBoard, "把当前选区/整页交给 AI 整理成结构化板书，预览确认后写入");
+        _organizeBoard.Click += (_, _) => RequestBoardWrite("organize", "整理当前页板书");
+
+        _aiWrite = CreateSecondaryButton("AI 书写");
+        _aiWrite.Height = 30;
+        AutomationProperties.SetName(_aiWrite, "AI 书写");
+        ToolTipService.SetToolTip(_aiWrite, "按追问框中的指令生成板书内容，预览确认后写入");
+        _aiWrite.Click += (_, _) => RequestBoardWrite("write", "写一句本课总结");
 
         _toggleAnnotations.Visibility = Visibility.Collapsed;
         _variantBasic.Click += (_, _) => VariantRequested?.Invoke(false);
@@ -603,7 +810,17 @@ public sealed class AssistantWindow : Window
         followRow.Children.Add(_send);
 
         var footer = new StackPanel { Spacing = 8, Padding = new Thickness(12, 8, 12, 12) };
+
+        var boardWriteRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+        boardWriteRow.Children.Add(_organizeBoard);
+        boardWriteRow.Children.Add(_aiWrite);
+
         footer.Children.Add(_actions);
+        footer.Children.Add(boardWriteRow);
         footer.Children.Add(followRow);
 
         // ---- root --------------------------------------------------------
@@ -678,7 +895,7 @@ public sealed class AssistantWindow : Window
         double cardHeight = Math.Min(MaxCardHeight, workHeight * MaxHeightRatio);
         cardHeight = Math.Max(200, cardHeight);
 
-        _scroll.MaxHeight = Math.Max(120, cardHeight - TitleHeight - 104);
+        _scroll.MaxHeight = Math.Max(120, cardHeight - TitleHeight - 144);
 
         try
         {
@@ -1217,8 +1434,361 @@ public sealed class AssistantWindow : Window
         if (_busy) return;
         string text = _followUp.Text?.Trim();
         if (string.IsNullOrEmpty(text)) return;
+
+        // 预览存在时先尝试本地调整（字号/列/过滤/移动/行距），命中则不发起网络请求。
+        if (_boardPlan is { IsEmpty: false }
+            && BoardPlanEditPolicy.TryApply(_boardPlan, text, out _, out _))
+        {
+            _followUp.Text = "";
+            BoardPlanEditRequested?.Invoke(text);
+            ShowNotice("已本地调整预览，未重新生成。");
+            return;
+        }
+
         _followUp.Text = "";
         FollowUpRequested?.Invoke(text);
+    }
+
+    /// <summary>整理板书 / AI 书写：优先复用追问框文本，为空时使用默认指令。</summary>
+    private void RequestBoardWrite(string intent, string defaultInstruction)
+    {
+        if (_busy || !_aiTeachingEnabled) return;
+
+        string instruction = (_followUp.Text ?? "").Trim();
+        if (instruction.Length == 0) instruction = defaultInstruction;
+        BoardWriteRequested?.Invoke(instruction, intent);
+    }
+
+    /// <summary>
+    /// 显示“原始内容 | 整理结果”对照预览；窄屏自动改为上下堆叠。
+    /// 勾选状态在确认时通过 <see cref="BoardWriteConfirmedSelection"/> 传出。
+    /// </summary>
+    public void ApplyBoardPlanPreview(AssistantBoardPlan plan, string instruction)
+    {
+        _boardPlan = plan;
+        _boardPlanList.Children.Clear();
+        _boardPlanOriginalList.Children.Clear();
+        _boardPlanWarnings.Children.Clear();
+        _boardPlanChecks.Clear();
+        _replaceOriginal.IsChecked = false;
+
+        if (plan is null || plan.IsEmpty)
+        {
+            _boardPlanPreview.Visibility = Visibility.Collapsed;
+            UpdateActionState();
+            return;
+        }
+
+        string intentLabel = (plan.Intent ?? "").Trim().ToLowerInvariant() switch
+        {
+            "organize" => "整理板书",
+            "write" => "AI 书写",
+            _ => "板书计划",
+        };
+        string instructionText = string.IsNullOrWhiteSpace(instruction)
+            ? ""
+            : " · " + TrimText(instruction, 24);
+        string confidenceText = plan.Confidence < 0.999 ? $" · 置信度 {plan.Confidence:0.00}" : "";
+        _boardPlanTitle.Text = $"{intentLabel}{instructionText} · {plan.Blocks.Count} 块{confidenceText}";
+
+        bool onSideBoard = string.Equals(plan.TargetBoard, "side", StringComparison.OrdinalIgnoreCase);
+        _boardPlanMoveTarget.Content = onSideBoard ? "移到主展板" : "移到板中板";
+        ToolTipService.SetToolTip(_boardPlanMoveTarget,
+            onSideBoard ? "切换写入目标到主展板（不改变内容）" : "切换写入目标到板中板（不改变内容）");
+
+        if (plan.Originals is { Count: > 0 })
+        {
+            foreach (string line in plan.Originals)
+            {
+                _boardPlanOriginalList.Children.Add(new TextBlock
+                {
+                    Text = line,
+                    FontSize = 11.5,
+                    Foreground = _textSecondary,
+                    TextWrapping = TextWrapping.Wrap,
+                });
+            }
+        }
+        else
+        {
+            _boardPlanOriginalList.Children.Add(new TextBlock
+            {
+                Text = "（AI 未返回识别原文）",
+                FontSize = 11,
+                Foreground = _textSecondary,
+                FontStyle = Windows.UI.Text.FontStyle.Italic,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        foreach (string warning in plan.Warnings ?? Array.Empty<string>())
+        {
+            if (string.IsNullOrWhiteSpace(warning)) continue;
+            _boardPlanWarnings.Children.Add(CreateWarningText("⚠ " + warning.Trim()));
+        }
+
+        if (plan.NeedsReview)
+        {
+            _boardPlanWarnings.Children.Add(CreateWarningText(
+                $"整体置信度 {plan.Confidence:0.00} 低于 "
+                + $"{AssistantBoardPlan.ReviewThreshold:0.00}，建议逐块复核。"));
+        }
+
+        string[] lowBlocks = plan.Blocks
+            .Where(block => block.Confidence < AssistantBoardPlan.ReviewThreshold)
+            .Select(block => block.Id)
+            .ToArray();
+        if (lowBlocks.Length > 0)
+            _boardPlanWarnings.Children.Add(CreateWarningText("需复核块：" + string.Join("、", lowBlocks)));
+
+        _boardPlanWarnings.Visibility = _boardPlanWarnings.Children.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        int shown = 0;
+        foreach (AssistantBoardBlock block in plan.Blocks)
+        {
+            if (shown >= MaxBoardPlanPreviewBlocks) break;
+            _boardPlanList.Children.Add(CreateBoardPlanRow(block, shown + 1));
+            shown++;
+        }
+
+        if (plan.Blocks.Count > shown)
+        {
+            _boardPlanList.Children.Add(new TextBlock
+            {
+                Text = $"…另有 {plan.Blocks.Count - shown} 块未展开",
+                FontSize = 10.5,
+                Foreground = _textSecondary,
+            });
+        }
+
+        if (plan.Notes is { Count: > 0 })
+        {
+            _boardPlanList.Children.Add(new TextBlock
+            {
+                Text = "提示：" + string.Join("；", plan.Notes),
+                FontSize = 10.5,
+                Foreground = _textSecondary,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        _boardPlanPreview.Visibility = Visibility.Visible;
+        UpdateActionState();
+    }
+
+    /// <summary>宽屏左右两栏（原始 | 结果），窄屏上下堆叠。</summary>
+    private void ApplyBoardPlanOrientation(double width)
+    {
+        bool wide = width >= 520;
+        if (wide == _boardPlanWideLayout
+            && _boardPlanPair.ColumnDefinitions.Count + _boardPlanPair.RowDefinitions.Count > 0)
+            return;
+
+        _boardPlanWideLayout = wide;
+        _boardPlanPair.ColumnDefinitions.Clear();
+        _boardPlanPair.RowDefinitions.Clear();
+
+        if (wide)
+        {
+            _boardPlanPair.ColumnDefinitions.Add(
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _boardPlanPair.ColumnDefinitions.Add(
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _boardPlanPair.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Grid.SetRow(_boardPlanOriginalPane, 0);
+            Grid.SetColumn(_boardPlanOriginalPane, 0);
+            Grid.SetRow(_boardPlanResultPane, 0);
+            Grid.SetColumn(_boardPlanResultPane, 1);
+        }
+        else
+        {
+            _boardPlanPair.ColumnDefinitions.Add(
+                new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _boardPlanPair.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            _boardPlanPair.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            Grid.SetRow(_boardPlanOriginalPane, 0);
+            Grid.SetColumn(_boardPlanOriginalPane, 0);
+            Grid.SetRow(_boardPlanResultPane, 1);
+            Grid.SetColumn(_boardPlanResultPane, 0);
+        }
+    }
+
+    private async Task ConfirmBoardWriteSelectionAsync(bool all)
+    {
+        if (_boardPlanBusy || _boardPlan is not { IsEmpty: false }) return;
+
+        List<string> ids = all
+            ? _boardPlan.Blocks.Select(block => block.Id).Distinct().ToList()
+            : _boardPlanChecks.Where(item => item.Box.IsChecked == true)
+                .Select(item => item.Id).Distinct().ToList();
+
+        if (ids.Count == 0)
+        {
+            ShowNotice("请至少选择一个整理结果块。");
+            return;
+        }
+
+        bool replace = _replaceOriginal?.IsChecked == true;
+        if (replace && !await ConfirmReplaceOriginalAsync()) return;
+
+        BoardWriteConfirmedSelection?.Invoke(ids, replace);
+    }
+
+    private async Task<bool> ConfirmReplaceOriginalAsync()
+    {
+        if (Content is not FrameworkElement root || root.XamlRoot is null)
+        {
+            ShowNotice("无法打开替换确认框，已取消写入。");
+            return false;
+        }
+
+        var dialog = new ContentDialog
+        {
+            Title = "替换原板书？",
+            Content = "将删除当前页原笔画（有选区时仅删除选区），再写入所选新卡片；"
+                + "可用一次 Ctrl+Z 撤销并恢复原迹。",
+            PrimaryButtonText = "替换并写入",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = root.XamlRoot,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    private TextBlock CreateWarningText(string text) => new()
+    {
+        Text = text,
+        FontSize = 10.5,
+        Foreground = ReviewBrush,
+        TextWrapping = TextWrapping.Wrap,
+    };
+
+    private TextBlock BoardPlanSectionLabel(string text) => new()
+    {
+        Text = text,
+        FontSize = 10.5,
+        FontWeight = FontWeights.SemiBold,
+        Foreground = _textSecondary,
+    };
+
+    public void ClearBoardPlanPreview()
+    {
+        _boardPlan = null;
+        _boardPlanList.Children.Clear();
+        _boardPlanOriginalList.Children.Clear();
+        _boardPlanWarnings.Children.Clear();
+        _boardPlanChecks.Clear();
+        _replaceOriginal.IsChecked = false;
+        _boardPlanPreview.Visibility = Visibility.Collapsed;
+        UpdateActionState();
+    }
+
+    public void SetBoardPlanBusy(bool busy)
+    {
+        _boardPlanBusy = busy;
+        UpdateActionState();
+    }
+
+    private FrameworkElement CreateBoardPlanRow(AssistantBoardBlock block, int order)
+    {
+        string kind = (block.Kind ?? "").Trim().ToLowerInvariant() switch
+        {
+            "formula" => "公式",
+            "wordlist" => "词语",
+            "poem" => "古诗",
+            _ => "文本",
+        };
+        bool needsReview = block.Confidence < AssistantBoardPlan.ReviewThreshold;
+        string title = TrimText(block.Title, 24);
+        string header = string.IsNullOrEmpty(title) ? $"{order}. {kind}" : $"{order}. {kind} · {title}";
+        if (needsReview) header += $" · 需复核 {block.Confidence:0.00}";
+
+        var row = new StackPanel { Spacing = 1, MinWidth = 0 };
+        row.Children.Add(new TextBlock
+        {
+            Text = header,
+            FontSize = 11.5,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = needsReview ? ReviewBrush : _textPrimary,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        string summary = BuildBoardPlanSummary(block);
+        if (!string.IsNullOrEmpty(summary))
+        {
+            row.Children.Add(new TextBlock
+            {
+                Text = summary,
+                FontSize = 11,
+                Foreground = _textSecondary,
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2,
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(block.Note))
+        {
+            row.Children.Add(new TextBlock
+            {
+                Text = "备注：" + TrimText(block.Note, 60),
+                FontSize = 10,
+                Foreground = ReviewBrush,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        row.Children.Add(new TextBlock
+        {
+            Text = DescribeBoardBlockRect(block.Rect),
+            FontSize = 10,
+            Foreground = _textSecondary,
+        });
+
+        var check = new CheckBox
+        {
+            IsChecked = true,
+            MinWidth = 0,
+            Margin = new Thickness(0, -4, 0, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        AutomationProperties.SetName(check, $"采用第 {order} 块");
+        ToolTipService.SetToolTip(check, needsReview ? "该块置信度偏低，建议复核后再采用" : "勾选以部分采用");
+        _boardPlanChecks.Add((block.Id, check));
+
+        var grid = new Grid { ColumnSpacing = 6 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        Grid.SetColumn(check, 0);
+        Grid.SetColumn(row, 1);
+        grid.Children.Add(check);
+        grid.Children.Add(row);
+        return grid;
+    }
+
+    private static string BuildBoardPlanSummary(AssistantBoardBlock block)
+    {
+        string kind = (block.Kind ?? "").Trim().ToLowerInvariant();
+        if (kind == "formula") return TrimText(block.Latex, 90);
+        if (block.Lines is { Count: > 0 }) return TrimText(string.Join(" / ", block.Lines), 90);
+        return TrimText(block.Text, 90);
+    }
+
+    private static string DescribeBoardBlockRect(AssistantRect rect)
+    {
+        if (rect.IsEmpty) return "位置：自动落点";
+        return $"位置：x {Math.Round(rect.Left * 100)}% · y {Math.Round(rect.Top * 100)}% · "
+            + $"w {Math.Round(rect.Width * 100)}% · h {Math.Round(rect.Height * 100)}%";
+    }
+
+    private static string TrimText(string text, int max)
+    {
+        string value = (text ?? "").Trim().Replace("\r", " ").Replace("\n", " ");
+        if (value.Length <= max) return value;
+        return value.Substring(0, Math.Max(0, max - 1)) + "…";
     }
 
     private void UpdateStatus(AssistantSession session)
@@ -1301,6 +1871,22 @@ public sealed class AssistantWindow : Window
         _paste.Content = _pasted ? "已贴回" : "贴回白板";
         _send.IsEnabled = !_busy && aiTeachingEnabled;
         _followUp.IsEnabled = !_busy && aiTeachingEnabled;
+        _organizeBoard.IsEnabled = !_busy && aiTeachingEnabled;
+        _aiWrite.IsEnabled = !_busy && aiTeachingEnabled;
+
+        bool hasBoardPlan = _boardPlan is { IsEmpty: false };
+        _boardPlanPreview.Visibility = hasBoardPlan ? Visibility.Visible : Visibility.Collapsed;
+        _boardWriteConfirm.Content = _boardPlanBusy ? "写入中…" : "全部采用";
+        _boardWriteConfirm.IsEnabled = !_busy && !_boardPlanBusy && hasBoardPlan && done;
+        _boardWriteSelected.IsEnabled = _boardWriteConfirm.IsEnabled;
+        _replaceOriginal.IsEnabled = !_boardPlanBusy && hasBoardPlan;
+        bool boardPlanEditable = !_busy && !_boardPlanBusy && hasBoardPlan;
+        _boardPlanFontUp.IsEnabled = boardPlanEditable;
+        _boardPlanFontDown.IsEnabled = boardPlanEditable;
+        _boardPlanTwoColumns.IsEnabled = boardPlanEditable;
+        _boardPlanKeepFormula.IsEnabled = boardPlanEditable;
+        _boardPlanMoveTarget.IsEnabled = boardPlanEditable;
+        _boardWriteCancel.IsEnabled = !_boardPlanBusy;
         _variantBasic.IsEnabled = exerciseFlowEnabled;
         _variantAdvanced.IsEnabled = exerciseFlowEnabled;
         if (!exerciseFlowEnabled)

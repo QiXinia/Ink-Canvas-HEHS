@@ -62,6 +62,14 @@ public static class AssistantMachine
                 session.Annotations.Add(ev.Points ?? Array.Empty<IReadOnlyList<double>>());
                 break;
 
+            case AssistantEventKind.BoardPlan:
+                if (terminal) return;
+                if (AssistantBoardPlan.TryParse(ev.Text, out AssistantBoardPlan plan, out _))
+                    session.BoardPlan = plan;
+                if (session.FirstTokenAtMs == 0) session.FirstTokenAtMs = nowMs;
+                session.State = AssistantState.Streaming;
+                break;
+
             case AssistantEventKind.Done:
                 session.State = AssistantState.Done;
                 break;
@@ -150,5 +158,19 @@ public static class AssistantMachine
             if (!string.IsNullOrEmpty(session.Text)) session.Text += "\n\n";
             session.Text += question;
         }
+    }
+
+    /// <summary>
+    /// 开始一次板书整理/书写指令。与 <see cref="BeginFollowUp"/> 的区别：指令文本不追加到
+    /// <see cref="AssistantSession.Text"/>，正文只承载服务端输出，避免指令与板书内容混排。
+    /// </summary>
+    public static void BeginCommand(AssistantSession session, string instruction, long nowMs)
+    {
+        if (session == null) return;
+
+        session.Error = "";
+        session.StartedAtMs = nowMs;
+        session.FirstTokenAtMs = 0;
+        session.State = AssistantState.Streaming;
     }
 }

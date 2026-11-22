@@ -6,6 +6,7 @@ using InkCanvas.Controls.Theming;
 using InkCanvas.Core.History;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Shapes;
+using InkCanvas.Core.AiAssistant;
 using InkCanvas.Features.AiAssistant;
 using InkCanvas.Core.Settings;
 using InkCanvas.Core.Selection;
@@ -1604,132 +1605,42 @@ private static bool IsDarkBackground(BoardBackground background)
     }
 
     private BoardImageAsset HitTestImage(float x, float y)
-    {
-        var images = _board.CurrentImages;
-        for (int i = images.Count - 1; i >= 0; i--)
-        {
-            var image = images[i];
-            if (x >= image.Left && x <= image.Left + image.Width
-                && y >= image.Top && y <= image.Top + image.Height)
-                return image;
-        }
-        return null;
-    }
+        => BoardImageHitTest.HitTest(_board.CurrentImages, x, y);
 
     private async Task EditAiCardAsync(BoardImageAsset asset, AiPasteMetadata metadata)
     {
-        InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
-            $"AI 卡片编辑：进入 EditAiCardAsync，资产 {asset.Name}，Kind={metadata.Kind}，已在编辑={_editingAiCard}",
-            InkCanvas.Core.Diagnostics.LogType.Event);
         if (_editingAiCard)
         {
             InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
-                "AI 卡片编辑：已有编辑对话框，忽略重复请求",
+                "[AI] AI 卡片编辑：已有编辑对话框，忽略重复请求",
                 InkCanvas.Core.Diagnostics.LogType.Trace);
             return;
         }
+
         if (Content is not FrameworkElement root || root.XamlRoot is null)
         {
             InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 卡片编辑：XamlRoot 为空（Content={Content?.GetType().Name ?? "null"}），无法打开对话框",
+                $"[AI] AI 卡片编辑：XamlRoot 为空（Content={Content?.GetType().Name ?? "null"}），无法打开对话框",
                 InkCanvas.Core.Diagnostics.LogType.Error);
             return;
         }
 
-        bool formula = metadata.Kind == AiPasteKind.Formula;
-        string initial = formula
-            ? metadata.Latex
-            : metadata.Kind == AiPasteKind.Steps && metadata.Lines.Count > 0
-                ? string.Join("\n", metadata.Lines)
-                : metadata.Text;
-
-        var editor = new TextBox
-        {
-            Text = initial,
-            AcceptsReturn = !formula,
-            TextWrapping = TextWrapping.Wrap,
-            MinWidth = 360,
-            MinHeight = formula ? 60 : 140,
-        };
-        var panel = new StackPanel { Spacing = 6 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = formula ? "LaTeX 公式" : "卡片文本",
-            Opacity = 0.7,
-        });
-        panel.Children.Add(editor);
-
-        var dialog = new ContentDialog
-        {
-            Title = "编辑 AI 卡片",
-            Content = panel,
-            PrimaryButtonText = "保存",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = root.XamlRoot,
-        };
-
         _editingAiCard = true;
         try
         {
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-            string text = editor.Text ?? "";
-            if (formula && string.IsNullOrWhiteSpace(text))
+            bool updated = await AiCardEditor.EditAsync(_board, asset, metadata, root.XamlRoot);
+            if (!updated)
             {
-                await ShowMessageAsync("LaTeX 内容不能为空。");
-                return;
+                InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                    $"[AI] AI 卡片编辑：{asset.Name} 未更新（取消或渲染失败）",
+                    InkCanvas.Core.Diagnostics.LogType.Trace);
             }
-
-            var updated = new AiPasteMetadata
-            {
-                Version = metadata.Version > 0 ? metadata.Version : AiPasteMetadata.CurrentVersion,
-                Kind = metadata.Kind,
-                Annotations = metadata.Annotations.Select(points => new List<double>(points)).ToList(),
-            };
-            if (formula)
-            {
-                updated.Latex = text.Trim();
-            }
-            else
-            {
-                updated.Text = text;
-                updated.Lines = SplitCardLines(text);
-            }
-
-            var lines = ContentLines(updated);
-            var (estimatedWidth, estimatedHeight) = PasteCardLayout.Estimate(lines);
-            int width = Math.Clamp((int)Math.Round(Math.Max(asset.Width, estimatedWidth)), 120, 640);
-            int height = Math.Clamp((int)Math.Round(Math.Max(asset.Height, estimatedHeight)), 60, 480);
-            byte[] png = await PasteCardRenderer.RenderPngAsync(asset.Name, lines, width, height);
-            if (png is null || png.Length == 0)
-            {
-                await ShowMessageAsync("卡片重新渲染失败，原内容保持不变。");
-                return;
-            }
-
-            if (!_board.UpdateImage(asset, png, updated.Serialize()))
-                await ShowMessageAsync("卡片已不在当前页面，未更新。");
         }
         finally
         {
             _editingAiCard = false;
         }
     }
-
-    private static List<string> ContentLines(AiPasteMetadata metadata)
-    {
-        if (metadata.Kind == AiPasteKind.Formula)
-            return new List<string> { metadata.Latex };
-        if (metadata.Lines.Count > 0) return metadata.Lines.ToList();
-        return SplitCardLines(metadata.Text);
-    }
-
-    private static List<string> SplitCardLines(string text)
-        => (text ?? "").Replace("\r", "").Split('\n')
-            .Select(line => line.TrimEnd())
-            .Where(line => line.Length > 0)
-            .ToList();
 
     // ---- navigation -----------------------------------------------------------
 

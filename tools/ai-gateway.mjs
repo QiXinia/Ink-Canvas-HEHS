@@ -304,12 +304,16 @@ function buildUserText(payload, images, inkSummary) {
   const stage = asString(pick(payload, 'stage', 'Stage')).trim();
   const sessionId = asString(pick(payload, 'sessionId', 'SessionId')).trim();
   const purpose = asString(pick(payload, 'purpose', 'Purpose')).trim();
+  const instruction = truncate(pick(payload, 'instruction', 'Instruction'), TRUNCATES.slideCurrent);
   const difficulty = asString(pick(payload, 'difficulty', 'Difficulty')).trim();
   if (mode) requestLines.push('mode=' + mode);
   if (teaching) requestLines.push('teaching=' + teaching);
   if (stage) requestLines.push('stage=' + stage);
   if (sessionId) requestLines.push('sessionId=' + sessionId);
   if (purpose) requestLines.push('purpose=' + purpose);
+  if (instruction) requestLines.push('instruction=' + instruction);
+  const targetPageIndex = pick(payload, 'targetPageIndex', 'TargetPageIndex');
+  if (targetPageIndex !== undefined) requestLines.push('targetPageIndex=' + asNumber(targetPageIndex));
   if (difficulty) requestLines.push('difficulty=' + difficulty);
   lines.push(...section('请求参数', requestLines));
 
@@ -529,6 +533,62 @@ async function streamFromUpstream(res, payload, stats, controller, isClientClose
 
 // ---------- mock 模式（未配置密钥时） ----------
 
+const BOARD_WRITE_PLAN = {
+  type: 'board_plan',
+  schema: 1,
+  intent: 'write',
+  target: { board: 'main', pageIndex: 0 },
+  originals: [
+    '1/2 x² - 3x + 2 = 0',
+    '求根：x = 2 或 x = 3',
+    '判别式 Δ = 1'
+  ],
+  confidence: 0.78,
+  warnings: [
+    '整体置信度 0.78 偏低，请复核公式系数',
+    '原文疑似笔误：第二行 x1 可能应为 x_1'
+  ],
+  blocks: [
+    {
+      id: 'b1',
+      kind: 'formula',
+      latex: '\\frac{1}{2}x^2 - 3x + 2 = 0',
+      rect: { x: 0.06, y: 0.1, w: 0.42, h: 0.14 },
+      style: { fontSize: 28, align: 'center', columns: 1, lineHeight: 1.4 },
+      confidence: 0.72,
+      note: '一次项系数疑似笔误，已按 -3x 整理'
+    },
+    {
+      id: 'b2',
+      kind: 'text',
+      text: '一元二次方程综合讲解',
+      confidence: 0.95,
+      rect: { x: 0.06, y: 0.28, w: 0.42, h: 0.1 },
+      style: { fontSize: 24, align: 'left', columns: 1, lineHeight: 1.4 }
+    },
+    {
+      id: 'b3',
+      kind: 'wordlist',
+      lines: ['判别式', '配方法', '因式分解'],
+      confidence: 0.88,
+      rect: { x: 0.54, y: 0.1, w: 0.24, h: 0.28 },
+      style: { fontSize: 24, align: 'left', columns: 1, lineHeight: 1.4 }
+    },
+    {
+      id: 'b4',
+      kind: 'poem',
+      title: '静夜思',
+      author: '唐·李白',
+      lines: ['床前明月光', '疑是地上霜', '举头望明月', '低头思故乡'],
+      confidence: 0.9,
+      note: '标题根据正文自动生成',
+      rect: { x: 0.54, y: 0.42, w: 0.42, h: 0.3 },
+      style: { fontSize: 26, align: 'center', columns: 1, lineHeight: 1.6 }
+    }
+  ],
+  notes: ['第 2 块标题为自动生成，可按需修改']
+};
+
 function mockTokenScript(mode) {
   if (mode === 'formula') {
     return [
@@ -564,10 +624,23 @@ function mockTokenScript(mode) {
 
 async function streamMock(req, res, payload, stats, isClientClosed) {
   const mode = asString(pick(payload, 'mode', 'Mode')).trim().toLowerCase() || 'auto';
+  const purpose = asString(pick(payload, 'purpose', 'Purpose')).trim().toLowerCase();
 
   if (mode === 'error' || req.headers['x-mock-fail'] === '1') {
     writeEvent(res, 'error', { type: 'error', text: 'mock 服务故障（用于错误态自测）' });
     stats.outcome = 'error';
+    return;
+  }
+
+  if (mode === 'board_write' || purpose === 'board_write') {
+    stats.tokenChars += JSON.stringify(BOARD_WRITE_PLAN).length;
+    writeEvent(res, 'board_plan', BOARD_WRITE_PLAN);
+    await delay(MOCK_TOKEN_INTERVAL_MS);
+    if (isClientClosed() || res.destroyed) {
+      stats.outcome = 'client-closed';
+      return;
+    }
+    writeEvent(res, 'done', { type: 'done' });
     return;
   }
 

@@ -128,6 +128,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private ExerciseDifficulty _variantDifficulty;
     private bool _variantPending;
     private string _reRecognizeRegionId;
+    private AssistantBoardPlan _aiBoardPlan;
+    private string _aiBoardInstruction = "";
+    private string _aiBoardIntent = "";
+    private bool _aiBoardRequestPending;
     private GroupScoreService _groupScore;
     private GroupScoreWindow _groupScoreWindow;
     private ExampleLibraryWindow _exampleLibrary;
@@ -3841,6 +3845,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
         window.CopyRequested += OnAiCopyRequested;
         window.PasteRequested += OnAiPasteRequested;
         window.FollowUpRequested += OnAiFollowUpRequested;
+        window.BoardWriteRequested += OnAiBoardWriteRequested;
+        window.BoardWriteConfirmedSelection += (ids, replace) => _ = ConfirmBoardWriteAsync(ids, replace);
+        window.BoardPlanEditRequested += OnAiBoardPlanEditRequested;
+        window.BoardWriteCancelled += OnAiBoardWriteCancelled;
         window.TeachingModeRequested += OnAiTeachingModeChanged;
         window.RevealNextRequested += OnAiRevealNext;
         window.VariantRequested += OnAiVariantRequested;
@@ -3951,8 +3959,17 @@ public sealed partial class ShellController : IShellActions, IDisposable
         else
         {
             _aiSession = AssistantMachine.CreateSession(request.Mode, request.SessionId);
-            AssistantMachine.BeginCapture(_aiSession, now);
-            AssistantMachine.BeginRecognize(_aiSession);
+            if (request.Purpose == "board_write")
+            {
+                // 板书指令只驱动服务端生成，不追加到正文，避免与讲题/追问内容混排。
+                AssistantMachine.BeginCommand(_aiSession, request.Instruction, now);
+            }
+            else
+            {
+                AssistantMachine.BeginCapture(_aiSession, now);
+                AssistantMachine.BeginRecognize(_aiSession);
+            }
+
             _aiSession.TeachingMode = request.Teaching;
             _aiSession.RevealedSteps = 0;
         }
@@ -3968,8 +3985,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _aiSlideId > 0 ? _aiSlideId : _aiProblem?.SlideId ?? 0,
             AiFavoriteBoardPage());
 
-        _aiTwoStage = Services.Settings.Ai.EnableTwoStage
-            && (_aiProblem is null || _aiProblem.Count <= 1);
+        _aiTwoStage = request.Purpose == "board_write"
+            ? false
+            : Services.Settings.Ai.EnableTwoStage
+              && (_aiProblem is null || _aiProblem.Count <= 1);
         _aiStageFirstToken = null;
         _aiStageReset = false;
         ResetAiPreStage();
@@ -4047,6 +4066,12 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (!AiTargetStillCurrent(writeBack: false)) return;
         try
         {
+            if (ev.Kind == AssistantEventKind.BoardPlan)
+            {
+                _ = PreviewBoardPlanAsync(ev);
+                return;
+            }
+
             if (_aiTwoStage) ApplyTwoStageEvent(ev);
             else AssistantMachine.ApplyEvent(_aiSession, ev, Environment.TickCount64);
 
@@ -4238,6 +4263,15 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _aiAssistant?.Apply(_aiSession, _aiThumb);
         _aiAssistant?.SetBusy(false);
         _aiStream = null;
+
+        if (_aiBoardRequestPending)
+        {
+            _aiBoardRequestPending = false;
+            _aiAssistant?.ShowNotice("板书生成失败，已保留指令，可重试。");
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书请求失败：intent={_aiBoardIntent}，instruction={_aiBoardInstruction}，error={message}",
+                Core.Diagnostics.LogType.Error);
+        }
     }
 
     private void OnAiDone()
@@ -4253,6 +4287,18 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _aiAssistant?.Apply(_aiSession, _aiThumb);
             _aiAssistant?.SetPasted(false);
             _aiAssistant?.SetBusy(false);
+
+            if (_aiBoardRequestPending)
+            {
+                _aiBoardRequestPending = false;
+                if (_aiBoardPlan is null && _aiSession.BoardPlan is null)
+                {
+                    _aiAssistant?.ShowNotice("AI 未返回可写入的板书计划，已保留指令，可重试。");
+                    Core.Diagnostics.FileLog.WriteLogToFile(
+                        $"[AI] 板书计划缺失：intent={_aiBoardIntent}，instruction={_aiBoardInstruction}",
+                        Core.Diagnostics.LogType.Info);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -4693,6 +4739,427 @@ public sealed partial class ShellController : IShellActions, IDisposable
         {
             Core.Diagnostics.FileLog.WriteLogToFile($"AI 复制失败：{ex.Message}", Core.Diagnostics.LogType.Error);
         }
+    }
+
+    /// <summary>
+    /// 「整理板书 / AI 书写」入口：复用追问文本（为空由浮窗填默认指令），
+    /// 以 board_write 用途单独发起一次请求；不写入会话正文，也不复用讲题渲染。
+    /// </summary>
+    private void OnAiBoardWriteRequested(string instruction, string intent)
+    {
+        if (_aiSession is null || _aiAssistant is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) return;
+
+        string normalizedIntent = string.Equals(intent, "organize", StringComparison.OrdinalIgnoreCase)
+            ? "organize"
+            : "write";
+        string instructionText = (instruction ?? "").Trim();
+        if (instructionText.Length == 0)
+            instructionText = normalizedIntent == "organize" ? "整理当前页板书" : "写一句本课总结";
+
+        BoardService targetBoard = AiTargetBoard();
+        if (normalizedIntent == "organize")
+        {
+            if (targetBoard is null)
+            {
+                _aiAssistant.ShowNotice("目标画板不可用，无法整理板书。");
+                return;
+            }
+            if (targetBoard.GetContentBounds().IsEmpty)
+            {
+                Core.Diagnostics.FileLog.WriteLogToFile(
+                    "[AI] 整理板书取消：目标页没有可整理内容（GetContentBounds 为空）",
+                    Core.Diagnostics.LogType.Info);
+                _aiAssistant.ShowNotice("当前页还没有可整理的板书，请先书写后再试。");
+                return;
+            }
+        }
+
+        string requestInstruction = instructionText;
+        if (normalizedIntent == "organize")
+            requestInstruction += "\n请同时返回 originals（识别原文逐行）以及 confidence 与 warnings。";
+
+        _aiBoardInstruction = instructionText;
+        _aiBoardIntent = normalizedIntent;
+        _aiBoardPlan = null;
+        _aiBoardRequestPending = true;
+        _aiAssistant.ClearBoardPlanPreview();
+
+        int targetPage = _aiTarget?.PageIndex ?? targetBoard?.CurrentIndex ?? 0;
+        var request = new AssistantRequest
+        {
+            ImageBase64 = normalizedIntent == "organize" ? _aiThumb ?? "" : "",
+            InkStrokes = Array.Empty<AssistantStroke>(),
+            Viewport = new AssistantViewport { Scale = 1.0, Rect = _aiAnchor },
+            Mode = normalizedIntent == "organize" ? AssistantMode.Auto : AssistantMode.Chat,
+            SessionId = _aiSession.SessionId ?? "",
+            Purpose = "board_write",
+            Instruction = requestInstruction,
+            TargetPageIndex = targetPage,
+            SlideContext = BuildSlideContext(),
+        };
+
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 板书请求：intent={normalizedIntent}，instruction={instructionText}，"
+            + $"target={AssistantTargetPolicy.Describe(_aiTarget)}，image={(request.ImageBase64.Length > 0 ? "yes" : "no")}",
+            Core.Diagnostics.LogType.Info);
+        StartAssistantStream(request, followUp: false, question: "");
+    }
+
+    private void OnAiBoardWriteCancelled()
+    {
+        _aiBoardRequestPending = false;
+        _aiAssistant?.ShowNotice("已取消写入，指令已保留，可重新生成。");
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 板书预览取消：intent={_aiBoardIntent}，instruction={_aiBoardInstruction}",
+            Core.Diagnostics.LogType.Info);
+    }
+
+    /// <summary>
+    /// 阶段 5：本地应用“连续修改指令”（字号/列/过滤/移动/行距），
+    /// 不调用 AI、不重新生成内容，只刷新预览。
+    /// </summary>
+    private void OnAiBoardPlanEditRequested(string instruction)
+    {
+        if (_aiSession is null || _aiAssistant is null) return;
+        if (!AiTargetStillCurrent(writeBack: false)) return;
+
+        AssistantBoardPlan plan = _aiBoardPlan ?? _aiSession.BoardPlan;
+        if (plan is null || plan.IsEmpty)
+        {
+            _aiAssistant.ShowNotice("没有可调整的板书预览，请先生成。");
+            return;
+        }
+
+        if (!BoardPlanEditPolicy.TryApply(plan, instruction, out AssistantBoardPlan updated, out string message))
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书本地编辑未识别：instruction={instruction}，reason={message}",
+                Core.Diagnostics.LogType.Info);
+            _aiAssistant.ShowNotice(message);
+            return;
+        }
+
+        bool targetChanged = !string.Equals(
+            updated.TargetBoard, plan.TargetBoard, StringComparison.OrdinalIgnoreCase);
+        if (targetChanged && !ApplyBoardPlanTarget(updated.TargetBoard)) return;
+
+        _aiBoardPlan = updated;
+        _aiSession.BoardPlan = updated;
+        _aiAssistant.ApplyBoardPlanPreview(updated, _aiBoardInstruction);
+        _aiAssistant.ShowNotice(message);
+
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 板书本地编辑：instruction={instruction}，target={updated.TargetBoard}，"
+            + $"page={updated.TargetPageIndex}，blocks={updated.Blocks.Count}，{message}",
+            Core.Diagnostics.LogType.Event);
+    }
+
+    /// <summary>把写入目标切到主展板或板中板；窗口未打开时不切换并提示。</summary>
+    private bool ApplyBoardPlanTarget(string targetBoard)
+    {
+        bool side = string.Equals(targetBoard, "side", StringComparison.OrdinalIgnoreCase);
+        if (side)
+        {
+            if (_sideBoard is not { IsShown: true })
+            {
+                _aiAssistant?.ShowNotice("板中板窗口未打开，未切换目标；请先打开板中板。");
+                return false;
+            }
+        }
+        else if (_board is null)
+        {
+            _aiAssistant?.ShowNotice("主展板窗口未打开，未切换目标；请先打开主展板。");
+            return false;
+        }
+
+        BoardService board = side ? Services.SideBoard : Services.Board;
+        if (board is null)
+        {
+            _aiAssistant?.ShowNotice("目标画板不可用，未切换。");
+            return false;
+        }
+
+        int pageIndex = Math.Clamp(_aiTarget?.PageIndex ?? board.CurrentIndex, 0, Math.Max(0, board.Pages.Count - 1));
+        object page = board.Pages.Count > 0 && pageIndex < board.Pages.Count ? board.Pages[pageIndex] : null;
+
+        _aiTarget = new AssistantTarget
+        {
+            Canvas = board,
+            Page = page,
+            Kind = side ? AssistantCanvasKind.SideBoard : AssistantCanvasKind.MainBoard,
+            PageIndex = pageIndex,
+            SessionId = _aiSession?.SessionId ?? "",
+        };
+        return true;
+    }
+
+    /// <summary>解析 board_plan 并交给浮窗预览；失败保留指令与旧计划，不覆盖正文渲染。</summary>
+    private async Task PreviewBoardPlanAsync(AssistantEvent ev)
+    {
+        if (ev is null || _aiAssistant is null || _aiSession is null) return;
+        if (!AiTargetStillCurrent(writeBack: false)) return;
+
+        AssistantWindow window = _aiAssistant;
+        string sessionId = _aiSession.SessionId ?? "";
+
+        if (!AssistantBoardPlan.TryParse(ev.Text, out AssistantBoardPlan plan, out string error))
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] board_plan 解析失败：{error}", Core.Diagnostics.LogType.Error);
+            window.ShowNotice("AI 返回的板书计划无法解析，已保留指令，可重试。");
+            return;
+        }
+
+        await Task.CompletedTask;
+        if (!ReferenceEquals(_aiAssistant, window)) return;
+        if (!string.Equals(_aiSession?.SessionId ?? "", sessionId, StringComparison.Ordinal)) return;
+        if (!AiTargetStillCurrent(writeBack: false)) return;
+
+        // 预览目标与真实写入目标对齐，便于“移到主展板/板中板”的本地切换。
+        plan.TargetBoard = _aiTarget?.Kind == AssistantCanvasKind.SideBoard ? "side" : "main";
+        _aiBoardPlan = plan;
+        _aiBoardRequestPending = false;
+        _aiSession.BoardPlan = plan;
+        window.ApplyBoardPlanPreview(plan, _aiBoardInstruction);
+
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] board_plan 就绪：schema={plan.Schema}，intent={plan.Intent}，blocks={plan.Blocks.Count}，"
+            + $"planTarget={plan.TargetBoard}/{plan.TargetPageIndex}，actual={AssistantTargetPolicy.Describe(_aiTarget)}",
+            Core.Diagnostics.LogType.Event);
+    }
+
+    /// <summary>
+    /// 确认写入：先校验目标板/页仍有效，再渲染多张卡片、自动落点，最后用一次
+    /// <see cref="BoardService.AddImagesAtomic"/> 完成整体写入与一次撤销。
+    /// </summary>
+    /// <summary>
+    /// 确认写入：按 <paramref name="selectedIds"/> 过滤块（部分采用），渲染后一次写入；
+    /// <paramref name="replaceOriginal"/> 为 true 时在同一撤销步骤内删除原笔画并插入新卡片。
+    /// </summary>
+    private async Task ConfirmBoardWriteAsync(IReadOnlyList<string> selectedIds, bool replaceOriginal)
+    {
+        AssistantWindow window = _aiAssistant;
+        if (window is null) return;
+        if (!AiTargetStillCurrent(writeBack: true)) { window.SetBoardPlanBusy(false); return; }
+
+        AssistantBoardPlan plan = _aiBoardPlan ?? _aiSession?.BoardPlan;
+        if (plan is null || plan.IsEmpty)
+        {
+            window.ShowNotice("没有可写入的板书计划，请重新生成。");
+            return;
+        }
+
+        AssistantBoardPlan selectedPlan = selectedIds is { Count: > 0 }
+            ? plan.SelectBlocks(selectedIds)
+            : plan;
+        if (selectedPlan.IsEmpty)
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice("未选择任何板书块，请勾选后再采用。");
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书写入取消：没有匹配的选中块（selectedIds={selectedIds?.Count ?? 0}）",
+                Core.Diagnostics.LogType.Info);
+            return;
+        }
+
+        BoardService board = AiTargetBoard();
+        if (board is null)
+        {
+            window.ShowNotice("目标画板不可用，已保留计划，可重试。");
+            return;
+        }
+
+        int pageIndex = _aiTarget?.PageIndex ?? board.CurrentIndex;
+        object targetPage = _aiTarget?.Page;
+        string instruction = _aiBoardInstruction;
+
+        window.SetBusy(true);
+        window.SetBoardPlanBusy(true);
+
+        BoardPlanRenderResult rendered;
+        try
+        {
+            rendered = await BoardPlanWriter.RenderAsync(
+                selectedPlan, instruction, null, window.Content as Microsoft.UI.Xaml.FrameworkElement);
+        }
+        catch (Exception ex)
+        {
+            rendered = new BoardPlanRenderResult { Error = ex.Message };
+        }
+
+        if (!ReferenceEquals(_aiAssistant, window)) return;
+        if (!AiTargetStillCurrent(writeBack: true))
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            return;
+        }
+
+        if (!rendered.Success)
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice($"板书渲染失败：{rendered.Error}，已保留计划，可重试。");
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书渲染失败：intent={_aiBoardIntent}，error={rendered.Error}",
+                Core.Diagnostics.LogType.Error);
+            return;
+        }
+
+        if (!ReferenceEquals(board.Current, targetPage) || board.CurrentIndex != pageIndex)
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice("板书目标页已切换，已保留计划；请回到原页后重试。");
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书写入目标已变：expected=pageIndex {pageIndex}，actual=pageIndex {board.CurrentIndex}",
+                Core.Diagnostics.LogType.Error);
+            return;
+        }
+
+        var sizes = new List<BoardCardSize>(rendered.Cards.Count);
+        foreach (BoardPlanCardDraft card in rendered.Cards)
+            sizes.Add(new BoardCardSize(card.Width, card.Height));
+
+        bool selectionOnly = board.Current.HasSelection;
+        bool hasStrokeSelection = selectionOnly && board.Current.Selection.Count > 0;
+        IReadOnlyList<InkCanvas.Core.Ink.InkStroke> strokesToRemove =
+            Array.Empty<InkCanvas.Core.Ink.InkStroke>();
+        if (replaceOriginal && selectionOnly && hasStrokeSelection)
+            strokesToRemove = board.Current.Selection.ToList();
+        else if (replaceOriginal && !selectionOnly)
+            strokesToRemove = board.Current.Document.Strokes.ToList();
+
+        Rect content = replaceOriginal
+            ? board.GetContentBoundsExcept(strokesToRemove)
+            : board.GetContentBounds();
+        var contentBounds = new AssistantRect(content.Left, content.Top, content.Right, content.Bottom);
+        AssistantRect viewport = BoardViewportRect(board);
+        BoardLayoutPlan layout = BoardContentLayoutPlanner.Plan(contentBounds, sizes, viewport);
+
+        if (layout.NeedsNewPage || layout.Placements.Count != rendered.Cards.Count)
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice(layout.Message);
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书空间不足：blocks={rendered.Cards.Count}，message={layout.Message}",
+                Core.Diagnostics.LogType.Info);
+            return;
+        }
+
+        var assets = new List<BoardImageAsset>(rendered.Cards.Count);
+        for (int index = 0; index < rendered.Cards.Count; index++)
+        {
+            BoardPlanCardDraft card = rendered.Cards[index];
+            BoardCardPlacement placement = layout.Placements[index];
+            assets.Add(new BoardImageAsset
+            {
+                Name = card.Name,
+                Data = card.Png,
+                ContentType = "image/png",
+                Left = (float)placement.Left,
+                Top = (float)placement.Top,
+                Width = (float)placement.Width,
+                Height = (float)placement.Height,
+                Metadata = card.Metadata,
+            });
+        }
+
+        int removedStrokes = 0;
+        IReadOnlyList<int> indexes;
+
+        if (replaceOriginal)
+        {
+            if (selectionOnly && !hasStrokeSelection)
+            {
+                window.ShowNotice("选区中没有笔画，已仅插入新卡片（未删除原迹）。");
+                indexes = board.AddImagesAtomic(assets, "AI 板书");
+            }
+            else
+            {
+                removedStrokes = strokesToRemove.Count;
+                bool replaced = board.ReplaceStrokesWithImagesAtomic(strokesToRemove, assets, "AI 板书替换");
+                if (replaced)
+                {
+                    indexes = Enumerable.Range(0, assets.Count).ToArray();
+                }
+                else
+                {
+                    removedStrokes = 0;
+                    indexes = board.AddImagesAtomic(assets, "AI 板书");
+                    if (indexes.Count > 0)
+                        window.ShowNotice("当前页没有可替换的原笔画，已仅插入新卡片。");
+                }
+            }
+        }
+        else
+        {
+            indexes = board.AddImagesAtomic(assets, "AI 板书");
+        }
+
+        if (indexes.Count == 0)
+        {
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice("板书写入失败，已保留计划，可重试。");
+            return;
+        }
+
+        if (board == Services.Board && _board is null) ToggleBoard();
+
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 板书写入完成：board={(_aiTarget?.Kind == AssistantCanvasKind.SideBoard ? "side" : "main")}，"
+            + $"page={pageIndex}，selected={selectedPlan.Blocks.Count}/{plan.Blocks.Count}，"
+            + $"replace={replaceOriginal}，removedStrokes={removedStrokes}，blocks={assets.Count}，"
+            + $"scale={layout.Scale:0.00}，indexes={string.Join(",", indexes)}",
+            Core.Diagnostics.LogType.Event);
+
+        _aiBoardPlan = null;
+        _aiBoardInstruction = "";
+        _aiBoardIntent = "";
+        _aiBoardRequestPending = false;
+        window.ClearBoardPlanPreview();
+        window.SetBoardPlanBusy(false);
+        window.SetBusy(false);
+        window.SetPasted(true);
+
+        string scaleNote = string.IsNullOrEmpty(layout.Message) ? "" : layout.Message;
+        string actionNote = removedStrokes > 0
+            ? $"已替换原板书（删除 {removedStrokes} 笔），可 Ctrl+Z 一次撤销。"
+            : "已写入展板，可 Ctrl+Z 整体撤销。";
+        window.ShowNotice(scaleNote + actionNote);
+    }
+
+    /// <summary>当前板视口（客户区）反变换到世界坐标，供自动落点使用。</summary>
+    private AssistantRect BoardViewportRect(BoardService board)
+    {
+        var (work, dpi, _, _) = AssistantTarget();
+        double width = Math.Max(1, work.Width / dpi);
+        double height = Math.Max(1, work.Height / dpi);
+
+        if (_aiTarget?.Kind == AssistantCanvasKind.SideBoard && _sideBoard is not null)
+        {
+            ScreenRect client = WindowChrome.GetClientBounds(WindowChrome.GetHwnd(_sideBoard));
+            if (client.Width > 0 && client.Height > 0)
+            {
+                width = client.Width / dpi;
+                height = client.Height / dpi;
+            }
+        }
+
+        Matrix3x2 transform = board.Current.ViewTransform;
+        if (!Matrix3x2.Invert(transform, out Matrix3x2 inverse)) inverse = Matrix3x2.Identity;
+
+        Vector2 topLeft = Vector2.Transform(Vector2.Zero, inverse);
+        Vector2 bottomRight = Vector2.Transform(new Vector2((float)width, (float)height), inverse);
+        return new AssistantRect(
+            Math.Min(topLeft.X, bottomRight.X),
+            Math.Min(topLeft.Y, bottomRight.Y),
+            Math.Max(topLeft.X, bottomRight.X),
+            Math.Max(topLeft.Y, bottomRight.Y));
     }
 
     private void OnAiPasteRequested() => _ = PasteAssistantAsync();
