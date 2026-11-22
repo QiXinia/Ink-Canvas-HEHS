@@ -31,6 +31,7 @@ public sealed class SideBoardWindow : Window
 {
     private const double AnimationMilliseconds = 210;
     private const double SaveDebounceMilliseconds = 600;
+    private const double ClampDebounceMilliseconds = 300;
     private static readonly FontFamily IconFont = new("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons");
 
     private readonly AppServices _services;
@@ -52,6 +53,7 @@ public sealed class SideBoardWindow : Window
     private TouchIconButton _undoButton, _redoButton, _prevButton, _nextButton, _pasteButton;
     private bool _pasting;
     private DispatcherQueueTimer _saveTimer, _animationTimer;
+    private DispatcherQueueTimer _clampTimer;
     private InkController _boundController;
     private Matrix3x2 _lastTransform = Matrix3x2.Identity;
     private MinSizeHook _minSize;
@@ -207,15 +209,17 @@ BindPage();
         AnimateWindow(offX, rect.Y, hideAtEnd: true);
     }
 
-    /// <summary>显示设置/工作区/DPI 变化后重算，避免抽屉落在屏幕外。</summary>
+    /// <summary>拖拽/缩放结束或显示变化后，把窗口夹回其中心所在显示器的工作区。</summary>
     public void EnsureOnScreen()
     {
         if (_closed || !_visible || _animating) return;
-        var work = WorkArea();
-        var current = CurrentRect();
-        var clamped = SideBoardLayout.Clamp(current, work, DpiScale(work));
-        if (clamped != current)
-            WindowChrome.Place(this, clamped.X, clamped.Y, clamped.Width, clamped.Height);
+        var current = WindowBounds();
+        if (current.IsEmpty) return;
+        var (work, scale) = WindowWorkArea(current);
+        if (work.IsEmpty) return;
+        var clamped = SideBoardLayout.Clamp(current, work, scale);
+        if (clamped == current) return;
+        WindowChrome.Place(this, clamped.X, clamped.Y, clamped.Width, clamped.Height);
     }
 
     private Border BuildToolbar()
@@ -711,6 +715,24 @@ BindPage();
         => WindowChrome.GetDpiScale(new Windows.Graphics.RectInt32(work.X, work.Y,
             Math.Max(1, work.Width), Math.Max(1, work.Height)));
 
+    /// <summary>取窗口矩形中心点所在显示器的工作区与 DPI，跨屏拖动时按目标屏夹取。</summary>
+    private (SideBoardWorkArea Work, double Scale) WindowWorkArea(SideBoardRect rect)
+    {
+        int centerX = rect.X + rect.Width / 2;
+        int centerY = rect.Y + rect.Height / 2;
+        var screen = ScreenService.FromRect(new ScreenRect(centerX, centerY, 1, 1));
+        var work = screen.WorkArea;
+        var area = new SideBoardWorkArea(work.X, work.Y, work.Width, work.Height);
+        return (area, screen.DpiScale > 0 ? screen.DpiScale : DpiScale(area));
+    }
+
+    /// <summary>Win32 外框；与复测脚本 GetWindowRect 保持一致。</summary>
+    private SideBoardRect WindowBounds()
+    {
+        var bounds = WindowChrome.GetWindowBounds(this);
+        return new SideBoardRect(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+    }
+
     private static bool SlideFromRight(SideBoardRect rect, SideBoardWorkArea work)
         => rect.X + rect.Width / 2 >= work.X + work.Width / 2;
 
@@ -720,7 +742,26 @@ BindPage();
     {
         if (_closed || _animating || !_visible) return;
         if (!args.DidPositionChange && !args.DidSizeChange) return;
+        // 拖动/缩放过程中每次变化都重置计时器，停下来 300ms 后再夹取。
+        ScheduleClamp();
         ScheduleSave();
+    }
+
+    private void ScheduleClamp()
+    {
+        _clampTimer ??= DispatcherQueue.CreateTimer();
+        _clampTimer.Interval = TimeSpan.FromMilliseconds(ClampDebounceMilliseconds);
+        _clampTimer.IsRepeating = false;
+        _clampTimer.Stop();
+        _clampTimer.Tick -= OnClampTimerTick;
+        _clampTimer.Tick += OnClampTimerTick;
+        _clampTimer.Start();
+    }
+
+    private void OnClampTimerTick(DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+        EnsureOnScreen();
     }
 
     private void ScheduleSave()
@@ -802,6 +843,7 @@ BindPage();
         _visible = false;
         StopAnimation();
         _saveTimer?.Stop();
+        _clampTimer?.Stop();
         _board.PageChanged -= OnPageChanged;
         _board.BackgroundChanged -= RefreshBackground;
         _board.ImagesChanged -= OnImagesChanged;

@@ -73,8 +73,8 @@
 ### 4.1 构建与自动化测试
 
 - `dotnet build InkCanvas.slnx -c Debug -p:Platform=x64`：0 警告 0 错误。
-- 测试合计 **1511 项全通过**：
-  - Core 1022、Ai 144、P0 45、Classroom 297、LegacyImport 3。
+- 测试合计 **1514 项全通过**：
+  - Core 1023、Ai 144、P0 47、Classroom 297、LegacyImport 3。
 
 ### 4.2 运行时诊断 `--sideboardcheck`
 
@@ -99,7 +99,11 @@ InkCanvas.exe --sideboardcheck=D:\hw\merge-backup\sidecheck2
 [PASS] offscreen placement is clamped at 150% app scale  affectsSideBoardLayout=false
 ```
 
-最终运行：`summary: 17/17 passed, 0 failed, 1 optional, total=26563.2 ms`，退出码 0。
+最终运行：`summary: 22/22 passed, 0 failed, 1 optional, total=26349.7 ms`，退出码 0。新增断言：
+- 贴回数值：资产 `692.35,386.35 151.3x91.3`，视口 `1536x864`，中心偏差 `0px`，宽度占比 `9.85%`（上限 60%），比例误差 `0`。
+- 视口/选区隔离：子板缩放 1.35 + 平移 (36,-24)，主板 `ViewTransform` 保持单位矩阵；子板有选区时主板 Selection=0。
+- 句柄阈值：50 轮增长 `+135`（阈值 300）；500 轮长稳 `+41`，0 失败（约 237s）。
+- 真实鼠标黑盒：拖动标题栏 `moved=True`；右下角 resize 至 584×584（≥450×350）；拖出屏幕至 (-400,-300) 后夹回 `0,0 976x518`，完整落在工作区。
 
 产物：`sideboard-check.txt`、`sideboard-check.json`、`side.icink`、`side-v3.icink`、`sideboard-show.png`。
 
@@ -110,7 +114,8 @@ InkCanvas.exe --sideboardcheck=D:\hw\merge-backup\sidecheck2
 - 子板收回：`AppWindow.Hide 后：isVisible=False`；再拉出 `恢复 AI 浮窗后：isVisible=True`。
 - 子板窗口截图：标题「板中板」、深色画布、底部工具栏（笔/荧光笔/橡皮/清空/背景/撤销/重做/翻页/加页/贴到主展板/AI/收回）均正常。
 - 关闭板流程后 `error.log` 今日 0 条新异常（历史记录停留在 2026-11-21）；关闭板后浮条与 Overlay 正常恢复。
-- AI 端到端（实机，主板）：浮条「AI 识别」→ 浮窗 3 秒内状态为「已完成」并输出分步引导内容（本机 mock 流），按钮齐全（分步引导/基础变式/提高变式/追加选区/贴回白板/收藏例题/下一步/复制/发送）；`WindowPattern.Close` 后窗口从 UIA 树消失。错误/重试状态机由 `Ai.Tests` 144 项覆盖，实机未注入错误。
+- AI 端到端（实机，主板）：浮条「AI 识别」→ 浮窗 3 秒内状态为「已完成」并输出分步引导内容（本机 mock 流），按钮齐全（分步引导/基础变式/提高变式/追加选区/贴回白板/收藏例题/下一步/复制/发送）；`WindowPattern.Close` 后窗口从 UIA 树消失。
+- AI 状态机（`--aicheck`，本地注入不联网）：6/6 PASS —— 加载态「识别中」+进度环、错误态「出错」+错误文本+2 个可用「重试」、UIA 触发重试后 `Error→Recognizing`、本地 Token+Done 到「已完成」、关闭后 `closedCount=1` 且 `AppWindow` 释放、状态回 Idle。
 - PowerPoint 放映回归（`--pptcheck`）：全屏与阅读视图两种放映类型各 9 项、共 **18/18 PASS**，退出码 0。修复的真实回归：
   - 导航节流（180ms）导致紧随 PptPrevious 之后的 PptNext 被静默丢弃 → 改为节流窗口内排队补发一次；
   - 阅读视图窗口尺寸变化导致 `OverlayInkPresenter` 旧尺寸位图复制崩溃（Destination too short）→ 按窗口尺寸重建缓存；
@@ -121,8 +126,8 @@ InkCanvas.exe --sideboardcheck=D:\hw\merge-backup\sidecheck2
 
 1. **子板时光机**：本期不录子板事件，仅保证内容随主文件保存与最终状态恢复；回放不区分主板/子板。**用户已确认接受此差距（2026-11-22），后续如需回放单独立项。**
 2. **视频贴回**：子板仅含视频时按“无可贴回内容”处理（视频不参与离屏合成）。
-3. **动画路径压力**：已用 animate:true 跑 50 轮（210ms 滑入/滑出，0 失败），但未做逐帧观感/明显闪烁判定；内存与句柄为单次 50 轮采样，不等于长时间稳定性结论。
-4. **多屏/系统高 DPI/高对比度**：当前环境单屏 1920×1080@125%，仅实机单屏 + 纯逻辑夹取覆盖；未做多屏/150%/200%/高对比度实机（应用内 150% 缩放不参与子板窗口布局，已在诊断中标注）。**用户已确认作为环境限制接受。**
+3. **动画路径压力**：animate:true 50 轮与 500 轮长稳均 0 失败（句柄 +135/+41，阈值 300），但未做逐帧观感/明显闪烁判定；长稳为 500 轮窗口动画，不等同 90 分钟课堂压力。
+4. **多屏/系统高 DPI/高对比度**：当前环境单屏 1920×1080@125%；真实鼠标拖动/缩放/拖出屏幕夹回已实机验证，但跨物理显示器拖动、系统级 150%/200% DPI、高对比度未实机（应用内 150% 缩放不参与子板窗口布局，已在诊断中标注）。**用户已确认作为环境限制接受。**
 5. **WPS 放映**：本机未安装 WPS（无 wpp），仅完成真实 PowerPoint 放映回归（18/18）；WPS 的 COM/窗口检测未验证。**用户已确认作为环境限制接受。**
 6. **真实触控/手写笔**：诊断为合成指针（Pen，压力 0.5），未验证真实压感/倾斜/掌拒/双指手势下的隔离。**用户已确认作为环境限制接受。**
 6. **真实触控/手写笔**：诊断为合成指针（Pen，压力 0.5），未验证真实压感/倾斜/掌拒/双指手势下的隔离。

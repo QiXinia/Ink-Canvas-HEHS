@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -51,7 +52,7 @@ internal static class SideBoardRegression
         public bool Passed => _items.All(item => item.Passed || item.Optional);
     }
 
-    public static async Task Run(string directory)
+    public static async Task Run(string directory, int cycles = 50)
     {
         Directory.CreateDirectory(directory);
         var log = new CheckLog();
@@ -183,21 +184,116 @@ internal static class SideBoardRegression
             }
             catch (Exception ex) { log.Add("undo stack exception", false, ("error", ex.ToString())); }
 
-            // 4) 贴到主展板：插入 1 张图片，撤销后回到原数量。
+            // 4) 贴到主展板：插入 1 张图片，撤销后回到原数量；并按 BoardPasteLayout 的语义
+            //    读取贴回后的真实资产几何，断言居中、宽度上限（视口 60%）与源宽高比。
             try
             {
                 int imagesBefore = main.CurrentImages.Count;
+                var imageIdsBefore = main.CurrentImages.Select(image => image.Id).ToHashSet();
+                InkCanvas.Core.Ink.Rect sourceBounds = PageContentBounds(side.Current);
+                bool hasSource = !sourceBounds.IsEmpty && sourceBounds.Width > 0 && sourceBounds.Height > 0;
+                var viewport = boardWindow.PasteViewport;
+                double widthLimit = viewport.X * BoardPasteLayout.DefaultMaxVisibleWidthFraction;
+
                 bool pasted = await sideWindow.PasteCurrentPageToAsync(boardWindow);
                 int imagesAfter = main.CurrentImages.Count;
+                var asset = main.CurrentImages.FirstOrDefault(image => !imageIdsBefore.Contains(image.Id));
+
+                double centerDx = -1, centerDy = -1;
+                double assetWidth = -1, assetHeight = -1, assetLeft = -1, assetTop = -1;
+                double sourceAspect = -1, pastedAspect = -1, aspectError = -1;
+                if (asset is not null)
+                {
+                    assetLeft = asset.Left;
+                    assetTop = asset.Top;
+                    assetWidth = asset.Width;
+                    assetHeight = asset.Height;
+                    centerDx = Math.Abs(asset.Left + asset.Width / 2.0 - viewport.X / 2.0);
+                    centerDy = Math.Abs(asset.Top + asset.Height / 2.0 - viewport.Y / 2.0);
+                    if (hasSource)
+                    {
+                        sourceAspect = sourceBounds.Width / (double)sourceBounds.Height;
+                        pastedAspect = asset.Width / (double)asset.Height;
+                        aspectError = Math.Abs(pastedAspect / sourceAspect - 1.0);
+                    }
+                }
+
                 main.Current.Undo();
                 main.Current.ClearSelection();
                 int imagesAfterUndo = main.CurrentImages.Count;
                 log.Add("paste to main board inserts one image and undo removes it",
                     pasted && imagesBefore == 0 && imagesAfter == imagesBefore + 1 && imagesAfterUndo == imagesBefore,
                     ("pasted", pasted), ("imagesBefore", imagesBefore), ("imagesAfter", imagesAfter),
-                    ("imagesAfterUndo", imagesAfterUndo));
+                    ("imagesAfterUndo", imagesAfterUndo),
+                    ("assetLeft", assetLeft), ("assetTop", assetTop), ("assetWidth", assetWidth), ("assetHeight", assetHeight));
+
+                log.Add("pasted image is centered in the main viewport",
+                    asset is not null && centerDx >= 0 && centerDy >= 0 && centerDx <= 2 && centerDy <= 2,
+                    ("viewportWidth", viewport.X), ("viewportHeight", viewport.Y),
+                    ("assetCenterX", asset is null ? -1 : asset.Left + asset.Width / 2.0),
+                    ("assetCenterY", asset is null ? -1 : asset.Top + asset.Height / 2.0),
+                    ("viewportCenterX", viewport.X / 2.0), ("viewportCenterY", viewport.Y / 2.0),
+                    ("centerDeviationX", centerDx), ("centerDeviationY", centerDy), ("limit", 2));
+
+                log.Add("pasted image width stays within 60 percent of the main viewport",
+                    asset is not null && assetWidth > 0 && assetWidth <= widthLimit + 2,
+                    ("assetWidth", assetWidth), ("viewportWidth", viewport.X),
+                    ("widthLimit", widthLimit), ("tolerance", 2),
+                    ("widthFraction", asset is null || viewport.X <= 0 ? -1 : assetWidth / viewport.X));
+
+                log.Add("pasted image keeps the source aspect ratio within 1 percent",
+                    asset is not null && aspectError >= 0 && aspectError < 0.01,
+                    ("sourceBounds", $"{sourceBounds.Left},{sourceBounds.Top} {sourceBounds.Width}x{sourceBounds.Height}"),
+                    ("sourceAspect", sourceAspect), ("pastedAspect", pastedAspect),
+                    ("relativeError", aspectError), ("limit", 0.01));
             }
             catch (Exception ex) { log.Add("paste to main board exception", false, ("error", ex.ToString())); }
+
+            // 4b) 视口/选区隔离：子板缩放/平移并选中笔画，主板的视口与选区必须完全不变。
+            try
+            {
+                var mainController = main.Current;
+                var sideController = sideWindow.CurrentController;
+                bool distinctControllers = !ReferenceEquals(mainController, sideController);
+                var mainViewBefore = mainController.ViewTransform;
+                var sideViewBefore = sideController.ViewTransform;
+
+                var shiftedView = Matrix3x2.CreateScale(1.35f) * Matrix3x2.CreateTranslation(36f, -24f);
+                sideController.SetView(shiftedView);
+                await Task.Delay(60);
+                bool sideViewChanged = sideController.ViewTransform.Equals(shiftedView);
+                bool mainViewKept = mainController.ViewTransform.Equals(mainViewBefore);
+
+                var probe = sideController.Document.Strokes.FirstOrDefault();
+                string probeId = probe?.Id.ToString() ?? "";
+                if (probe is not null) sideController.Selection.Add(probe);
+                bool sideHasSelection = probe is not null && sideController.HasSelection;
+                bool mainSelectionEmpty = !mainController.HasSelection && mainController.Selection.Count == 0;
+
+                sideController.ClearSelection();
+                sideController.SetView(sideViewBefore);
+                await Task.Delay(40);
+                bool restored = sideController.ViewTransform.Equals(sideViewBefore)
+                    && !sideController.HasSelection
+                    && mainController.ViewTransform.Equals(mainViewBefore)
+                    && !mainController.HasSelection;
+
+                log.Add("sub-board view and selection stay isolated from the main board",
+                    distinctControllers && sideViewChanged && mainViewKept
+                        && sideHasSelection && mainSelectionEmpty && restored,
+                    ("distinctControllers", distinctControllers),
+                    ("sideViewBefore", DescribeMatrix(sideViewBefore)),
+                    ("sideViewApplied", DescribeMatrix(shiftedView)),
+                    ("sideViewAfter", DescribeMatrix(sideController.ViewTransform)),
+                    ("sideViewChanged", sideViewChanged),
+                    ("mainViewBefore", DescribeMatrix(mainViewBefore)),
+                    ("mainViewAfter", DescribeMatrix(mainController.ViewTransform)),
+                    ("mainViewKept", mainViewKept),
+                    ("probeStrokeId", probeId), ("sideHasSelection", sideHasSelection),
+                    ("mainSelectionCount", mainController.Selection.Count),
+                    ("mainSelectionEmpty", mainSelectionEmpty), ("restored", restored));
+            }
+            catch (Exception ex) { log.Add("sub-board view and selection isolation exception", false, ("error", ex.ToString())); }
 
             // 5) 保存/重开：主 BoardService 写 side.icink，新实例加载后页数/笔画/页索引一致。
             string savePath = Path.Combine(directory, "side.icink");
@@ -258,8 +354,9 @@ internal static class SideBoardRegression
             }
             catch (Exception ex) { log.Add("legacy v3 compatibility exception", false, ("error", ex.ToString())); }
 
-            // 7) 50 次动画拉出/收回：每轮 ShowBoard()/HideBoard() 走真实动画并等待完成，
+            // 7) N 次动画拉出/收回：每轮 ShowBoard()/HideBoard() 走真实动画并等待完成，
             //    断言笔画数不变与窗口真正显示/隐藏，记录每轮耗时并采样句柄/内存。
+            //    默认 50 轮；--sideboardcheck-long 用 500 轮做长稳观察。
             try
             {
                 int stable = side.Current.Document.Count;
@@ -277,7 +374,7 @@ internal static class SideBoardRegression
                 int failures = 0;
                 int firstFailure = -1;
                 var totalWatch = Stopwatch.StartNew();
-                for (int round = 1; round <= 50; round++)
+                for (int round = 1; round <= cycles; round++)
                 {
                     var watch = Stopwatch.StartNew();
                     sideWindow.ShowBoard(animate: true);
@@ -337,7 +434,7 @@ internal static class SideBoardRegression
                 long endWorkingSet = process.WorkingSet64;
                 long endPrivate = process.PrivateMemorySize64;
                 bool passed = failures == 0 && stable == 2 && side.Current.Document.Count == stable;
-                log.Add("50 animated show/hide cycles keep sub-board strokes and visibility", passed,
+                log.Add($"{cycles} animated show/hide cycles keep sub-board strokes and visibility", passed,
                     ("animation", "animate:true, 210ms slide, poll 15ms, timeout 2000ms"),
                     ("strokes", stable), ("failures", failures), ("firstFailure", firstFailure),
                     ("roundsMeasured", rounds.Count), ("totalElapsedMs", totalWatch.ElapsedMilliseconds),
@@ -349,6 +446,15 @@ internal static class SideBoardRegression
                     ("privateStartBytes", startPrivate), ("privateEndBytes", endPrivate),
                     ("privateGrowthBytes", endPrivate - startPrivate),
                     ("samples", samples), ("rounds", rounds), ("animationFailures", animationFailures));
+
+                // 句柄增长阈值：每轮 Show/Hide 都新建 Win32/XAML 资源，若未回收会线性增长。
+                // 实测 50 轮约 +93；500 轮长稳同样沿用该阈值。
+                const long handleGrowthLimit = 300;
+                long handleGrowth = endHandles - startHandles;
+                log.Add($"{cycles} animated cycles keep handle growth within the limit",
+                    handleGrowth <= handleGrowthLimit,
+                    ("handlesStart", startHandles), ("handlesEnd", endHandles),
+                    ("handlesGrowth", handleGrowth), ("limit", handleGrowthLimit));
             }
             catch (Exception ex) { log.Add("animated show/hide cycle exception", false, ("error", ex.ToString())); }
 
@@ -461,6 +567,23 @@ internal static class SideBoardRegression
     }
 
     private static string DescribeRect(SideBoardRect rect) => $"{rect.X},{rect.Y} {rect.Width}x{rect.Height}";
+
+    private static string DescribeMatrix(Matrix3x2 matrix)
+        => string.Create(CultureInfo.InvariantCulture,
+            $"{matrix.M11:0.###},{matrix.M12:0.###},{matrix.M21:0.###},{matrix.M22:0.###},{matrix.M31:0.###},{matrix.M32:0.###}");
+
+    /// <summary>与 SideBoardWindow.CurrentPageContentBounds 同语义：贴回内容的世界坐标包围盒。</summary>
+    private static InkCanvas.Core.Ink.Rect PageContentBounds(InkController controller)
+    {
+        InkCanvas.Core.Ink.Rect bounds = InkCanvas.Core.Ink.Rect.Empty;
+        foreach (var item in controller.DrawingObjects)
+        {
+            if (item.Stroke is { } stroke) bounds = bounds.Union(stroke.Bounds);
+            else if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image)
+                bounds = bounds.Union(image.Bounds);
+        }
+        return bounds;
+    }
 
     private static void PrepareController(InkController controller)
     {

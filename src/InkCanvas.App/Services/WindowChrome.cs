@@ -295,6 +295,26 @@ public static class WindowChrome
             (int)Math.Ceiling(bounds.Bottom * dpi) + origin.Y - top);
     }
 
+    /// <summary>整个窗口的物理屏幕矩形（Win32 外框），用于拖放后的边界夹取。</summary>
+    public static RectInt32 GetWindowBounds(Window window)
+    {
+        if (!TryGetPlaceable(window, nameof(GetWindowBounds), out var appWindow, out var hwnd)) return default;
+        try
+        {
+            if (GetWindowRect(hwnd, out var frame))
+                return new RectInt32(frame.Left, frame.Top,
+                    Math.Max(0, frame.Right - frame.Left), Math.Max(0, frame.Bottom - frame.Top));
+            var position = appWindow.Position;
+            var size = appWindow.Size;
+            return new RectInt32(position.X, position.Y, size.Width, size.Height);
+        }
+        catch (Exception ex)
+        {
+            LogPlacementSkipped(nameof(GetWindowBounds), "read", ex);
+            return default;
+        }
+    }
+
     public static RectInt32 GetWorkArea(RectInt32 anchor)
         => DisplayArea.GetFromRect(anchor, DisplayAreaFallback.Nearest).WorkArea;
 

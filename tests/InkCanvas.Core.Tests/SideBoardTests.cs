@@ -82,6 +82,17 @@ public sealed class SideBoardLayoutTests
         Assert.Equal(280, clamped.Height);
         Assert.True(SideBoardLayout.FitsInside(clamped, Work));
     }
+
+    [Fact]
+    public void ClampUsesTheGivenWorkAreaSoSecondaryMonitorIsRespected()
+    {
+        var secondary = new SideBoardWorkArea(1920, -200, 1600, 900);
+        var clamped = SideBoardLayout.Clamp(new SideBoardRect(-500, -400, 900, 800), secondary, 1);
+
+        Assert.Equal(1920, clamped.X);
+        Assert.Equal(-200, clamped.Y);
+        Assert.True(SideBoardLayout.FitsInside(clamped, secondary));
+    }
 }
 
 public sealed class SideBoardHotkeyTests
