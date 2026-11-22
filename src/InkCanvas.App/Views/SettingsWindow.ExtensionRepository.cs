@@ -1,4 +1,5 @@
 using InkCanvas.Core.Update;
+using InkCanvas.Controls.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation;
@@ -32,9 +33,9 @@ public sealed partial class SettingsWindow
         var updates = _services.ExtensionUpdates;
         if (!_indexingSearch)
         { _repositoryRefreshers.Clear(); _displayedCatalog = updates.Catalog; _displayedPending = updates.Pending.Count; }
-        AddSection("仓库插件");
+        AddSection("插件更新");
         _content.Children.Add(InfoRow("从项目 GitHub Release 下载并校验插件。安装和更新在后台准备，重启后生效，插件设置与数据继续保留。"));
-        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var controls = new WrapPanel();
         var check = new Button { Content = "检查插件更新", MinHeight = 40 };
         var all = new Button { Content = "一键更新全部", MinHeight = 40 };
         var restart = new Button { Content = "重启并应用", MinHeight = 40 };
@@ -56,36 +57,6 @@ public sealed partial class SettingsWindow
         _content.Children.Add(status); if (!_indexingSearch) _repositoryStatus = status;
         foreach (var result in _services.ExtensionInstalls.Results.Where(result => !result.Success))
             _content.Children.Add(InfoRow("上次安装未完成 · " + result.Message));
-        foreach (var release in updates.Catalog)
-        {
-            var action = new Button { MinHeight = 40, MinWidth = 100, HorizontalAlignment = HorizontalAlignment.Right };
-            var description = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = SecondaryText() };
-            var title = new TextBlock { Text = release.Name, FontSize = 15 };
-            var text = new StackPanel { Spacing = 4, Children = { title, description } };
-            var row = new Grid { ColumnSpacing = 16 };
-            row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            row.Children.Add(text); Grid.SetColumn(action, 1); row.Children.Add(action);
-            _content.Children.Add(Searchable(Card(row), release.Name, "插件 下载 安装 更新 " + release.Id));
-            Accessible(action, release.Name + "下载与更新");
-            void Refresh()
-            {
-                string installed = updates.InstalledVersion(release);
-                var pending = updates.Pending.FirstOrDefault(item => item.Id == release.Id);
-                string reason = updates.UnavailableReason(release);
-                description.Text = release.Description + "\n" + (installed is null ? "未安装" : "已安装 " + installed)
-                    + " · 仓库 " + release.Version + (pending is null ? "" : "\n" + pending.Version + " 待重启生效")
-                    + (reason is null ? "" : "\n" + reason);
-                action.Content = updates.ActiveId == release.Id ? "正在准备" : updates.FailedInstall(release.Id) ? "重新下载" : pending is not null ? "待重启"
-                    : installed is null ? "安装" : updates.HasUpdate(release) ? "更新" : "已是最新";
-                action.IsEnabled = updates.CanInstall(release);
-                ToolTipService.SetToolTip(action, reason ?? release.Asset.Name);
-            }
-            action.Click += async (_, _) =>
-            {
-                await updates.InstallAsync(release);
-            };
-            Refresh(); if (!_indexingSearch) _repositoryRefreshers.Add(Refresh);
-        }
         if (!_indexingSearch && !updates.HasChecked && !updates.IsBusy) DispatcherQueue.TryEnqueue(async () =>
         { if (!_closed) await updates.CheckAsync(); });
     }
