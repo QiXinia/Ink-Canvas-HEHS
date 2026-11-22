@@ -51,8 +51,8 @@ public sealed class SideBoardWindow : Window
     private readonly Border _bar;
     private readonly Border _pagePane;
     private readonly List<TouchIconButton> _buttons = new();
-    private TouchIconButton _penButton, _highlighterButton, _eraserButton;
-    private TouchIconButton _undoButton, _redoButton, _prevButton, _nextButton, _pasteButton;
+    private TouchIconButton _penButton, _selectButton, _highlighterButton, _eraserButton;
+    private TouchIconButton _undoButton, _redoButton, _prevButton, _nextButton, _pasteButton, _clearButton;
     private bool _pasting;
     private DispatcherQueueTimer _saveTimer, _animationTimer;
     private DispatcherQueueTimer _clampTimer;
@@ -60,6 +60,8 @@ public sealed class SideBoardWindow : Window
     private Matrix3x2 _lastTransform = Matrix3x2.Identity;
     private long _lastImageTapTicks;
     private Windows.Foundation.Point _lastImageTapPoint;
+    private Windows.Foundation.Point _pendingAiCardEditPoint;
+    private bool _pendingAiCardEdit;
     private bool _editingAiCard;
     private MinSizeHook _minSize;
     private bool _closed, _visible, _animating, _pagePaneOpen;
@@ -87,10 +89,31 @@ public sealed class SideBoardWindow : Window
         _media.LayerIndex = _drawingLayers.LayerIndex;
         _surface.DrawCommitted = false;
         _surfaceHost.Children.Add(_surface);
+        _surface.InputStarting += p =>
+        {
+            var controller = _board.Current;
+            Vector2 world = new(p.X, p.Y);
+            bool mapped = Matrix3x2.Invert(controller.ViewTransform, out var inverse);
+            if (mapped) world = Vector2.Transform(world, inverse);
+            var last = controller.Document.Count > 0 ? controller.Document.Strokes[^1].Bounds : default;
+            FileLog.WriteLogToFile(
+                $"[SideBoardInput] down tool={controller.Tool} kind={p.Kind} pos=({p.X:0.0},{p.Y:0.0}) "
+                + $"mapped={mapped} world=({world.X:0.0},{world.Y:0.0}) selected={controller.HasSelection} "
+                + $"strokes={controller.Document.Count} lastBounds=({last.Left:0.0},{last.Top:0.0},{last.Right:0.0},{last.Bottom:0.0})",
+                LogType.Trace);
+        };
+        _surface.InputEnded += () => FileLog.WriteLogToFile(
+            $"[SideBoardInput] up tool={_board.Current.Tool} selected={_board.Current.HasSelection} "
+            + $"undo={_board.Current.History.UndoCount} top={TopHistoryName(_board.Current)}",
+            LogType.Trace);
+        _surface.InputCanceled += () => FileLog.WriteLogToFile("[SideBoardInput] canceled", LogType.Trace);
 
-        // 板中板没有选择工具，图片由场景层渲染；在画布宿主上监听双击并反变换到世界坐标命中。
-        _surfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnAiCardPointerPressed), true);
-        _surfaceHost.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnAiCardDoubleTapped), true);
+        // 图片由场景层渲染；选择工具复用 InkController 命中/拖动/缩放。
+        // 双击编辑只观察指针，不设置 Handled：移动即取消，释放且未拖动才进入编辑。
+        _surface.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnAiCardPointerPressed), true);
+        _surface.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(OnAiCardPointerMoved), true);
+        _surface.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(OnAiCardPointerReleased), true);
+        _surface.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnAiCardDoubleTapped), true);
 
         PageNavigator = new BoardPageNavigator(_board,
             () => new Vector2(Math.Max(1, (float)_surfaceHost.ActualWidth), Math.Max(1, (float)_surfaceHost.ActualHeight)),
@@ -112,6 +135,7 @@ public sealed class SideBoardWindow : Window
         _body.Children.Add(_bar);
         _body.Children.Add(_pagePane);
         _body.SizeChanged += (_, _) => PageNavigator.InvalidateAll();
+        _body.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(OnSideBoardKeyDown), true);
 
         Content = _body;
         WindowChrome.MakeStandard(this, 720, 640);
@@ -236,13 +260,15 @@ BindPage();
         var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Center };
         var row2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Center };
         _penButton = ToolButton(row1, Glyphs.PenWpf, "笔", "画笔", () => SetTool(InkTool.Pen));
+        _selectButton = ToolButton(row1, Glyphs.SelectWpf, "选择", "选择", () => SetTool(InkTool.Select));
+        ToolTipService.SetToolTip(_selectButton, "选择（点选/框选，可拖动、缩放、删除）");
         _highlighterButton = ToolButton(row1, Glyphs.HighlightWpf, "荧光笔", "荧光笔", () => SetTool(InkTool.Highlighter));
         _highlighterButton.IconFont = "ms-appx:///Assets/SegoeMDL2Assets.ttf#Segoe MDL2 Assets";
         _eraserButton = ToolButton(row1, Glyphs.Eraser, "橡皮", "橡皮", () => SetTool(InkTool.Eraser));
-        ToolButton(row1, Glyphs.Delete, "清空", "清空当前页全部内容", () => _board.ClearCurrentPage());
+        _clearButton = ToolButton(row1, Glyphs.Delete, "清空", "清空当前页全部内容", ClearOrDeleteSelection);
         ToolButton(row1, Glyphs.Board, "背景", "切换黑板/白板纸型", CycleBackground);
-        _pasteButton = ToolButton(row1, Glyphs.Import, "贴到主展板", "贴到主展板", () => _ = PasteToMainBoardAsync(), 64);
-        ToolButton(row1, Glyphs.Ai, "AI 助教", "AI 助教（识别当前子板框选）", () => _shell?.OpenAiAssistant());
+        _pasteButton = ToolButton(row1, Glyphs.Import, "贴回", "贴到主展板", () => _ = PasteToMainBoardAsync());
+        ToolButton(row1, Glyphs.Ai, "AI", "AI 助教", () => _shell?.OpenAiAssistant());
 
         _undoButton = ToolButton(row2, Glyphs.Undo, "撤销", "撤销", () => _board.Current.Undo());
         _redoButton = ToolButton(row2, Glyphs.Redo, "重做", "重做", () => _board.Current.Redo());
@@ -272,7 +298,7 @@ BindPage();
         return bar;
     }
 
-    private TouchIconButton ToolButton(Panel host, string glyph, string label, string name, Action click, double width = 46)
+    private TouchIconButton ToolButton(Panel host, string glyph, string label, string name, Action click, double width = 40)
     {
         var button = new TouchIconButton
         {
@@ -325,6 +351,7 @@ BindPage();
         _lastTransform = _boundController.ViewTransform;
         RefreshHistoryState();
         RefreshToolSelection();
+        RefreshSelectionActions();
         RefreshPageState();
         PageNavigator.InvalidateAll();
         _paper.Invalidate();
@@ -368,28 +395,77 @@ BindPage();
         _media.UpdateViewTransform(_boundController.ViewTransform);
     }
 
-    private void OnSelectionChanged() => _images.SetSelection(
-        _board.Current.SelectedElements.OfType<BoardSelectionElement>().Where(e => e.Image is not null).Select(e => e.Image));
+    private void OnSelectionChanged()
+    {
+        _images.SetSelection(
+            _board.Current.SelectedElements.OfType<BoardSelectionElement>().Where(e => e.Image is not null).Select(e => e.Image));
+        RefreshSelectionActions();
+        FileLog.WriteLogToFile(
+            $"[SideBoardSelection] strokes={_board.Current.Selection.Count} elements={_board.Current.SelectedElements.Count}",
+            LogType.Trace);
+    }
 
     // ---- AI 卡片双击编辑 -------------------------------------------------
 
     private void OnAiCardPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        var point = e.GetCurrentPoint(_surfaceHost).Position;
+        var point = e.GetCurrentPoint(_surface).Position;
         long now = Environment.TickCount64;
         bool isDoubleTap = now - _lastImageTapTicks <= 450
             && Math.Abs(point.X - _lastImageTapPoint.X) <= 6
             && Math.Abs(point.Y - _lastImageTapPoint.Y) <= 6;
         _lastImageTapTicks = isDoubleTap ? 0 : now;
         _lastImageTapPoint = point;
-        if (!isDoubleTap) return;
-        if (TryEditAiCardAt(point, "手动双击判定")) e.Handled = true;
+        _pendingAiCardEdit = isDoubleTap;
+        _pendingAiCardEditPoint = point;
+        if (isDoubleTap)
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板双击候选：view=({point.X:0.0},{point.Y:0.0})，等待释放确认（不拦截拖动）",
+                LogType.Trace);
+        // 关键：双击候选只观察，绝不设置 Handled，InkSurface 必须继续收到按下/移动/释放。
+    }
+
+    private void OnAiCardPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_pendingAiCardEdit) return;
+        var point = e.GetCurrentPoint(_surface).Position;
+        if (Math.Abs(point.X - _pendingAiCardEditPoint.X) > 6
+            || Math.Abs(point.Y - _pendingAiCardEditPoint.Y) > 6)
+        {
+            _pendingAiCardEdit = false;
+            FileLog.WriteLogToFile("[AI] 板中板双击候选已取消：指针移动，按选择拖动处理", LogType.Trace);
+        }
+    }
+
+    private void OnAiCardPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_pendingAiCardEdit) return;
+        var point = e.GetCurrentPoint(_surface).Position;
+        _pendingAiCardEdit = false;
+        if (Math.Abs(point.X - _pendingAiCardEditPoint.X) > 6
+            || Math.Abs(point.Y - _pendingAiCardEditPoint.Y) > 6)
+        {
+            FileLog.WriteLogToFile("[AI] 板中板双击候选已取消：释放位置偏离", LogType.Trace);
+            return;
+        }
+        // 先让 InkSurface/InkController 完成本次点击与选择，再在下一帧打开编辑。
+        var editPoint = _pendingAiCardEditPoint;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closed) TryEditAiCardAt(editPoint, "双击释放");
+        });
     }
 
     private void OnAiCardDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        var point = e.GetPosition(_surfaceHost);
-        if (TryEditAiCardAt(point, "DoubleTapped")) e.Handled = true;
+        if (_closed) return;
+        _pendingAiCardEdit = false;
+        var point = e.GetPosition(_surface);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_closed) TryEditAiCardAt(point, "DoubleTapped");
+        });
+        // 不设置 Handled：双击编辑不应打断已开始的选择手势。
     }
 
     private bool TryEditAiCardAt(Windows.Foundation.Point point, string source)
@@ -485,14 +561,74 @@ BindPage();
     private void RefreshToolSelection()
     {
         _penButton.IsSelected = _boundController?.Tool == InkTool.Pen;
+        _selectButton.IsSelected = _boundController?.Tool == InkTool.Select;
         _highlighterButton.IsSelected = _boundController?.Tool == InkTool.Highlighter;
         _eraserButton.IsSelected = _boundController?.Tool == InkTool.Eraser;
+    }
+
+    private void RefreshSelectionActions()
+    {
+        if (_clearButton is null) return;
+        bool selected = _board.Current.HasSelection;
+        _clearButton.Label = selected ? "删除" : "清空";
+        string hint = selected ? "删除选中（Delete / Ctrl+E）" : "清空当前页全部内容";
+        ToolTipService.SetToolTip(_clearButton, hint);
+        AutomationProperties.SetName(_clearButton, hint);
+    }
+
+    private void ClearOrDeleteSelection()
+    {
+        var controller = _board.Current;
+        if (controller.HasSelection) controller.DeleteSelection();
+        else _board.ClearCurrentPage();
+    }
+
+    private void OnSideBoardKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (_closed || _editingAiCard || e.Handled) return;
+        if (KeyboardShortcutScope.IsTextInput(e.OriginalSource as DependencyObject)) return;
+        bool control = InkCanvas.Platform.Interop.NativeMethods.GetKeyState(0x11) < 0;
+        bool shift = InkCanvas.Platform.Interop.NativeMethods.GetKeyState(0x10) < 0;
+        bool alt = InkCanvas.Platform.Interop.NativeMethods.GetKeyState(0x12) < 0;
+        if (shift || alt) return;
+        var controller = _board.Current;
+        switch (e.Key)
+        {
+            case Windows.System.VirtualKey.Z when control:
+                controller.Undo(); e.Handled = true; break;
+            case Windows.System.VirtualKey.Y when control:
+                controller.Redo(); e.Handled = true; break;
+            case Windows.System.VirtualKey.A when control:
+                controller.SelectAll(); e.Handled = true; break;
+            case Windows.System.VirtualKey.E when control:
+                if (controller.HasSelection) controller.DeleteSelection();
+                else _board.ClearCurrentPage();
+                e.Handled = true; break;
+            case Windows.System.VirtualKey.Delete when controller.HasSelection:
+                controller.DeleteSelection(); e.Handled = true; break;
+            case Windows.System.VirtualKey.Escape:
+                controller.EndPlayback();
+                controller.CancelLassoErase();
+                controller.ClearSelection();
+                e.Handled = true; break;
+        }
+        if (e.Handled) RefreshHistoryState();
     }
 
     private void RefreshHistoryState()
     {
         _undoButton.IsEnabled = _boundController?.History.CanUndo == true;
         _redoButton.IsEnabled = _boundController?.History.CanRedo == true;
+        if (_boundController is not null && _boundController.History.CanUndo)
+            FileLog.WriteLogToFile(
+                $"[SideBoardHistory] undo={_boundController.History.UndoCount} top={TopHistoryName(_boundController)}",
+                LogType.Trace);
+    }
+
+    private static string TopHistoryName(InkController controller)
+    {
+        var state = controller?.History.Capture();
+        return state is { Undo.Count: > 0 } ? state.Undo[^1].Name : "-";
     }
 
     private void RefreshPageState()

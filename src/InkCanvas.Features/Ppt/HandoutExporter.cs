@@ -43,6 +43,12 @@ public sealed class HandoutPageSource
 
     public string TeacherNotes { get; set; } = "";
 
+    /// <summary>
+    /// true 表示该页由白板页离屏渲染而来（图片已是完整页面，不再叠加讲义标题/解析）。
+    /// 板书页总是追加在 PPT 页之后，不受 PPT 选页/仅批注筛选影响。
+    /// </summary>
+    public bool IsBoardPage { get; set; }
+
     public bool HasAnnotations => !string.IsNullOrWhiteSpace(AnnotationMetadataJson);
 
     public bool HasTeacherNotes => !string.IsNullOrWhiteSpace(TeacherNotes);
@@ -69,7 +75,10 @@ public sealed class HandoutExportResult
 
     public List<string> Warnings { get; set; } = new();
 
-    public bool Success => Pages.Count > 0;
+    /// <summary>有内容的板书页渲染失败时为 true；此时不能把“只有 PPT 页”当成成功导出。</summary>
+    public bool BoardPageFailed { get; set; }
+
+    public bool Success => Pages.Count > 0 && !BoardPageFailed;
 }
 
 public static class HandoutComposer
@@ -85,6 +94,12 @@ public static class HandoutComposer
         foreach (HandoutPageSource page in pages)
         {
             if (page is null) continue;
+            // 板书页是画布真实快照，始终追加在 PPT 页之后；不参与 PPT 的选页/批注筛选。
+            if (page.IsBoardPage)
+            {
+                result.Add(page);
+                continue;
+            }
             if (hasSelection && !options.SelectedSlideIds.Contains(page.SlideId)) continue;
             if (options?.Content == HandoutContentMode.AnnotationsOnly && !page.HasAnnotations) continue;
             result.Add(page);

@@ -1,3 +1,4 @@
+using InkCanvas.Features.Board;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Text;
 using Windows.Storage.Streams;
@@ -9,6 +10,18 @@ public sealed class HandoutRenderRequest
     public SlideContentIndex Index { get; set; }
 
     public HandoutOptions Options { get; set; } = new();
+
+    /// <summary>
+    /// 可选白板服务：提供后，在 PPT 页之后追加以 <see cref="BoardPageRenderer"/> 渲染的板书页；
+    /// 为空或没有内容时保持原 PPT 讲义结构不变。
+    /// </summary>
+    public BoardService Board { get; set; }
+
+    /// <summary>
+    /// 可选板书页渲染注入点：测试可注入确定性 PNG，避免无 GPU/远程会话下依赖 Win2D；
+    /// 生产为空时走 <see cref="BoardPageRenderer.RenderPagePngAsync"/>。
+    /// </summary>
+    public Func<BoardService, int, int, double, Task<BoardPageRenderResult>> BoardPageRender { get; set; }
 
     public int PageWidthPx { get; set; } = 1240;
 
@@ -49,13 +62,8 @@ public static class HandoutExportService
             return result;
         }
 
-        IReadOnlyList<HandoutPageSource> pages = HandoutComposer.Select(
-            ToSources(request.Index, request.Options), request.Options);
-        if (pages.Count == 0)
-        {
-            result.Warnings.Add("当前筛选下没有可导出的页。");
-            return result;
-        }
+        int width = Math.Max(320, request.PageWidthPx);
+        int height = Math.Max(480, request.PageHeightPx);
 
         try
         {
@@ -67,9 +75,19 @@ public static class HandoutExportService
             return result;
         }
 
+        IReadOnlyList<HandoutPageSource> sources;
+        bool boardPageFailed;
+        (sources, boardPageFailed) = await ToSourcesAsync(
+            request.Index, request.Options, request.Board, width, request.BoardPageRender, result.Warnings);
+        result.BoardPageFailed = boardPageFailed;
+        IReadOnlyList<HandoutPageSource> pages = HandoutComposer.Select(sources, request.Options);
+        if (pages.Count == 0)
+        {
+            result.Warnings.Add("当前筛选下没有可导出的页。");
+            return result;
+        }
+
         var pngPages = new List<byte[]>();
-        int width = Math.Max(320, request.PageWidthPx);
-        int height = Math.Max(480, request.PageHeightPx);
 
         foreach (HandoutPageSource page in pages)
         {
@@ -117,8 +135,11 @@ public static class HandoutExportService
         return result;
     }
 
-    private static IReadOnlyList<HandoutPageSource> ToSources(
-        SlideContentIndex index, HandoutOptions options)
+    private static async Task<(IReadOnlyList<HandoutPageSource> Sources, bool BoardPageFailed)> ToSourcesAsync(
+        SlideContentIndex index, HandoutOptions options, BoardService board,
+        int pageWidthPx,
+        Func<BoardService, int, int, double, Task<BoardPageRenderResult>> boardPageRender,
+        List<string> warnings)
     {
         var sources = new List<HandoutPageSource>();
         foreach (SlideContentEntry entry in index.Slides)
@@ -142,7 +163,38 @@ public static class HandoutExportService
             });
         }
 
-        return sources;
+        if (board is null) return (sources, false);
+
+        // 板书页追加在 PPT 页之后；每页直接使用 BoardPageRenderer 的完整快照，
+        // 因此讲义 PNG 与画布/时光机使用同一渲染路径。
+        bool boardPageFailed = false;
+        int nextIndex = sources.Count == 0 ? 1 : sources.Max(page => page.Index) + 1;
+        for (int boardPage = 0; boardPage < board.PageCount; boardPage++)
+        {
+            if (!board.PageHasContent(boardPage)) continue;
+
+            BoardPageRenderResult rendered = boardPageRender is null
+                ? await BoardPageRenderer.RenderPagePngAsync(board, boardPage, pageWidthPx, 2.0)
+                : await boardPageRender(board, boardPage, pageWidthPx, 2.0);
+            if (!rendered.Success)
+            {
+                boardPageFailed = true;
+                warnings.Add("板书 第 " + (boardPage + 1) + " 页渲染失败：" + rendered.Error);
+                continue;
+            }
+
+            sources.Add(new HandoutPageSource
+            {
+                IsBoardPage = true,
+                SlideId = -1000 - boardPage,
+                Index = nextIndex++,
+                Title = "板书 第 " + (boardPage + 1) + " 页",
+                SlideImagePng = rendered.Png,
+                AnnotationMetadataJson = "{\"boardPage\":" + boardPage + "}",
+            });
+        }
+
+        return (sources, boardPageFailed);
     }
 
     private static byte[] TryRead(string path)
@@ -162,6 +214,11 @@ public static class HandoutExportService
     private static async Task<byte[]> RenderPageAsync(
         HandoutPageSource page, HandoutOptions options, int width, int height)
     {
+        // 板书页由 BoardPageRenderer 生成完整画面，不再叠加讲义标题/教师解析，
+        // 保证讲义 PNG 与直接渲染结果逐字节一致。
+        if (page.IsBoardPage)
+            return page.SlideImagePng is { Length: > 0 } ? page.SlideImagePng : Array.Empty<byte>();
+
         try
         {
             var device = CanvasDevice.GetSharedDevice();

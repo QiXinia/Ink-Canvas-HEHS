@@ -2316,7 +2316,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             "handout-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
 
         HandoutExportResult result = await HandoutExportService.ExportAsync(
-            new HandoutRenderRequest { Index = index, Options = options }, directory);
+            new HandoutRenderRequest { Index = index, Options = options, Board = Services.Board }, directory);
 
         if (!result.Success)
         {
@@ -4750,33 +4750,31 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_aiSession is null || _aiAssistant is null) return;
         if (!AiTargetStillCurrent(writeBack: true)) return;
 
-        string normalizedIntent = string.Equals(intent, "organize", StringComparison.OrdinalIgnoreCase)
-            ? "organize"
-            : "write";
+        string normalizedIntent = BoardWriteIntentPolicy.Normalize(intent);
         string instructionText = (instruction ?? "").Trim();
         if (instructionText.Length == 0)
-            instructionText = normalizedIntent == "organize" ? "整理当前页板书" : "写一句本课总结";
+            instructionText = BoardWriteIntentPolicy.DefaultInstruction(normalizedIntent);
 
         BoardService targetBoard = AiTargetBoard();
-        if (normalizedIntent == "organize")
+        bool requiresContent = BoardWriteIntentPolicy.RequiresExistingContent(normalizedIntent);
+        if (targetBoard is null && requiresContent)
         {
-            if (targetBoard is null)
-            {
-                _aiAssistant.ShowNotice("目标画板不可用，无法整理板书。");
-                return;
-            }
-            if (targetBoard.GetContentBounds().IsEmpty)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    "[AI] 整理板书取消：目标页没有可整理内容（GetContentBounds 为空）",
-                    Core.Diagnostics.LogType.Info);
-                _aiAssistant.ShowNotice("当前页还没有可整理的板书，请先书写后再试。");
-                return;
-            }
+            _aiAssistant.ShowNotice("目标画板不可用，无法整理板书。");
+            return;
+        }
+
+        bool pageHasContent = targetBoard is not null && !targetBoard.GetContentBounds().IsEmpty;
+        if (!BoardWriteIntentPolicy.CanRequest(normalizedIntent, pageHasContent))
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                "[AI] 整理板书取消：目标页没有可整理内容（GetContentBounds 为空）",
+                Core.Diagnostics.LogType.Info);
+            _aiAssistant.ShowNotice(BoardWriteIntentPolicy.EmptyPageNotice(normalizedIntent));
+            return;
         }
 
         string requestInstruction = instructionText;
-        if (normalizedIntent == "organize")
+        if (requiresContent)
             requestInstruction += "\n请同时返回 originals（识别原文逐行）以及 confidence 与 warnings。";
 
         _aiBoardInstruction = instructionText;
@@ -4788,10 +4786,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
         int targetPage = _aiTarget?.PageIndex ?? targetBoard?.CurrentIndex ?? 0;
         var request = new AssistantRequest
         {
-            ImageBase64 = normalizedIntent == "organize" ? _aiThumb ?? "" : "",
+            ImageBase64 = BoardWriteIntentPolicy.ShouldAttachScreenshot(normalizedIntent, _aiThumb)
+                ? _aiThumb ?? "" : "",
             InkStrokes = Array.Empty<AssistantStroke>(),
             Viewport = new AssistantViewport { Scale = 1.0, Rect = _aiAnchor },
-            Mode = normalizedIntent == "organize" ? AssistantMode.Auto : AssistantMode.Chat,
+            Mode = requiresContent ? AssistantMode.Auto : AssistantMode.Chat,
             SessionId = _aiSession.SessionId ?? "",
             Purpose = "board_write",
             Instruction = requestInstruction,
@@ -4800,8 +4799,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
         };
 
         Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] 板书请求：intent={normalizedIntent}，instruction={instructionText}，"
-            + $"target={AssistantTargetPolicy.Describe(_aiTarget)}，image={(request.ImageBase64.Length > 0 ? "yes" : "no")}",
+            $"[AI] 板书请求：intent={normalizedIntent}，pageHasContent={pageHasContent}，"
+            + $"instruction={instructionText}，target={AssistantTargetPolicy.Describe(_aiTarget)}，"
+            + $"image={(request.ImageBase64.Length > 0 ? "yes" : "no")}",
             Core.Diagnostics.LogType.Info);
         StartAssistantStream(request, followUp: false, question: "");
     }
@@ -5039,13 +5039,63 @@ public sealed partial class ShellController : IShellActions, IDisposable
         AssistantRect viewport = BoardViewportRect(board);
         BoardLayoutPlan layout = BoardContentLayoutPlanner.Plan(contentBounds, sizes, viewport);
 
-        if (layout.NeedsNewPage || layout.Placements.Count != rendered.Cards.Count)
+        int writePageIndex = pageIndex;
+        bool newPage = false;
+        BoardLayoutPlan writeLayout = layout;
+
+        if (layout.Status is BoardLayoutStatus.NeedsShrink
+            or BoardLayoutStatus.NeedsMove or BoardLayoutStatus.NeedsNewPage)
+        {
+            BoardLayoutChoice choice = await ShowBoardLayoutDialogAsync(window, layout);
+            if (choice == BoardLayoutChoice.Cancel)
+            {
+                window.SetBoardPlanBusy(false);
+                window.SetBusy(false);
+                window.ShowNotice("当前页空间不足，已保留预览，未写入。");
+                Core.Diagnostics.FileLog.WriteLogToFile(
+                    $"[AI] 板书写入取消：当前页空间不足，status={layout.Status}，message={layout.Message}",
+                    Core.Diagnostics.LogType.Info);
+                return;
+            }
+
+            if (choice == BoardLayoutChoice.NewPage)
+            {
+                if (!board.InsertPageAfterCurrent())
+                {
+                    window.SetBoardPlanBusy(false);
+                    window.SetBusy(false);
+                    window.ShowNotice("新建页面失败，已保留计划，可重试。");
+                    return;
+                }
+
+                newPage = true;
+                writePageIndex = board.CurrentIndex;
+                writeLayout = BoardContentLayoutPlanner.Plan(
+                    new AssistantRect(0, 0, 0, 0), sizes, BoardViewportRect(board));
+
+                if (!writeLayout.IsComplete)
+                {
+                    board.RemovePage(writePageIndex);
+                    window.SetBoardPlanBusy(false);
+                    window.SetBusy(false);
+                    window.ShowNotice("新页面也无法排下当前板书，已保留计划。");
+                    Core.Diagnostics.FileLog.WriteLogToFile(
+                        $"[AI] 板书写入取消：新页面仍无法排下，status={writeLayout.Status}，"
+                        + $"message={writeLayout.Message}",
+                        Core.Diagnostics.LogType.Info);
+                    return;
+                }
+            }
+        }
+
+        if (!writeLayout.IsComplete)
         {
             window.SetBoardPlanBusy(false);
             window.SetBusy(false);
-            window.ShowNotice(layout.Message);
+            window.ShowNotice(writeLayout.Message);
             Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[AI] 板书空间不足：blocks={rendered.Cards.Count}，message={layout.Message}",
+                $"[AI] 板书空间不足：blocks={rendered.Cards.Count}，status={writeLayout.Status}，"
+                + $"message={writeLayout.Message}",
                 Core.Diagnostics.LogType.Info);
             return;
         }
@@ -5054,7 +5104,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         for (int index = 0; index < rendered.Cards.Count; index++)
         {
             BoardPlanCardDraft card = rendered.Cards[index];
-            BoardCardPlacement placement = layout.Placements[index];
+            BoardCardPlacement placement = writeLayout.Placements[index];
             assets.Add(new BoardImageAsset
             {
                 Name = card.Name,
@@ -5068,10 +5118,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
             });
         }
 
+        bool effectiveReplace = replaceOriginal && !newPage;
         int removedStrokes = 0;
         IReadOnlyList<int> indexes;
 
-        if (replaceOriginal)
+        if (effectiveReplace)
         {
             if (selectionOnly && !hasStrokeSelection)
             {
@@ -5097,24 +5148,38 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
         else
         {
-            indexes = board.AddImagesAtomic(assets, "AI 板书");
+            indexes = board.AddImagesAtomic(assets, newPage ? "AI 板书（新页）" : "AI 板书");
         }
 
         if (indexes.Count == 0)
         {
+            if (newPage) board.RemovePage(writePageIndex);
             window.SetBoardPlanBusy(false);
             window.SetBusy(false);
             window.ShowNotice("板书写入失败，已保留计划，可重试。");
             return;
         }
 
+        if (newPage)
+        {
+            _aiTarget = new AssistantTarget
+            {
+                Canvas = board,
+                Page = board.Current,
+                Kind = _aiTarget?.Kind ?? (board == Services.SideBoard
+                    ? AssistantCanvasKind.SideBoard : AssistantCanvasKind.MainBoard),
+                PageIndex = board.CurrentIndex,
+                SessionId = _aiSession?.SessionId ?? "",
+            };
+        }
+
         if (board == Services.Board && _board is null) ToggleBoard();
 
         Core.Diagnostics.FileLog.WriteLogToFile(
             $"[AI] 板书写入完成：board={(_aiTarget?.Kind == AssistantCanvasKind.SideBoard ? "side" : "main")}，"
-            + $"page={pageIndex}，selected={selectedPlan.Blocks.Count}/{plan.Blocks.Count}，"
-            + $"replace={replaceOriginal}，removedStrokes={removedStrokes}，blocks={assets.Count}，"
-            + $"scale={layout.Scale:0.00}，indexes={string.Join(",", indexes)}",
+            + $"page={writePageIndex}，newPage={newPage}，selected={selectedPlan.Blocks.Count}/{plan.Blocks.Count}，"
+            + $"replace={effectiveReplace}，removedStrokes={removedStrokes}，blocks={assets.Count}，"
+            + $"layout={writeLayout.Status}，scale={writeLayout.Scale:0.00}，indexes={string.Join(",", indexes)}",
             Core.Diagnostics.LogType.Event);
 
         _aiBoardPlan = null;
@@ -5126,11 +5191,49 @@ public sealed partial class ShellController : IShellActions, IDisposable
         window.SetBusy(false);
         window.SetPasted(true);
 
-        string scaleNote = string.IsNullOrEmpty(layout.Message) ? "" : layout.Message;
-        string actionNote = removedStrokes > 0
-            ? $"已替换原板书（删除 {removedStrokes} 笔），可 Ctrl+Z 一次撤销。"
-            : "已写入展板，可 Ctrl+Z 整体撤销。";
+        string scaleNote = string.IsNullOrEmpty(writeLayout.Message) ? "" : writeLayout.Message;
+        string actionNote = newPage
+            ? "已写入新的一页；页面保留，可用 Ctrl+Z 撤销卡片。"
+            : removedStrokes > 0
+                ? $"已替换原板书（删除 {removedStrokes} 笔），可 Ctrl+Z 一次撤销。"
+                : "已写入展板，可 Ctrl+Z 整体撤销。";
         window.ShowNotice(scaleNote + actionNote);
+    }
+
+    /// <summary>空间不足时让用户选择：缩小排版写入、写入新的一页或取消。</summary>
+    private async Task<BoardLayoutChoice> ShowBoardLayoutDialogAsync(
+        AssistantWindow window, BoardLayoutPlan layout)
+    {
+        if (window.Content is not FrameworkElement root || root.XamlRoot is null)
+            return BoardLayoutChoice.Cancel;
+
+        BoardLayoutDialogSpec spec = BoardLayoutDecisionPolicy.Describe(layout);
+        var dialog = new ContentDialog
+        {
+            Title = spec.Title,
+            Content = new TextBlock { Text = spec.Message, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = spec.PrimaryText,
+            SecondaryButtonText = spec.SecondaryText,
+            CloseButtonText = spec.CloseText,
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = root.XamlRoot,
+        };
+
+        ContentDialogResult result;
+        try
+        {
+            result = await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 空间不足弹窗失败：{ex.Message}", Core.Diagnostics.LogType.Error);
+            return BoardLayoutChoice.Cancel;
+        }
+
+        if (result == ContentDialogResult.Primary) return spec.PrimaryChoice;
+        if (result == ContentDialogResult.Secondary) return spec.SecondaryChoice;
+        return BoardLayoutChoice.Cancel;
     }
 
     /// <summary>当前板视口（客户区）反变换到世界坐标，供自动落点使用。</summary>

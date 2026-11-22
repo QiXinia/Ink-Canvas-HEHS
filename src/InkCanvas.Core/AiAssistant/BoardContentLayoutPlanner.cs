@@ -6,26 +6,59 @@ public readonly record struct BoardCardSize(double Width, double Height);
 /// <summary>规划器输出的单卡落点（世界坐标，DIP）。</summary>
 public readonly record struct BoardCardPlacement(int Index, double Left, double Top, double Width, double Height);
 
-/// <summary>一次板书自动落点的结果；<see cref="NeedsNewPage"/> 为 true 时不应写入当前页。</summary>
+/// <summary>一次板书落点规划的结论。</summary>
+public enum BoardLayoutStatus
+{
+    /// <summary>原尺寸可直接排下。</summary>
+    Placed,
+
+    /// <summary>原尺寸放不下，但缩小到 70%/50% 后可排下。</summary>
+    NeedsShrink,
+
+    /// <summary>缩小仍放不下，但当前页并非被内容占满（建议调整/清理原迹后再试）。</summary>
+    NeedsMove,
+
+    /// <summary>当前页内容已接近占满，建议写入新页。</summary>
+    NeedsNewPage,
+}
+
+/// <summary>
+/// 一次板书自动落点的结果。缩小可排下时 <see cref="Placements"/> 已按建议比例计算；
+/// NeedsMove/NeedsNewPage 时为空，调用方应弹窗让用户选择新页或取消。
+/// </summary>
 public sealed class BoardLayoutPlan
 {
+    public BoardLayoutStatus Status { get; init; }
+
     public IReadOnlyList<BoardCardPlacement> Placements { get; init; } = Array.Empty<BoardCardPlacement>();
 
     /// <summary>实际采用的缩放比例；1.0 表示未缩小。</summary>
     public double Scale { get; init; } = 1.0;
 
-    /// <summary>当前页空间不足，调用方应提示新建页而不是覆盖原内容。</summary>
-    public bool NeedsNewPage { get; init; }
+    /// <summary>当前页空间不足且被内容占满，建议新建页。</summary>
+    public bool NeedsNewPage => Status == BoardLayoutStatus.NeedsNewPage;
 
+    /// <summary>原尺寸放不下，缩小后可写入当前页。</summary>
+    public bool NeedsShrink => Status == BoardLayoutStatus.NeedsShrink;
+
+    /// <summary>缩小仍放不下，但当前页还有调整空间。</summary>
+    public bool NeedsMove => Status == BoardLayoutStatus.NeedsMove;
+
+    /// <summary>建议原因与下一步提示（始终面向用户）。</summary>
     public string Message { get; init; } = "";
 
-    public bool IsComplete => !NeedsNewPage && Placements.Count > 0;
+    /// <summary>可选项文案，供 UI 直接展示（收起/新页/取消）。</summary>
+    public IReadOnlyList<string> Options { get; init; } = Array.Empty<string>();
+
+    /// <summary>true 表示可直接按当前 <see cref="Placements"/> 写入（含缩小方案）。</summary>
+    public bool IsComplete => Status is BoardLayoutStatus.Placed or BoardLayoutStatus.NeedsShrink
+        && Placements.Count > 0;
 }
 
 /// <summary>
 /// 纯逻辑的板书自动落点：在视口内按网格扫描，避开当前页已有内容（笔画/图片/媒体的包围盒），
-/// 卡片之间保持 gap；空间不足时依次缩小 10%–30%，仍不足则建议新建页。
-/// 不依赖 Win2D/UI，便于单元测试。
+/// 卡片之间保持 gap。原尺寸失败时先尝试 70%，再尝试 50%；仍失败则根据当前页内容占比
+/// 判定“建议调整位置”或“建议新页”。不依赖 Win2D/UI，便于单元测试。
 /// </summary>
 public static class BoardContentLayoutPlanner
 {
@@ -35,9 +68,16 @@ public static class BoardContentLayoutPlanner
 
     public const double GridStep = 24;
 
-    private const int MaxProbes = 60000;
+    /// <summary>第一次缩小目标。</summary>
+    public const double ShrinkFirst = 0.7;
 
-    private static readonly double[] ScaleSteps = { 1.0, 0.9, 0.8, 0.7 };
+    /// <summary>最小缩小目标。</summary>
+    public const double ShrinkMinimum = 0.5;
+
+    /// <summary>内容包围盒占视口面积达到该比例时判定“需要新页”。</summary>
+    public const double FullPageRatio = 0.6;
+
+    private const int MaxProbes = 60000;
 
     /// <param name="contentBounds">当前页已有内容包围盒（世界坐标）；空页传 <see cref="AssistantRect"/> 默认值。</param>
     /// <param name="cards">待写入卡片尺寸（DIP）。</param>
@@ -50,7 +90,7 @@ public static class BoardContentLayoutPlanner
         double margin = DefaultMargin)
     {
         if (cards is null || cards.Count == 0)
-            return new BoardLayoutPlan { Message = "没有可写入的板书内容。" };
+            return new BoardLayoutPlan { Status = BoardLayoutStatus.Placed, Message = "没有可写入的板书内容。" };
 
         gap = Math.Max(0, gap);
         margin = Math.Max(0, margin);
@@ -61,31 +101,83 @@ public static class BoardContentLayoutPlanner
             viewport.Right - margin,
             viewport.Bottom - margin);
         if (usable.IsEmpty)
-            return NeedsNewPage("可写入区域太小，请新建一页后再写入。");
+            return NeedsMove("当前视口太小，无法排下板书；请先调整窗口或清理原迹，或写入新的一页。");
 
         var obstacles = new List<AssistantRect>(1);
         if (!contentBounds.IsEmpty) obstacles.Add(contentBounds);
 
-        foreach (double scale in ScaleSteps)
-        {
-            List<BoardCardPlacement> placements = TryPlace(usable, obstacles, cards, scale, gap);
-            if (placements is null) continue;
+        List<BoardCardPlacement> placements = TryPlace(usable, obstacles, cards, 1.0, gap);
+        if (placements is not null) return Placed(placements, 1.0);
 
-            return new BoardLayoutPlan
-            {
-                Placements = placements,
-                Scale = scale,
-                Message = scale < 1.0
-                    ? $"当前页空间不足，已缩小到 {Math.Round(scale * 100)}%。"
-                    : "",
-            };
-        }
+        placements = TryPlace(usable, obstacles, cards, ShrinkFirst, gap);
+        if (placements is not null)
+            return NeedsShrinkPlan(placements, ShrinkFirst,
+                $"当前页空间不足，建议缩小到 {Percent(ShrinkFirst)} 后写入。");
 
-        return NeedsNewPage("当前页空间不足，请新建一页后再写入。");
+        placements = TryPlace(usable, obstacles, cards, ShrinkMinimum, gap);
+        if (placements is not null)
+            return NeedsShrinkPlan(placements, ShrinkMinimum,
+                $"当前页空间不足，建议缩小到 {Percent(ShrinkMinimum)} 后写入。");
+
+        double ratio = Coverage(contentBounds, viewport);
+        if (!contentBounds.IsEmpty && ratio >= FullPageRatio)
+            return NeedsNewPage(
+                $"当前页空间不足，缩小到 {Percent(ShrinkMinimum)} 仍无法排下；建议写入新的一页。");
+
+        return NeedsMove(
+            $"当前页空间不足，缩小到 {Percent(ShrinkMinimum)} 仍无法排下；"
+            + "建议先移动/清理原迹或调整字号后重试，也可以写入新的一页。");
     }
 
-    private static BoardLayoutPlan NeedsNewPage(string message)
-        => new() { NeedsNewPage = true, Scale = ScaleSteps[^1], Message = message };
+    private static BoardLayoutPlan Placed(List<BoardCardPlacement> placements, double scale) => new()
+    {
+        Status = BoardLayoutStatus.Placed,
+        Placements = placements,
+        Scale = scale,
+        Options = Array.Empty<string>(),
+    };
+
+    private static BoardLayoutPlan NeedsShrinkPlan(
+        List<BoardCardPlacement> placements, double scale, string message) => new()
+    {
+        Status = BoardLayoutStatus.NeedsShrink,
+        Placements = placements,
+        Scale = scale,
+        Message = message,
+        Options = new[] { "缩小排版写入", "写入新的一页", "取消" },
+    };
+
+    private static BoardLayoutPlan NeedsMove(string message) => new()
+    {
+        Status = BoardLayoutStatus.NeedsMove,
+        Scale = ShrinkMinimum,
+        Message = message,
+        Options = new[] { "写入新的一页", "取消" },
+    };
+
+    private static BoardLayoutPlan NeedsNewPage(string message) => new()
+    {
+        Status = BoardLayoutStatus.NeedsNewPage,
+        Scale = ShrinkMinimum,
+        Message = message,
+        Options = new[] { "写入新的一页", "取消" },
+    };
+
+    private static double Coverage(AssistantRect content, AssistantRect viewport)
+    {
+        if (content.IsEmpty || viewport.IsEmpty) return 0;
+
+        double left = Math.Max(content.Left, viewport.Left);
+        double top = Math.Max(content.Top, viewport.Top);
+        double right = Math.Min(content.Right, viewport.Right);
+        double bottom = Math.Min(content.Bottom, viewport.Bottom);
+        double area = Math.Max(0, right - left) * Math.Max(0, bottom - top);
+        double total = viewport.Width * viewport.Height;
+        if (total <= 0) return 0;
+        return Math.Clamp(area / total, 0, 1);
+    }
+
+    private static string Percent(double scale) => Math.Round(scale * 100) + "%";
 
     private static List<BoardCardPlacement> TryPlace(
         AssistantRect usable,

@@ -42,6 +42,7 @@ public partial class App : Application
         if (sideBoardLongCheck is not null) { _ = Diagnostics.SideBoardRegression.Run(sideBoardLongCheck["--sideboardcheck-long=".Length..], cycles: 500); return; }
         var sideBoardCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--sideboardcheck=", StringComparison.OrdinalIgnoreCase));
         if (sideBoardCheck is not null) { _ = Diagnostics.SideBoardRegression.Run(sideBoardCheck["--sideboardcheck=".Length..]); return; }
+
         var aiCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--aicheck=", StringComparison.OrdinalIgnoreCase));
         if (aiCheck is not null) { _ = Diagnostics.AssistantRegression.Run(aiCheck["--aicheck=".Length..]); return; }
         var aiBoardCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--aiboardcheck=", StringComparison.OrdinalIgnoreCase));

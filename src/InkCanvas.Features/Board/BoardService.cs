@@ -277,6 +277,11 @@ public sealed partial class BoardService
         || _images.Any(images => images.Count > 0)
         || _media.Any(media => media.Count > 0);
 
+    /// <summary>指定页是否有可离屏渲染的内容（笔画/图片/媒体）；越界返回 false。</summary>
+    public bool PageHasContent(int index)
+        => index >= 0 && index < _pages.Count
+           && (_pages[index].Document.Count > 0 || _images[index].Count > 0 || _media[index].Count > 0);
+
     /// <summary>当前页是否有可渲染贴回的内容（有墨迹，或含有效数据的图片；视频不参与离线 PNG 合成）。</summary>
     public bool CurrentPageHasPasteableContent => Current.Document.Count > 0
         || _images[CurrentIndex].Any(image => image.Data is { Length: > 0 });
@@ -888,7 +893,34 @@ public sealed partial class BoardService
     /// <c>SideBoardWindow.CurrentPageContentBounds</c> 一致；图片/媒体按轴对齐矩形计，
     /// 不含旋转后的精确外接框。空页返回 <see cref="Rect.Empty"/>。
     /// </summary>
-    public Rect GetContentBounds() => GetContentBoundsExcept(null);
+    public Rect GetContentBounds() => GetContentBounds(CurrentIndex);
+
+    /// <summary>
+    /// 指定页内容包围盒（笔画 + 图片 + 媒体，世界坐标）；越界返回空。
+    /// 图片/媒体按轴对齐矩形计，供离线讲义/时光机整页渲染使用。
+    /// </summary>
+    public Rect GetContentBounds(int pageIndex)
+    {
+        if (pageIndex < 0 || pageIndex >= _pages.Count) return Rect.Empty;
+
+        Rect bounds = Rect.Empty;
+        foreach (InkStroke stroke in _pages[pageIndex].Document.Strokes)
+            bounds = bounds.Union(stroke.Bounds);
+
+        foreach (BoardImageAsset image in _images[pageIndex])
+        {
+            if (image.Data is not { Length: > 0 } || image.Width <= 0 || image.Height <= 0) continue;
+            bounds = bounds.Union(new Rect(image.Left, image.Top, image.Left + image.Width, image.Top + image.Height));
+        }
+
+        foreach (BoardMediaAsset media in _media[pageIndex])
+        {
+            if (media.Width <= 0 || media.Height <= 0) continue;
+            bounds = bounds.Union(new Rect(media.Left, media.Top, media.Left + media.Width, media.Top + media.Height));
+        }
+
+        return bounds;
+    }
 
     /// <summary>
     /// 同 <see cref="GetContentBounds"/>，但忽略 <paramref name="excludedStrokes"/>（替换原板书前
