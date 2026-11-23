@@ -2,7 +2,9 @@ using InkCanvas.Core.Classroom;
 using InkCanvas.Core.Ink;
 using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Features.Classroom;
+using InkCanvas.Ink;
 using System.Text.Json;
 using Xunit;
 
@@ -37,6 +39,57 @@ public sealed class AiTimelineReplayTests
         BoardId = boardId,
         Kind = TimelineEventKind.AiStep,
         Payload = AiObjectPayloadCodec.Encode(action, page, boardId, objects),
+    };
+
+    private static TimelineAiObject NativeText(string id, double left, string content) => new()
+    {
+        Id = id,
+        Kind = "wordList",
+        IsNative = true,
+        Content = content,
+        Title = "原生标题",
+        Author = "教师",
+        Dynasty = "唐",
+        FontFamily = "Microsoft YaHei UI",
+        FontSize = 28,
+        Color = "#FF112233",
+        LineHeight = 1.5,
+        Align = "center",
+        Columns = 2,
+        Left = left,
+        Top = 10,
+        Width = 200,
+        Height = 80,
+        LayerOrder = (long)left,
+        GroupId = "native-group",
+    };
+
+    private static TimelineAiObject NativeFormula(string id, double left, string latex) => new()
+    {
+        Id = id,
+        Kind = "formula",
+        IsNative = true,
+        Latex = latex,
+        FontFamily = "Cambria Math",
+        FontSize = 30,
+        Color = "#FF112233",
+        Left = left,
+        Top = 10,
+        Width = 180,
+        Height = 70,
+        LayerOrder = (long)left,
+        GroupId = "native-group",
+    };
+
+    private static TimelineEvent AiNative(long timeMs, int page, int boardId, string action,
+        params TimelineAiObject[] nativeObjects) => new()
+    {
+        TimeMs = timeMs,
+        PageIndex = page,
+        BoardId = boardId,
+        Kind = TimelineEventKind.AiStep,
+        Payload = AiObjectPayloadCodec.Encode(
+            action, page, boardId, Array.Empty<TimelineAiObject>(), nativeObjects),
     };
 
     private static TimelineEvent Page(long timeMs, int page) => new()
@@ -130,6 +183,35 @@ public sealed class AiTimelineReplayTests
         IReadOnlyList<TimelineAiObject> at350 = timeline.BuildObjectFrame(350);
         Assert.Single(at350);
         Assert.Equal("o1", at350[0].Id);
+    }
+
+    [Fact]
+    public void BuildObjectFrame_ReplaysStructuredNativeObjectsWithTimeCutoff()
+    {
+        var session = Session(
+            Page(0, 0),
+            AiNative(100, 0, 0, "add", NativeText("n1", 1, "一"), NativeFormula("f1", 2, "x^2")),
+            AiNative(200, 0, 0, "update", NativeText("n1", 1, "二")),
+            AiNative(300, 0, 0, "remove", NativeFormula("f1", 2, "x^2")));
+        var timeline = new InkTimeline(session);
+
+        IReadOnlyList<TimelineAiObject> at150 = timeline.BuildObjectFrame(150);
+        Assert.Equal(2, at150.Count);
+        Assert.All(at150, item => Assert.True(item.IsNative && !item.HasRenderPng));
+        Assert.Equal("一", at150.Single(item => item.Id == "n1").Content);
+        Assert.Equal("x^2", at150.Single(item => item.Id == "f1").Latex);
+
+        IReadOnlyList<TimelineAiObject> at250 = timeline.BuildObjectFrame(250);
+        Assert.Equal("二", at250.Single(item => item.Id == "n1").Content);
+
+        IReadOnlyList<TimelineAiObject> at350 = timeline.BuildObjectFrame(350);
+        Assert.Single(at350);
+        Assert.Equal("n1", at350[0].Id);
+
+        var checkpointed = new InkTimeline(session, eventsPerCheckpoint: 1, checkpointIntervalMs: 1);
+        IReadOnlyList<TimelineAiObject> checkpointFrame = checkpointed.BuildObjectFrame(250);
+        Assert.Equal(2, checkpointFrame.Count);
+        Assert.All(session.Checkpoints, checkpoint => Assert.NotNull(checkpoint.LiveObjectIds));
     }
 
     [Fact]
@@ -388,6 +470,148 @@ public sealed class AiTimelineReplayTests
             AiObjectsPayload payload = Decode(ai);
             Assert.True(payload.Objects[0].RenderMissing);
             Assert.Equal("", payload.Objects[0].RenderPngBase64);
+        }
+        finally
+        {
+            RemoveDir(dir);
+        }
+    }
+
+    [Fact]
+    public void Recorder_WritesStructuredNativePayloadAndCheckpointReplay()
+    {
+        string dir = TempDir();
+        try
+        {
+            var board = new BoardService();
+            using var recorder = new InkRecorder(board) { SessionDirectory = dir };
+            recorder.Start("原生结构化录制");
+
+            var text = new BoardTextObject
+            {
+                Type = "wordList",
+                Content = "判别式\n配方法",
+                Title = "关键词",
+                Author = "教师",
+                Dynasty = "唐",
+                FontFamily = "Microsoft YaHei UI",
+                FontSize = 28,
+                Color = "#FF112233",
+                LineHeight = 1.6,
+                Align = "center",
+                Columns = 2,
+                Left = 12,
+                Top = 24,
+                Width = 280,
+                Height = 140,
+                Source = "ai",
+                Instruction = "结构化回放",
+                CreatedAt = 1_730_000_000_000,
+            };
+            var formula = new BoardFormulaObject
+            {
+                Latex = "\\frac{1}{2}x^2",
+                FontFamily = "Cambria Math",
+                FontSize = 30,
+                Color = "#FF112233",
+                Left = 12,
+                Top = 200,
+                Width = 220,
+                Height = 90,
+                Source = "ai",
+                Instruction = "结构化回放",
+                CreatedAt = 1_730_000_000_000,
+            };
+
+            board.AddAiObjectsAtomic(new[] { text }, new[] { formula }, "AI 板书", "native-group");
+            recorder.Stop();
+
+            ClassroomSession session = recorder.Session;
+            TimelineEvent ai = Assert.Single(session.Events,
+                item => item.Kind == TimelineEventKind.AiStep);
+            AiObjectsPayload payload = Decode(ai);
+
+            Assert.Empty(payload.Objects);
+            Assert.Equal(2, payload.NativeObjects.Count);
+            Assert.All(payload.NativeObjects, item =>
+                Assert.True(item.IsNative && !item.HasRenderPng && item.RenderPngBase64.Length == 0));
+            TimelineAiObject textSnapshot = payload.NativeObjects.Single(item => item.Kind == "wordList");
+            Assert.Equal("关键词", textSnapshot.Title);
+            Assert.Equal(2, textSnapshot.Columns);
+            Assert.Equal(12, textSnapshot.Left, 3);
+            TimelineAiObject formulaSnapshot = payload.NativeObjects.Single(item => item.Kind == "formula");
+            Assert.Equal("\\frac{1}{2}x^2", formulaSnapshot.Latex);
+
+            long time = session.Events[^1].TimeMs;
+            IReadOnlyList<TimelineAiObject> frame = new InkTimeline(session).BuildObjectFrame(time);
+            Assert.Equal(2, frame.Count);
+            Assert.All(frame, item => Assert.True(item.IsNative && !item.HasRenderPng));
+
+            var checkpointed = new InkTimeline(session, eventsPerCheckpoint: 1, checkpointIntervalMs: 1);
+            IReadOnlyList<TimelineAiObject> checkpointFrame = checkpointed.BuildObjectFrame(time);
+            Assert.Equal(2, checkpointFrame.Count);
+            Assert.NotEmpty(session.Checkpoints);
+            Assert.All(session.Checkpoints, checkpoint => Assert.NotNull(checkpoint.LiveObjectIds));
+
+            IReadOnlyList<TimelineAiObject> reloaded = new InkTimeline(session).BuildObjectFrame(time);
+            Assert.Equal(2, reloaded.Count);
+        }
+        finally
+        {
+            RemoveDir(dir);
+        }
+    }
+
+    [Fact]
+    public void Recorder_WritesStructuredUpdateRemoveAndReplaceEvents()
+    {
+        string dir = TempDir();
+        try
+        {
+            var board = new BoardService();
+            using var recorder = new InkRecorder(board) { SessionDirectory = dir };
+            recorder.Start("原生动作录制");
+
+            var text = new BoardTextObject
+            {
+                Type = "text", Content = "初始", Title = "文本",
+                FontSize = 24, Left = 10, Top = 10, Width = 200, Height = 80,
+                Source = "ai", Instruction = "结构化动作", CreatedAt = 1_730_000_000_000,
+            };
+            var formula = new BoardFormulaObject
+            {
+                Latex = "x^2", FontSize = 30, Left = 10, Top = 120, Width = 180, Height = 70,
+                Source = "ai", Instruction = "结构化动作", CreatedAt = 1_730_000_000_000,
+            };
+            board.AddAiObjectsAtomic(new[] { text }, new[] { formula }, "AI 板书", "group-a");
+            Assert.True(board.UpdateAiObject(text, target => target.Content = "更新"));
+            Assert.True(board.RemoveAiObjects(new ISelectionElement[] { formula }, "删除 AI 对象"));
+
+            InkStroke stroke = Stroke();
+            board.Current.Document.Add(stroke);
+            var replacement = new BoardTextObject
+            {
+                Type = "text", Content = "替换", Left = 20, Top = 20, Width = 200, Height = 80,
+                Source = "ai", Instruction = "结构化动作", CreatedAt = 1_730_000_000_000,
+            };
+            Assert.Single(board.ReplaceStrokesWithAiObjectsAtomic(
+                new[] { stroke }, new[] { replacement }, null, "替换 AI 板书", "group-b"));
+            recorder.Stop();
+
+            List<TimelineEvent> aiEvents = recorder.Session.Events
+                .Where(item => item.Kind == TimelineEventKind.AiStep)
+                .ToList();
+            Assert.Equal(4, aiEvents.Count);
+            Assert.Equal(new[] { "add", "update", "remove", "replace" },
+                aiEvents.Select(item => Decode(item).Action));
+            Assert.All(aiEvents, item =>
+            {
+                AiObjectsPayload payload = Decode(item);
+                Assert.Empty(payload.Objects);
+                Assert.NotEmpty(payload.NativeObjects);
+                Assert.All(payload.NativeObjects,
+                    obj => Assert.True(obj.IsNative && !obj.HasRenderPng));
+            });
         }
         finally
         {

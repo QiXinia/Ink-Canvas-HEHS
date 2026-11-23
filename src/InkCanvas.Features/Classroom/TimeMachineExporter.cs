@@ -407,6 +407,8 @@ public static class TimeMachineExporter
             try
             {
                 using var renderer = new StrokeRenderer();
+                using var aiTextRenderer = new AiTextSceneRenderer();
+                using var aiFormulaRenderer = new FormulaSceneRenderer();
                 using var device = CanvasDevice.GetSharedDevice();
                 using var target = new CanvasRenderTarget(device, options.Width, options.Height, 96);
                 var timeline = new InkTimeline(session);
@@ -475,10 +477,11 @@ public static class TimeMachineExporter
                             foreach (var stroke in timeline.BuildFrame(timeMs))
                                 renderer.Draw(drawing, stroke, Matrix3x2.Identity);
 
-                            // AI 板书对象：只绘制录制时保存的 PNG；缺失时画占位框，
-                            // 不在导出路径调用模型或网络。
+                            // AI 板书对象：结构化原生文本/公式走矢量渲染；旧 PNG 卡片走图片路径。
+                            // 导出不请求模型/网络，也不重新生成内容。
                             foreach (TimelineAiObject aiObject in timeline.BuildObjectFrame(timeMs))
-                                DrawAiObject(drawing, device, aiObject, aiBitmaps);
+                                DrawAiObject(drawing, device, aiObject, aiBitmaps,
+                                    aiTextRenderer, aiFormulaRenderer);
 
                             // 可选叠加：章节信息与书写光标。二者都不改变笔画集合，
                             // 只影响像素外观，因此 BoardOnly / 区间语义不受影响。
@@ -651,8 +654,18 @@ public static class TimeMachineExporter
     /// 导出过程不调用模型/网络，也不重新生成内容。
     /// </summary>
     private static void DrawAiObject(CanvasDrawingSession drawing, CanvasDevice device, TimelineAiObject item,
-        Dictionary<string, CanvasBitmap> cache)
+        Dictionary<string, CanvasBitmap> cache,
+        AiTextSceneRenderer textRenderer, FormulaSceneRenderer formulaRenderer)
     {
+        if (item.IsNative)
+        {
+            if (item.IsFormula)
+                formulaRenderer.Draw(drawing, new TimelineNativeFormulaElement(item), Matrix3x2.Identity);
+            else
+                textRenderer.Draw(drawing, new TimelineNativeTextElement(item), Matrix3x2.Identity);
+            return;
+        }
+
         var rect = new Windows.Foundation.Rect(
             item.Left, item.Top, Math.Max(1, item.Width), Math.Max(1, item.Height));
         CanvasBitmap bitmap = LoadAiBitmap(device, item, cache, out bool failed);

@@ -7,6 +7,8 @@ using InkCanvas.Core.Replay;
 using InkCanvas.Features.Board;
 using InkCanvas.Features.Classroom;
 using InkCanvas.Ink;
+using InkCanvas.Ink.Rendering;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -53,6 +55,16 @@ public sealed class TimeMachineWindow : Window
     private readonly ReplayClock _clock;
     private readonly InkController _replayController = new();
     private readonly InkSurface _surface = new() { IsHitTestVisible = false };
+    private readonly CanvasControl _nativeCanvas = new()
+    {
+        IsHitTestVisible = false,
+        ClearColor = Windows.UI.Color.FromArgb(0, 0, 0, 0),
+    };
+    private readonly AiTextSceneRenderer _nativeTextRenderer = new();
+    private readonly FormulaSceneRenderer _nativeFormulaRenderer = new();
+    private IReadOnlyList<TimelineAiObject> _nativeFrame = Array.Empty<TimelineAiObject>();
+    private Matrix3x2 _nativeView = Matrix3x2.Identity;
+    private string _lastNativeKey = "";
     private readonly Canvas _objectLayer = new() { IsHitTestVisible = false };
     private readonly Dictionary<string, BitmapImage> _objectBitmaps = new(StringComparer.Ordinal);
     private readonly List<InMemoryRandomAccessStream> _objectStreams = new();
@@ -325,13 +337,17 @@ public sealed class TimeMachineWindow : Window
         canvasHost.Children.Add(_pptImages[1]);
         canvasHost.Children.Add(_gridCanvas);
         canvasHost.Children.Add(_surface);
-        // AI 板书对象叠加层：与笔画同样的视图变换，不参与命中测试。
+        _nativeCanvas.Draw += OnDrawNativeObjects;
+        canvasHost.Children.Add(_nativeCanvas);
+        // 旧 PNG AI 卡片叠加层：与笔画同样的视图变换，不参与命中测试。
         canvasHost.Children.Add(_objectLayer);
         // 窗口尺寸变化时按新尺寸重画网格；同帧内背景层一起刷新，避免切换时闪白。
         canvasHost.SizeChanged += (_, _) =>
         {
             _gridKey = null;
             _lastObjectKey = "";
+            _lastNativeKey = "";
+            _nativeCanvas.Invalidate();
             RenderFrame();
         };
 
@@ -787,24 +803,35 @@ public sealed class TimeMachineWindow : Window
     }
 
     /// <summary>
-    /// 叠加当前时刻的 AI 板书对象：PNG 直接解码为 BitmapImage（录制时已保存，不重新生成），
-    /// 无 PNG/超阈值对象显示占位框；坐标与回放控制器使用同一视图变换。
+    /// 叠加当前时刻的 AI 板书对象：原生文本/公式走矢量渲染（CanvasControl），
+    /// 旧 PNG 卡片走图片层；坐标与回放控制器使用同一视图变换，不请求模型。
     /// </summary>
     private void RenderObjects(long time, ClassroomScene scene)
     {
         IReadOnlyList<TimelineAiObject> objects = _timeline.BuildObjectFrame(time);
-        string key = BuildObjectKey(objects, scene);
-        if (string.Equals(key, _lastObjectKey, StringComparison.Ordinal)) return;
-        _lastObjectKey = key;
-
-        _objectLayer.Children.Clear();
-        if (objects.Count == 0) return;
+        IReadOnlyList<TimelineAiObject> nativeObjects = objects.Where(item => item.IsNative).ToList();
+        IReadOnlyList<TimelineAiObject> legacyObjects = objects.Where(item => !item.IsNative).ToList();
 
         double scale = double.IsFinite(scene.ViewScale) && scene.ViewScale > 0 ? scene.ViewScale : 1;
         double tx = double.IsFinite(scene.ViewTx) ? scene.ViewTx : 0;
         double ty = double.IsFinite(scene.ViewTy) ? scene.ViewTy : 0;
+        Matrix3x2 view = Matrix3x2.CreateScale((float)scale) * Matrix3x2.CreateTranslation((float)tx, (float)ty);
 
-        foreach (TimelineAiObject item in objects)
+        string nativeKey = BuildNativeKey(nativeObjects, scene);
+        if (!string.Equals(nativeKey, _lastNativeKey, StringComparison.Ordinal))
+        {
+            _lastNativeKey = nativeKey;
+            _nativeFrame = nativeObjects;
+            _nativeView = view;
+            _nativeCanvas.Invalidate();
+        }
+
+        string key = BuildObjectKey(legacyObjects, scene);
+        if (string.Equals(key, _lastObjectKey, StringComparison.Ordinal)) return;
+        _lastObjectKey = key;
+
+        _objectLayer.Children.Clear();
+        foreach (TimelineAiObject item in legacyObjects)
         {
             FrameworkElement visual = item.HasRenderPng
                 ? CreateObjectImage(item)
@@ -815,6 +842,21 @@ public sealed class TimeMachineWindow : Window
             Canvas.SetLeft(visual, item.Left * scale + tx);
             Canvas.SetTop(visual, item.Top * scale + ty);
             _objectLayer.Children.Add(visual);
+        }
+    }
+
+    private void OnDrawNativeObjects(CanvasControl sender, CanvasDrawEventArgs args)
+    {
+        if (_nativeFrame.Count == 0) return;
+
+        foreach (TimelineAiObject item in _nativeFrame)
+        {
+            if (item.IsFormula)
+                _nativeFormulaRenderer.Draw(
+                    args.DrawingSession, new TimelineNativeFormulaElement(item), _nativeView);
+            else
+                _nativeTextRenderer.Draw(
+                    args.DrawingSession, new TimelineNativeTextElement(item), _nativeView);
         }
     }
 
@@ -910,6 +952,38 @@ public sealed class TimeMachineWindow : Window
                 .Append(',').Append(item.Height.ToString("0.##"))
                 .Append(':').Append(item.RenderPngBase64.Length)
                 .Append(item.RenderMissing ? "m" : "p");
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildNativeKey(IReadOnlyList<TimelineAiObject> objects, ClassroomScene scene)
+    {
+        var builder = new System.Text.StringBuilder(96 + objects.Count * 48);
+        builder.Append(scene.ViewScale.ToString("0.###")).Append('|')
+            .Append(scene.ViewTx.ToString("0.##")).Append('|')
+            .Append(scene.ViewTy.ToString("0.##"));
+        foreach (TimelineAiObject item in objects)
+        {
+            builder.Append('|').Append(item.Id)
+                .Append(':').Append(item.Kind)
+                .Append(':').Append(item.Content)
+                .Append(':').Append(item.Title)
+                .Append(':').Append(item.Author)
+                .Append(':').Append(item.Dynasty)
+                .Append(':').Append(item.Latex)
+                .Append(':').Append(item.FontFamily)
+                .Append(':').Append(item.FontSize.ToString("R"))
+                .Append(':').Append(item.Color)
+                .Append(':').Append(item.LineHeight.ToString("R"))
+                .Append(':').Append(item.Align)
+                .Append(':').Append(item.Columns)
+                .Append(':').Append(item.GroupId)
+                .Append(':').Append(item.Left.ToString("0.##"))
+                .Append(',').Append(item.Top.ToString("0.##"))
+                .Append(',').Append(item.Width.ToString("0.##"))
+                .Append(',').Append(item.Height.ToString("0.##"))
+                .Append(',').Append(item.LayerOrder?.ToString() ?? "");
         }
 
         return builder.ToString();
@@ -1439,6 +1513,9 @@ public sealed class TimeMachineWindow : Window
 
         _objectStreams.Clear();
         _objectBitmaps.Clear();
+        _nativeTextRenderer.Dispose();
+        _nativeFormulaRenderer.Dispose();
+        try { _nativeCanvas.RemoveFromVisualTree(); } catch { /* 原生回放画布释放失败不影响关闭 */ }
         _replayController.Dispose();
         try
         {

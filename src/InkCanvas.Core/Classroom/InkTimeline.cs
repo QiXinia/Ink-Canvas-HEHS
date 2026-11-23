@@ -274,7 +274,7 @@ public sealed class InkTimeline
             ApplyObjectEvent(alive, _events[i]);
             if (_events[i].Kind != TimelineEventKind.AiStep) continue;
             if (!AiObjectPayloadCodec.TryDecode(_events[i].Payload, out AiObjectsPayload payload)) continue;
-            foreach (TimelineAiObject snapshot in payload.Objects) latest[snapshot.Id] = snapshot;
+            foreach (TimelineAiObject snapshot in payload.AllObjects) latest[snapshot.Id] = snapshot;
         }
 
         int fallbackIndex = checkpoint?.EventIndex ?? cutoff;
@@ -937,7 +937,7 @@ public sealed class InkTimeline
         if (!AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload)) return;
 
         bool remove = string.Equals(payload.Action, "remove", StringComparison.OrdinalIgnoreCase);
-        foreach (TimelineAiObject item in payload.Objects)
+        foreach (TimelineAiObject item in payload.AllObjects)
         {
             if (string.IsNullOrEmpty(item.Id)) continue;
             if (remove) alive.Remove(item.Id);
@@ -1019,7 +1019,7 @@ public sealed class InkTimeline
             AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload))
         {
             int payloadPage = payload.PageIndex >= 0 ? payload.PageIndex : e.PageIndex;
-            foreach (TimelineAiObject item in payload.Objects)
+            foreach (TimelineAiObject item in payload.AllObjects)
             {
                 if (string.IsNullOrEmpty(item.Id)) continue;
                 if (!_objectOrder.ContainsKey(item.Id))
@@ -1093,7 +1093,7 @@ public sealed class InkTimeline
             if (e is null || e.Kind != TimelineEventKind.AiStep) continue;
             if (!AiObjectPayloadCodec.TryDecode(e.Payload, out AiObjectsPayload payload)) continue;
 
-            foreach (TimelineAiObject item in payload.Objects)
+            foreach (TimelineAiObject item in payload.AllObjects)
                 if (item.Id == id) latest = item;
         }
 

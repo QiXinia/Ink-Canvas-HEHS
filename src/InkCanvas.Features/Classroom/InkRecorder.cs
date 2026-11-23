@@ -2,6 +2,7 @@ using InkCanvas.Core.Classroom;
 using InkCanvas.Core.Ink;
 using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Ink;
 using System.Diagnostics;
 using System.Numerics;
@@ -400,14 +401,17 @@ public sealed class InkRecorder : IDisposable
     }
 
     /// <summary>
-    /// AI 板书对象变化：replace 先补写既有 StrokesRemoved（删除原笔画），再写一条结构化
-    /// AiStep；对象 PNG 直接来自 <see cref="BoardImageAsset.Data"/>，超过 400 KB 时只记录
-    /// renderMissing=true 并告警，回放退化为占位框，不请求模型。
+    /// AI 板书对象变化：replace 先补写既有 StrokesRemoved（删除原笔画），再写一条 AiStep。
+    /// 原生文本/公式写入 <c>nativeObjects</c> 结构化快照（不含 PNG）；旧图片卡片仍保留 PNG
+    /// 兼容字段，超过 400 KB 时只记录 renderMissing=true 并告警。回放永不请求模型。
     /// </summary>
     private void OnAiObjectsChanged(BoardAiObjectChange change)
     {
         if (!IsRecording || IsPaused || change is null) return;
-        if (change.Objects is null || change.Objects.Count == 0) return;
+        int imageCount = change.Objects?.Count ?? 0;
+        int textCount = change.Texts?.Count ?? 0;
+        int formulaCount = change.Formulas?.Count ?? 0;
+        if (imageCount + textCount + formulaCount == 0) return;
 
         int page = change.PageIndex >= 0 ? change.PageIndex : _board.CurrentIndex;
 
@@ -424,16 +428,71 @@ public sealed class InkRecorder : IDisposable
             }
         }
 
-        var objects = change.Objects
+        var images = change.Objects?
             .Where(image => image is not null)
             .Select(image => ToTimelineObject(image, page))
-            .ToList();
-        if (objects.Count == 0) return;
+            .ToList() ?? new List<TimelineAiObject>();
+        var natives = new List<TimelineAiObject>();
+        foreach (BoardTextObject text in change.Texts ?? Array.Empty<BoardTextObject>())
+            if (text is not null) natives.Add(ToNativeTextObject(text, page));
+        foreach (BoardFormulaObject formula in change.Formulas ?? Array.Empty<BoardFormulaObject>())
+            if (formula is not null) natives.Add(ToNativeFormulaObject(formula, page));
+        if (images.Count + natives.Count == 0) return;
 
-        string payload = AiObjectPayloadCodec.Encode(change.Action, page, _boardId, objects);
+        string payload = AiObjectPayloadCodec.Encode(change.Action, page, _boardId, images, natives);
         if (string.IsNullOrEmpty(payload)) return;
         AddEvent(TimelineEventKind.AiStep, page, payload: payload);
     }
+
+    private static TimelineAiObject ToNativeTextObject(BoardTextObject text, int pageIndex)
+    {
+        string content = text.Content ?? "";
+        return new TimelineAiObject
+        {
+            Id = text.Id.ToString(),
+            Kind = string.IsNullOrWhiteSpace(text.Type) ? "text" : text.Type,
+            IsNative = true,
+            PageIndex = pageIndex,
+            Left = text.Left,
+            Top = text.Top,
+            Width = text.Width,
+            Height = text.Height,
+            LayerOrder = text.LayerOrder,
+            Content = content,
+            Title = text.Title ?? "",
+            Author = text.Author ?? "",
+            Dynasty = text.Dynasty ?? "",
+            FontFamily = text.FontFamily ?? "Microsoft YaHei UI",
+            FontSize = text.FontSize,
+            Color = text.Color ?? "#FF202024",
+            LineHeight = text.LineHeight,
+            Align = text.Align ?? "left",
+            Columns = text.Columns <= 0 ? 1 : Math.Clamp(text.Columns, 1, 3),
+            GroupId = text.GroupId ?? "",
+            Text = content,
+            Lines = content.Length == 0
+                ? Array.Empty<string>()
+                : content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'),
+        };
+    }
+
+    private static TimelineAiObject ToNativeFormulaObject(BoardFormulaObject formula, int pageIndex) => new()
+    {
+        Id = formula.Id.ToString(),
+        Kind = "formula",
+        IsNative = true,
+        PageIndex = pageIndex,
+        Left = formula.Left,
+        Top = formula.Top,
+        Width = formula.Width,
+        Height = formula.Height,
+        LayerOrder = formula.LayerOrder,
+        Latex = formula.Latex ?? "",
+        FontFamily = formula.FontFamily ?? "Cambria Math",
+        FontSize = formula.FontSize,
+        Color = formula.Color ?? "#FF202024",
+        GroupId = formula.GroupId ?? "",
+    };
 
     private static TimelineAiObject ToTimelineObject(BoardImageAsset image, int pageIndex)
     {
