@@ -1,6 +1,8 @@
+using InkCanvas.Core.AiAssistant;
 using InkCanvas.Core.History;
 using InkCanvas.Core.Ink;
 using InkCanvas.Features.AiAssistant;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Ink;
 using System.Numerics;
 using System.Text.Json;
@@ -10,7 +12,8 @@ namespace InkCanvas.Features.Board;
 public enum BoardBackground { Black, White, Grid, Lined, Green, Cream, Coordinate }
 
 public sealed record BoardPageInfo(InkController Controller, BoardBackground Background, float GridSpacing,
-    IReadOnlyList<BoardImageAsset> Images, IReadOnlyList<BoardMediaAsset> Media);
+    IReadOnlyList<BoardImageAsset> Images, IReadOnlyList<BoardMediaAsset> Media,
+    IReadOnlyList<BoardTextObject> TextObjects = null, IReadOnlyList<BoardFormulaObject> FormulaObjects = null);
 
 /// <summary>
 /// AI 板书对象变化：供课堂录制器写 <c>TimelineEventKind.AiStep</c>，与 <c>ImagesChanged</c>
@@ -23,8 +26,14 @@ public sealed class BoardAiObjectChange
 
     public int PageIndex { get; init; }
 
-    /// <summary>本次变化涉及的对象快照；remove 时用于保留被删除对象。</summary>
+    /// <summary>本次变化涉及的图片对象快照；remove 时用于保留被删除对象。</summary>
     public IReadOnlyList<BoardImageAsset> Objects { get; init; } = Array.Empty<BoardImageAsset>();
+
+    /// <summary>本次变化涉及的原生文本对象快照。</summary>
+    public IReadOnlyList<BoardTextObject> Texts { get; init; } = Array.Empty<BoardTextObject>();
+
+    /// <summary>本次变化涉及的原生公式对象快照。</summary>
+    public IReadOnlyList<BoardFormulaObject> Formulas { get; init; } = Array.Empty<BoardFormulaObject>();
 
     /// <summary>replace 时被删除的笔画；录制器据此补写既有 StrokesRemoved 事件。</summary>
     public IReadOnlyList<InkStroke> RemovedStrokes { get; init; } = Array.Empty<InkStroke>();
@@ -203,6 +212,12 @@ public sealed partial class BoardService
     private readonly UndoStack _pageHistory = new(100);
     private readonly List<List<BoardMediaAsset>> _media = new() { new List<BoardMediaAsset>() };
 
+    /// <summary>Native AI text objects, parallel to <see cref="_pages"/>; never baked images.</summary>
+    private readonly List<List<BoardTextObject>> _textObjects = new() { new List<BoardTextObject>() };
+
+    /// <summary>Native formula objects, parallel to <see cref="_pages"/>; LaTeX is persisted.</summary>
+    private readonly List<List<BoardFormulaObject>> _formulaObjects = new() { new List<BoardFormulaObject>() };
+
     public BoardService(InkController initialController = null)
     {
         var page = initialController ?? new InkController();
@@ -234,6 +249,16 @@ public sealed partial class BoardService
             if (!_selectionElements.TryGetValue(media.Id, out var element) || !ReferenceEquals(element.Media, media))
                 _selectionElements[media.Id] = element = new BoardSelectionElement(this, media, page);
             yield return element;
+        }
+        foreach (var text in _textObjects[index])
+        {
+            text.Attach(this, page);
+            yield return text;
+        }
+        foreach (var formula in _formulaObjects[index])
+        {
+            formula.Attach(this, page);
+            yield return formula;
         }
     }
 
@@ -267,7 +292,8 @@ public sealed partial class BoardService
     public BoardPageInfo GetPageInfo(int index)
     {
         var page = _pages[index]; var paper = _papers[page];
-        return new(page, paper.Background, paper.GridSpacing, _images[index], _media[index]);
+        return new(page, paper.Background, paper.GridSpacing, _images[index], _media[index],
+            _textObjects[index], _formulaObjects[index]);
     }
 
     /// <summary>Page creation is limited only by the runtime collection capacity; <see cref="MaximumPages"/> is a UI soft limit.</summary>
@@ -275,12 +301,15 @@ public sealed partial class BoardService
 
     public bool HasContent => _pages.Any(page => page.Document.Count > 0)
         || _images.Any(images => images.Count > 0)
-        || _media.Any(media => media.Count > 0);
+        || _media.Any(media => media.Count > 0)
+        || _textObjects.Any(texts => texts.Count > 0)
+        || _formulaObjects.Any(formulas => formulas.Count > 0);
 
-    /// <summary>指定页是否有可离屏渲染的内容（笔画/图片/媒体）；越界返回 false。</summary>
+    /// <summary>指定页是否有可离屏渲染的内容（笔画/图片/媒体/原生文本/公式）；越界返回 false。</summary>
     public bool PageHasContent(int index)
         => index >= 0 && index < _pages.Count
-           && (_pages[index].Document.Count > 0 || _images[index].Count > 0 || _media[index].Count > 0);
+           && (_pages[index].Document.Count > 0 || _images[index].Count > 0 || _media[index].Count > 0
+               || _textObjects[index].Count > 0 || _formulaObjects[index].Count > 0);
 
     /// <summary>当前页是否有可渲染贴回的内容（有墨迹，或含有效数据的图片；视频不参与离线 PNG 合成）。</summary>
     public bool CurrentPageHasPasteableContent => Current.Document.Count > 0
@@ -299,12 +328,20 @@ public sealed partial class BoardService
 
     public IReadOnlyList<BoardImageAsset> CurrentImages => _images[CurrentIndex];
 
+    /// <summary>Native AI text objects on the current page (editable, vector-rendered).</summary>
+    public IReadOnlyList<BoardTextObject> CurrentTextObjects => _textObjects[CurrentIndex];
+
+    /// <summary>Native formula objects on the current page (LaTeX source retained).</summary>
+    public IReadOnlyList<BoardFormulaObject> CurrentFormulaObjects => _formulaObjects[CurrentIndex];
+
     public bool CanUndoPage => _pageHistory.CanUndo;
 
     public bool CanRedoPage => _pageHistory.CanRedo;
     public IReadOnlyList<BoardMediaAsset> CurrentMedia => _media[CurrentIndex];
     public event Action<BoardImageAsset> ImagePlacementChanged;
     public event Action<BoardMediaAsset> MediaPlacementChanged;
+    public event Action<BoardTextObject> TextPlacementChanged;
+    public event Action<BoardFormulaObject> FormulaPlacementChanged;
     public void NotifyImagePlacement(BoardImageAsset image) => ImagePlacementChanged?.Invoke(image);
     public void ReplaceCurrentImages(IEnumerable<BoardImageAsset> images)
     {
@@ -317,6 +354,18 @@ public sealed partial class BoardService
     }
     public void NotifyMediaPlacement(BoardMediaAsset media) => MediaPlacementChanged?.Invoke(media);
 
+    public void NotifyTextPlacement(BoardTextObject text)
+    {
+        TextPlacementChanged?.Invoke(text);
+        ImagesChanged?.Invoke();
+    }
+
+    public void NotifyFormulaPlacement(BoardFormulaObject formula)
+    {
+        FormulaPlacementChanged?.Invoke(formula);
+        ImagesChanged?.Invoke();
+    }
+
     /// <summary>Selection transactions own their undo step; these change membership without nesting history.</summary>
     public int GetImageIndex(InkController page, BoardImageAsset image)
     {
@@ -328,6 +377,18 @@ public sealed partial class BoardService
     {
         int index = _pages.IndexOf(page);
         return index < 0 ? -1 : _media[index].IndexOf(media);
+    }
+
+    public int GetTextIndex(InkController page, BoardTextObject text)
+    {
+        int index = _pages.IndexOf(page);
+        return index < 0 || text is null ? -1 : _textObjects[index].IndexOf(text);
+    }
+
+    public int GetFormulaIndex(InkController page, BoardFormulaObject formula)
+    {
+        int index = _pages.IndexOf(page);
+        return index < 0 || formula is null ? -1 : _formulaObjects[index].IndexOf(formula);
     }
 
     public void SetImagePresent(InkController page, BoardImageAsset image, bool present, int restoreIndex = -1)
@@ -353,6 +414,36 @@ public sealed partial class BoardService
                 _media[index].Insert(restoreIndex < 0 ? _media[index].Count : Math.Clamp(restoreIndex, 0, _media[index].Count), media);
         }
         else _media[index].Remove(media);
+        if (index == CurrentIndex) ImagesChanged?.Invoke();
+    }
+
+    public void SetTextPresent(InkController page, BoardTextObject text, bool present, int restoreIndex = -1)
+    {
+        int index = _pages.IndexOf(page);
+        if (index < 0 || text is null) return;
+        if (present)
+        {
+            if (!_textObjects[index].Contains(text))
+                _textObjects[index].Insert(restoreIndex < 0 ? _textObjects[index].Count
+                    : Math.Clamp(restoreIndex, 0, _textObjects[index].Count), text);
+            text.Attach(this, page);
+        }
+        else _textObjects[index].Remove(text);
+        if (index == CurrentIndex) ImagesChanged?.Invoke();
+    }
+
+    public void SetFormulaPresent(InkController page, BoardFormulaObject formula, bool present, int restoreIndex = -1)
+    {
+        int index = _pages.IndexOf(page);
+        if (index < 0 || formula is null) return;
+        if (present)
+        {
+            if (!_formulaObjects[index].Contains(formula))
+                _formulaObjects[index].Insert(restoreIndex < 0 ? _formulaObjects[index].Count
+                    : Math.Clamp(restoreIndex, 0, _formulaObjects[index].Count), formula);
+            formula.Attach(this, page);
+        }
+        else _formulaObjects[index].Remove(formula);
         if (index == CurrentIndex) ImagesChanged?.Invoke();
     }
 
@@ -450,13 +541,19 @@ public sealed partial class BoardService
         };
         var images = _images[source].Select(image => image.Copy()).ToList();
         var media = _media[source].Select(item => item.Copy(preserveId: false, copyData: false)).ToList();
+        var texts = _textObjects[source].Select(text => text.Copy(preserveId: false)).ToList();
+        var formulas = _formulaObjects[source].Select(formula => formula.Copy(preserveId: false)).ToList();
         var paper = new BoardPaper(sourceState.Background, sourceState.GridSpacing);
 
         int insertAt = source + 1;
         controller.GetSelectableElements = () => GetSelectionElements(controller);
+        foreach (BoardTextObject text in texts) text.Attach(this, controller);
+        foreach (BoardFormulaObject formula in formulas) formula.Attach(this, controller);
         _pages.Insert(insertAt, controller);
         _images.Insert(insertAt, images);
         _media.Insert(insertAt, media);
+        _textObjects.Insert(insertAt, texts);
+        _formulaObjects.Insert(insertAt, formulas);
         _states.Insert(insertAt, state);
         _papers[controller] = paper;
         CurrentIndex = insertAt;
@@ -468,6 +565,8 @@ public sealed partial class BoardService
                 _pages.Insert(insertAt, controller);
                 _images.Insert(insertAt, images);
                 _media.Insert(insertAt, media);
+                _textObjects.Insert(insertAt, texts);
+                _formulaObjects.Insert(insertAt, formulas);
                 _states.Insert(insertAt, state);
                 _papers[controller] = paper;
                 CurrentIndex = insertAt;
@@ -482,6 +581,8 @@ public sealed partial class BoardService
                 _pages.RemoveAt(at);
                 _images.RemoveAt(at);
                 _media.RemoveAt(at);
+                _textObjects.RemoveAt(at);
+                _formulaObjects.RemoveAt(at);
                 _states.RemoveAt(at);
                 _papers.Remove(controller);
                 if (at < CurrentIndex) CurrentIndex--;
@@ -583,6 +684,8 @@ public sealed partial class BoardService
             _pages.Insert(insertAt, controller);
             _images.Insert(insertAt, page.Images.ToList());
             _media.Insert(insertAt, new List<BoardMediaAsset>());
+            _textObjects.Insert(insertAt, new List<BoardTextObject>());
+            _formulaObjects.Insert(insertAt, new List<BoardFormulaObject>());
             _states.Insert(insertAt, new BoardPageState
             {
                 Name = NextPageName(),
@@ -627,10 +730,13 @@ public sealed partial class BoardService
         var ids = Current.SelectedElements.Select(e => e.Id).ToHashSet();
         var images = CurrentImages.Where(image => ids.Contains(image.Id)).Select(image => image.Copy(preserveId: false, copyData: false)).ToList();
         var media = CurrentMedia.Where(item => ids.Contains(item.Id)).Select(item => item.Copy(preserveId: false, copyData: false)).ToList();
-        if (strokes.Count + images.Count + media.Count == 0) return false;
+        var texts = CurrentTextObjects.Where(text => ids.Contains(text.Id)).Select(text => text.Copy(preserveId: false)).ToList();
+        var formulas = CurrentFormulaObjects.Where(formula => ids.Contains(formula.Id)).Select(formula => formula.Copy(preserveId: false)).ToList();
+        if (strokes.Count + images.Count + media.Count + texts.Count + formulas.Count == 0) return false;
         if (!InsertPageAfterCurrent()) return false;
         var page = Current;
         var pageImages = _images[CurrentIndex]; var pageMedia = _media[CurrentIndex];
+        var pageTexts = _textObjects[CurrentIndex]; var pageFormulas = _formulaObjects[CurrentIndex];
         Apply();
         page.History.Push(new DelegateAction("clone selection to page", Apply, Revert));
         return true;
@@ -638,11 +744,23 @@ public sealed partial class BoardService
         void Apply()
         {
             page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media);
+            foreach (BoardTextObject text in texts)
+            {
+                text.Attach(this, page);
+                if (!pageTexts.Contains(text)) pageTexts.Add(text);
+            }
+            foreach (BoardFormulaObject formula in formulas)
+            {
+                formula.Attach(this, page);
+                if (!pageFormulas.Contains(formula)) pageFormulas.Add(formula);
+            }
             ImagesChanged?.Invoke();
         }
         void Revert()
         {
             page.Document.RemoveAll(strokes); pageImages.RemoveAll(images.Contains); pageMedia.RemoveAll(media.Contains);
+            foreach (BoardTextObject text in texts) pageTexts.Remove(text);
+            foreach (BoardFormulaObject formula in formulas) pageFormulas.Remove(formula);
             ImagesChanged?.Invoke();
         }
     }
@@ -653,21 +771,29 @@ public sealed partial class BoardService
         var page = Current;
         page.CancelLassoErase(); page.ClearSelection();
         var pageImages = _images[CurrentIndex]; var pageMedia = _media[CurrentIndex];
+        var pageTexts = _textObjects[CurrentIndex]; var pageFormulas = _formulaObjects[CurrentIndex];
         int pageIndex = CurrentIndex;
         var strokes = page.Document.Strokes.ToList(); var images = pageImages.ToList(); var media = pageMedia.ToList();
+        var texts = pageTexts.ToList(); var formulas = pageFormulas.ToList();
         BoardImageAsset[] aiImages = images.Where(IsAiBoardImage).ToArray();
-        if (strokes.Count + images.Count + media.Count == 0) return;
+        BoardTextObject[] aiTexts = texts.ToArray();
+        BoardFormulaObject[] aiFormulas = formulas.ToArray();
+        if (strokes.Count + images.Count + media.Count + texts.Count + formulas.Count == 0) return;
         Apply();
         page.History.Push(new DelegateAction("clear board page", Apply, Revert));
         void Apply()
         {
-            page.Document.Clear(); pageImages.Clear(); pageMedia.Clear(); ImagesChanged?.Invoke();
-            RaiseAiObjectsChanged("remove", pageIndex, aiImages);
+            page.Document.Clear(); pageImages.Clear(); pageMedia.Clear();
+            pageTexts.Clear(); pageFormulas.Clear();
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, aiImages, null, aiTexts, aiFormulas);
         }
         void Revert()
         {
-            page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media); ImagesChanged?.Invoke();
-            RaiseAiObjectsChanged("add", pageIndex, aiImages);
+            page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media);
+            pageTexts.AddRange(texts); pageFormulas.AddRange(formulas);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("add", pageIndex, aiImages, null, aiTexts, aiFormulas);
         }
     }
 
@@ -679,9 +805,13 @@ public sealed partial class BoardService
         var strokes = InkStroke.CloneObjects(source.Document.Strokes);
         var images = CurrentImages.Select(image => image.Copy(preserveId: false, copyData: false)).ToList();
         var media = CurrentMedia.Select(item => item.Copy(preserveId: false, copyData: false)).ToList();
+        var texts = CurrentTextObjects.Select(text => text.Copy(preserveId: false)).ToList();
+        var formulas = CurrentFormulaObjects.Select(formula => formula.Copy(preserveId: false)).ToList();
         AddPageAt(CurrentIndex + 1);
         CurrentIndex++;
         _images[CurrentIndex].AddRange(images); _media[CurrentIndex].AddRange(media);
+        foreach (BoardTextObject text in texts) { text.Attach(this, Current); _textObjects[CurrentIndex].Add(text); }
+        foreach (BoardFormulaObject formula in formulas) { formula.Attach(this, Current); _formulaObjects[CurrentIndex].Add(formula); }
         Current.Document.AddRange(strokes);
         CarryDrawingState(source, Current);
         Current.ViewTransform = source.ViewTransform;
@@ -702,6 +832,8 @@ public sealed partial class BoardService
             Current.History.Clear();
             _images[0].Clear();
             _media[0].Clear();
+            _textObjects[0].Clear();
+            _formulaObjects[0].Clear();
             _papers[Current] = new BoardPaper(_states[0].Background, _states[0].GridSpacing);
             ImagesChanged?.Invoke();
             PageChanged?.Invoke();
@@ -713,6 +845,8 @@ public sealed partial class BoardService
         var controller = _pages[index];
         var images = _images[index];
         var media = _media[index];
+        var texts = _textObjects[index];
+        var formulas = _formulaObjects[index];
         var state = _states[index];
         var paper = _papers.TryGetValue(controller, out var existingPaper) ? existingPaper : new BoardPaper(state.Background, state.GridSpacing);
         foreach (var id in images.Select(image => image.Id).Concat(media.Select(item => item.Id))) _selectionElements.Remove(id);
@@ -720,6 +854,8 @@ public sealed partial class BoardService
         _pages.RemoveAt(index);
         _images.RemoveAt(index);
         _media.RemoveAt(index);
+        _textObjects.RemoveAt(index);
+        _formulaObjects.RemoveAt(index);
         _states.RemoveAt(index);
         _papers.Remove(controller);
         if (index < CurrentIndex) CurrentIndex--;
@@ -736,6 +872,8 @@ public sealed partial class BoardService
                 _pages.RemoveAt(at);
                 _images.RemoveAt(at);
                 _media.RemoveAt(at);
+                _textObjects.RemoveAt(at);
+                _formulaObjects.RemoveAt(at);
                 _states.RemoveAt(at);
                 _papers.Remove(controller);
                 if (at < CurrentIndex) CurrentIndex--;
@@ -750,6 +888,8 @@ public sealed partial class BoardService
                 _pages.Insert(index, controller);
                 _images.Insert(index, images);
                 _media.Insert(index, media);
+                _textObjects.Insert(index, texts);
+                _formulaObjects.Insert(index, formulas);
                 _states.Insert(index, state);
                 _papers[controller] = paper;
                 CurrentIndex = index;
@@ -823,6 +963,424 @@ public sealed partial class BoardService
     }
 
     /// <summary>
+    /// 一次插入原生文本/公式对象并只记录一个撤销步骤（AI 板书整体写入）。
+    /// Undo 移除全部对象，Redo 按原顺序插回；同一次写入共享 <paramref name="groupId"/>，
+    /// 返回插入顺序的对象 Id。调用方不传 groupId 时自动生成一个。
+    /// </summary>
+    public IReadOnlyList<Guid> AddAiObjectsAtomic(
+        IReadOnlyList<BoardTextObject> texts,
+        IReadOnlyList<BoardFormulaObject> formulas,
+        string actionName,
+        string groupId = null)
+    {
+        var insertedTexts = new List<BoardTextObject>();
+        foreach (BoardTextObject text in texts ?? Array.Empty<BoardTextObject>())
+        {
+            if (text is null) continue;
+            BoardAiObjectSerialization.Normalize(text);
+            if (BoardAiObjectSerialization.IsValid(text)) insertedTexts.Add(text);
+        }
+
+        var insertedFormulas = new List<BoardFormulaObject>();
+        foreach (BoardFormulaObject formula in formulas ?? Array.Empty<BoardFormulaObject>())
+        {
+            if (formula is null) continue;
+            BoardAiObjectSerialization.Normalize(formula);
+            if (BoardAiObjectSerialization.IsValid(formula)) insertedFormulas.Add(formula);
+        }
+
+        if (insertedTexts.Count + insertedFormulas.Count == 0) return Array.Empty<Guid>();
+
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var pageTexts = _textObjects[pageIndex];
+        var pageFormulas = _formulaObjects[pageIndex];
+        int textStart = pageTexts.Count;
+        int formulaStart = pageFormulas.Count;
+
+        AdaptDefaultAiInkToBackground(_papers[page], insertedTexts, insertedFormulas);
+
+        string group = string.IsNullOrWhiteSpace(groupId) ? Guid.NewGuid().ToString("N") : groupId.Trim();
+        long layerOrder = page.NextLayerOrder();
+        foreach (BoardTextObject text in insertedTexts)
+        {
+            text.Attach(this, page);
+            text.GroupId = group;
+            text.LayerOrder = layerOrder++;
+            pageTexts.Add(text);
+        }
+        foreach (BoardFormulaObject formula in insertedFormulas)
+        {
+            formula.Attach(this, page);
+            formula.GroupId = group;
+            formula.LayerOrder = layerOrder++;
+            pageFormulas.Add(formula);
+        }
+
+        string name = string.IsNullOrWhiteSpace(actionName) ? "AI 板书" : actionName.Trim();
+
+        void ApplyInsert()
+        {
+            int textAt = Math.Clamp(textStart, 0, pageTexts.Count);
+            foreach (BoardTextObject text in insertedTexts)
+                if (!pageTexts.Contains(text)) pageTexts.Insert(textAt++, text);
+            int formulaAt = Math.Clamp(formulaStart, 0, pageFormulas.Count);
+            foreach (BoardFormulaObject formula in insertedFormulas)
+                if (!pageFormulas.Contains(formula)) pageFormulas.Insert(formulaAt++, formula);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("add", pageIndex, Array.Empty<BoardImageAsset>(),
+                null, insertedTexts, insertedFormulas);
+        }
+
+        void RevertInsert()
+        {
+            foreach (BoardTextObject text in insertedTexts) pageTexts.Remove(text);
+            foreach (BoardFormulaObject formula in insertedFormulas) pageFormulas.Remove(formula);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, Array.Empty<BoardImageAsset>(),
+                null, insertedTexts, insertedFormulas);
+        }
+
+        page.History.Push(new DelegateAction(name, ApplyInsert, RevertInsert));
+        ImagesChanged?.Invoke();
+        RaiseAiObjectsChanged("add", pageIndex, Array.Empty<BoardImageAsset>(),
+            null, insertedTexts, insertedFormulas);
+        return insertedTexts.Select(text => text.Id).Concat(insertedFormulas.Select(formula => formula.Id)).ToArray();
+    }
+
+    /// <summary>
+    /// 修改一个原生文本对象（正文/标题/样式/几何/分组），整体作为一次撤销步骤。
+    /// </summary>
+    public bool UpdateAiObject(BoardTextObject target, Action<BoardTextObject> update, string actionName = null)
+    {
+        if (target is null || update is null) return false;
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var pageTexts = _textObjects[CurrentIndex];
+        BoardTextObject current = pageTexts.FirstOrDefault(text =>
+            ReferenceEquals(text, target) || text.Id == target.Id);
+        if (current is null) return false;
+
+        var before = current.Copy();
+        update(current);
+        BoardAiObjectSerialization.Normalize(current);
+        if (!BoardAiObjectSerialization.IsValid(current))
+        {
+            current.CopyStateFrom(before);
+            return false;
+        }
+
+        var after = current.Copy();
+        if (BoardAiObjectSerialization.SameState(before, after)) return false;
+
+        void Apply(BoardTextObject snapshot)
+        {
+            current.CopyStateFrom(snapshot);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(),
+                null, new[] { current }, null);
+        }
+
+        Apply(after);
+        page.History.Push(new DelegateAction(
+            string.IsNullOrWhiteSpace(actionName) ? "编辑 AI 文本" : actionName.Trim(),
+            () => Apply(after), () => Apply(before)));
+        ImagesChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>修改一个原生公式对象（LaTeX/样式/几何/分组），整体作为一次撤销步骤。</summary>
+    public bool UpdateAiObject(BoardFormulaObject target, Action<BoardFormulaObject> update, string actionName = null)
+    {
+        if (target is null || update is null) return false;
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var pageFormulas = _formulaObjects[CurrentIndex];
+        BoardFormulaObject current = pageFormulas.FirstOrDefault(formula =>
+            ReferenceEquals(formula, target) || formula.Id == target.Id);
+        if (current is null) return false;
+
+        var before = current.Copy();
+        update(current);
+        BoardAiObjectSerialization.Normalize(current);
+        if (!BoardAiObjectSerialization.IsValid(current))
+        {
+            current.CopyStateFrom(before);
+            return false;
+        }
+
+        var after = current.Copy();
+        if (BoardAiObjectSerialization.SameState(before, after)) return false;
+
+        void Apply(BoardFormulaObject snapshot)
+        {
+            current.CopyStateFrom(snapshot);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(),
+                null, null, new[] { current });
+        }
+
+        Apply(after);
+        page.History.Push(new DelegateAction(
+            string.IsNullOrWhiteSpace(actionName) ? "编辑 AI 公式" : actionName.Trim(),
+            () => Apply(after), () => Apply(before)));
+        ImagesChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// 对当前选中组内的原生文本/公式批量应用连续修改（字号/列/行距/对齐）与过滤删除。
+    /// 所有变更合并为一个 <see cref="DelegateAction"/>；不新增对象、不调用 AI。
+    /// </summary>
+    public bool ApplyAiObjectEdit(
+        IEnumerable<ISelectionElement> targets, BoardPlanEditPolicy.BoardObjectEdit edit, string actionName = null)
+    {
+        if (targets is null || edit is null) return false;
+        var ids = targets.Where(element => element is not null).Select(element => element.Id).ToHashSet();
+        if (ids.Count == 0) return false;
+
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var pageTexts = _textObjects[pageIndex];
+        var pageFormulas = _formulaObjects[pageIndex];
+        var texts = pageTexts.Where(text => ids.Contains(text.Id)).ToList();
+        var formulas = pageFormulas.Where(formula => ids.Contains(formula.Id)).ToList();
+        if (texts.Count + formulas.Count == 0) return false;
+
+        var textBefore = texts.ToDictionary(text => text.Id, text => text.Copy());
+        var formulaBefore = formulas.ToDictionary(formula => formula.Id, formula => formula.Copy());
+
+        var removedTexts = texts.Where(text => IsRemovedByEdit(ObjectKindOf(text), edit)).ToList();
+        var removedFormulas = formulas.Where(_ => IsRemovedByEdit("formula", edit)).ToList();
+        var keptTexts = texts.Except(removedTexts).ToList();
+        var keptFormulas = formulas.Except(removedFormulas).ToList();
+
+        foreach (BoardTextObject text in keptTexts) ApplyStyleEdit(text, edit);
+        foreach (BoardFormulaObject formula in keptFormulas) ApplyStyleEdit(formula, edit);
+
+        foreach (BoardTextObject text in keptTexts)
+        {
+            BoardAiObjectSerialization.Normalize(text);
+            if (!BoardAiObjectSerialization.IsValid(text))
+            {
+                foreach (BoardTextObject item in keptTexts) item.CopyStateFrom(textBefore[item.Id]);
+                foreach (BoardFormulaObject item in keptFormulas) item.CopyStateFrom(formulaBefore[item.Id]);
+                return false;
+            }
+        }
+        foreach (BoardFormulaObject formula in keptFormulas)
+        {
+            BoardAiObjectSerialization.Normalize(formula);
+            if (!BoardAiObjectSerialization.IsValid(formula))
+            {
+                foreach (BoardTextObject item in keptTexts) item.CopyStateFrom(textBefore[item.Id]);
+                foreach (BoardFormulaObject item in keptFormulas) item.CopyStateFrom(formulaBefore[item.Id]);
+                return false;
+            }
+        }
+
+        bool styleChanged = keptTexts.Any(text =>
+                !BoardAiObjectSerialization.SameState(textBefore[text.Id], text))
+            || keptFormulas.Any(formula =>
+                !BoardAiObjectSerialization.SameState(formulaBefore[formula.Id], formula));
+        if (!styleChanged && removedTexts.Count + removedFormulas.Count == 0) return false;
+
+        var textAfter = keptTexts.ToDictionary(text => text.Id, text => text.Copy());
+        var formulaAfter = keptFormulas.ToDictionary(formula => formula.Id, formula => formula.Copy());
+        (int Index, BoardTextObject Object)[] removedTextEntries = pageTexts
+            .Select((text, index) => (Index: index, Object: text))
+            .Where(entry => removedTexts.Contains(entry.Object)).ToArray();
+        (int Index, BoardFormulaObject Object)[] removedFormulaEntries = pageFormulas
+            .Select((formula, index) => (Index: index, Object: formula))
+            .Where(entry => removedFormulas.Contains(entry.Object)).ToArray();
+
+        void ApplyAfter()
+        {
+            foreach (BoardTextObject text in keptTexts)
+                if (textAfter.TryGetValue(text.Id, out BoardTextObject snapshot)) text.CopyStateFrom(snapshot);
+            foreach (BoardFormulaObject formula in keptFormulas)
+                if (formulaAfter.TryGetValue(formula.Id, out BoardFormulaObject snapshot)) formula.CopyStateFrom(snapshot);
+            foreach (var entry in removedTextEntries) pageTexts.Remove(entry.Object);
+            foreach (var entry in removedFormulaEntries) pageFormulas.Remove(entry.Object);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(), null, keptTexts, keptFormulas);
+            RaiseAiObjectsChanged("remove", pageIndex, Array.Empty<BoardImageAsset>(), null,
+                removedTexts, removedFormulas);
+        }
+
+        void ApplyBefore()
+        {
+            foreach (BoardTextObject text in keptTexts)
+                if (textBefore.TryGetValue(text.Id, out BoardTextObject snapshot)) text.CopyStateFrom(snapshot);
+            foreach (BoardFormulaObject formula in keptFormulas)
+                if (formulaBefore.TryGetValue(formula.Id, out BoardFormulaObject snapshot)) formula.CopyStateFrom(snapshot);
+            foreach (var entry in removedTextEntries.OrderBy(entry => entry.Index))
+            {
+                if (pageTexts.Contains(entry.Object)) continue;
+                pageTexts.Insert(Math.Clamp(entry.Index, 0, pageTexts.Count), entry.Object);
+                entry.Object.Attach(this, page);
+            }
+            foreach (var entry in removedFormulaEntries.OrderBy(entry => entry.Index))
+            {
+                if (pageFormulas.Contains(entry.Object)) continue;
+                pageFormulas.Insert(Math.Clamp(entry.Index, 0, pageFormulas.Count), entry.Object);
+                entry.Object.Attach(this, page);
+            }
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(), null, keptTexts, keptFormulas);
+            RaiseAiObjectsChanged("add", pageIndex, Array.Empty<BoardImageAsset>(), null,
+                removedTexts, removedFormulas);
+        }
+
+        foreach (var entry in removedTextEntries) pageTexts.Remove(entry.Object);
+        foreach (var entry in removedFormulaEntries) pageFormulas.Remove(entry.Object);
+        ImagesChanged?.Invoke();
+        RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(), null, keptTexts, keptFormulas);
+        RaiseAiObjectsChanged("remove", pageIndex, Array.Empty<BoardImageAsset>(), null,
+            removedTexts, removedFormulas);
+
+        page.History.Push(new DelegateAction(
+            string.IsNullOrWhiteSpace(actionName) ? "连续修改 AI 板书" : actionName.Trim(),
+            ApplyAfter, ApplyBefore));
+        return true;
+    }
+
+    private static bool IsRemovedByEdit(string kind, BoardPlanEditPolicy.BoardObjectEdit edit)
+    {
+        if (edit.KeepKinds.Count > 0 && !edit.KeepKinds.Contains(kind)) return true;
+        return edit.RemoveKinds.Contains(kind);
+    }
+
+    private static string ObjectKindOf(BoardTextObject text) => (text.Type ?? "").Trim().ToLowerInvariant() switch
+    {
+        "wordlist" => "wordlist",
+        "poem" => "poem",
+        _ => "text",
+    };
+
+    private static void ApplyStyleEdit(BoardTextObject text, BoardPlanEditPolicy.BoardObjectEdit edit)
+    {
+        if (edit.ExplicitFontSize is { } explicitFont)
+            text.FontSize = ClampAiFont(explicitFont);
+        else if (Math.Abs(edit.FontScale - 1) > 0.001)
+            text.FontSize = ClampAiFont(text.FontSize * edit.FontScale);
+
+        if (edit.ExplicitLineHeight is { } explicitLine)
+            text.LineHeight = Math.Clamp(explicitLine,
+                BoardAiObjectSerialization.MinLineHeight, BoardAiObjectSerialization.MaxLineHeight);
+        else if (Math.Abs(edit.LineHeightScale - 1) > 0.001)
+            text.LineHeight = Math.Clamp(text.LineHeight * edit.LineHeightScale,
+                BoardAiObjectSerialization.MinLineHeight, BoardAiObjectSerialization.MaxLineHeight);
+
+        if (edit.Columns is { } columns)
+            text.Columns = Math.Clamp(columns, 1, 3);
+        if (!string.IsNullOrEmpty(edit.Align))
+            text.Align = edit.Align;
+    }
+
+    private static void ApplyStyleEdit(BoardFormulaObject formula, BoardPlanEditPolicy.BoardObjectEdit edit)
+    {
+        if (edit.ExplicitFontSize is { } explicitFont)
+            formula.FontSize = ClampAiFont(explicitFont);
+        else if (Math.Abs(edit.FontScale - 1) > 0.001)
+            formula.FontSize = ClampAiFont(formula.FontSize * edit.FontScale);
+    }
+
+    private static double ClampAiFont(double value)
+        => Math.Clamp(value, BoardAiObjectSerialization.MinFontSize, BoardAiObjectSerialization.MaxFontSize);
+
+    /// <summary>删除若干原生文本/公式对象，一次撤销按原索引恢复全部。</summary>
+    public bool RemoveAiObjects(IEnumerable<ISelectionElement> objects, string actionName = null)
+    {
+        if (objects is null) return false;
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var pageTexts = _textObjects[pageIndex];
+        var pageFormulas = _formulaObjects[pageIndex];
+        var requested = objects.ToArray();
+        var textSet = requested.OfType<BoardTextObject>().Where(pageTexts.Contains).ToHashSet();
+        var formulaSet = requested.OfType<BoardFormulaObject>().Where(pageFormulas.Contains).ToHashSet();
+        if (textSet.Count + formulaSet.Count == 0) return false;
+
+        (int Index, BoardTextObject Object)[] textEntries = pageTexts
+            .Select((text, index) => (Index: index, Object: text))
+            .Where(entry => textSet.Contains(entry.Object)).ToArray();
+        (int Index, BoardFormulaObject Object)[] formulaEntries = pageFormulas
+            .Select((formula, index) => (Index: index, Object: formula))
+            .Where(entry => formulaSet.Contains(entry.Object)).ToArray();
+
+        void ApplyRemove()
+        {
+            foreach (var entry in textEntries) pageTexts.Remove(entry.Object);
+            foreach (var entry in formulaEntries) pageFormulas.Remove(entry.Object);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, Array.Empty<BoardImageAsset>(), null,
+                textEntries.Select(entry => entry.Object).ToArray(),
+                formulaEntries.Select(entry => entry.Object).ToArray());
+        }
+
+        void ApplyRestore()
+        {
+            foreach (var entry in textEntries.OrderBy(entry => entry.Index))
+            {
+                if (pageTexts.Contains(entry.Object)) continue;
+                pageTexts.Insert(Math.Clamp(entry.Index, 0, pageTexts.Count), entry.Object);
+                entry.Object.Attach(this, page);
+            }
+            foreach (var entry in formulaEntries.OrderBy(entry => entry.Index))
+            {
+                if (pageFormulas.Contains(entry.Object)) continue;
+                pageFormulas.Insert(Math.Clamp(entry.Index, 0, pageFormulas.Count), entry.Object);
+                entry.Object.Attach(this, page);
+            }
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("add", pageIndex, Array.Empty<BoardImageAsset>(), null,
+                textEntries.Select(entry => entry.Object).ToArray(),
+                formulaEntries.Select(entry => entry.Object).ToArray());
+        }
+
+        ApplyRemove();
+        page.History.Push(new DelegateAction(
+            string.IsNullOrWhiteSpace(actionName) ? "删除 AI 对象" : actionName.Trim(),
+            ApplyRemove, ApplyRestore));
+        return true;
+    }
+
+    /// <summary>
+    /// 清除同一次 AI 写入的分组 Id，使组内对象可以独立选择/移动。整体作为一次撤销步骤，
+    /// 撤销恢复原 GroupId；返回被取消分组的对象数量。
+    /// </summary>
+    public int UngroupAiObjects(string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId)) return 0;
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var texts = _textObjects[CurrentIndex].Where(text => text.GroupId == groupId).ToArray();
+        var formulas = _formulaObjects[CurrentIndex].Where(formula => formula.GroupId == groupId).ToArray();
+        if (texts.Length + formulas.Length == 0) return 0;
+
+        void Clear()
+        {
+            foreach (BoardTextObject text in texts) text.GroupId = "";
+            foreach (BoardFormulaObject formula in formulas) formula.GroupId = "";
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(), null, texts, formulas);
+        }
+
+        void Restore()
+        {
+            foreach (BoardTextObject text in texts) text.GroupId = groupId;
+            foreach (BoardFormulaObject formula in formulas) formula.GroupId = groupId;
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("update", pageIndex, Array.Empty<BoardImageAsset>(), null, texts, formulas);
+        }
+
+        Clear();
+        page.History.Push(new DelegateAction("取消 AI 对象分组", Clear, Restore));
+        return texts.Length + formulas.Length;
+    }
+
+    /// <summary>
     /// 用图片原子替换原笔画：一次 <see cref="DelegateAction"/> 内删除 <paramref name="strokesToRemove"/>
     /// 并插入 <paramref name="images"/>。传空/null 笔画列表表示删除当前页全部笔画（“替换整页”语义）；
     /// 图片为空或页面没有可删除笔画时返回 <c>false</c>，不会只删不写或只写不删。
@@ -889,6 +1447,108 @@ public sealed partial class BoardService
     }
 
     /// <summary>
+    /// 用原生 AI 对象原子替换原笔画：一次撤销内删除笔画并插入文本/公式对象。
+    /// 笔画列表为空表示替换当前页全部笔画；没有可删除笔画或对象无效时返回空（调用方回退为仅插入）。
+    /// </summary>
+    public IReadOnlyList<Guid> ReplaceStrokesWithAiObjectsAtomic(
+        IReadOnlyList<InkStroke> strokesToRemove,
+        IReadOnlyList<BoardTextObject> texts,
+        IReadOnlyList<BoardFormulaObject> formulas,
+        string actionName,
+        string groupId = null)
+    {
+        var insertedTexts = new List<BoardTextObject>();
+        foreach (BoardTextObject text in texts ?? Array.Empty<BoardTextObject>())
+        {
+            if (text is null) continue;
+            BoardAiObjectSerialization.Normalize(text);
+            if (BoardAiObjectSerialization.IsValid(text)) insertedTexts.Add(text);
+        }
+
+        var insertedFormulas = new List<BoardFormulaObject>();
+        foreach (BoardFormulaObject formula in formulas ?? Array.Empty<BoardFormulaObject>())
+        {
+            if (formula is null) continue;
+            BoardAiObjectSerialization.Normalize(formula);
+            if (BoardAiObjectSerialization.IsValid(formula)) insertedFormulas.Add(formula);
+        }
+
+        if (insertedTexts.Count + insertedFormulas.Count == 0) return Array.Empty<Guid>();
+
+        var page = Current;
+        int pageIndex = CurrentIndex;
+        var document = page.Document;
+        var pageTexts = _textObjects[CurrentIndex];
+        var pageFormulas = _formulaObjects[CurrentIndex];
+
+        InkStroke[] removed = strokesToRemove is { Count: > 0 }
+            ? strokesToRemove
+                .Where(stroke => stroke is not null && document.Strokes.Contains(stroke))
+                .Distinct()
+                .ToArray()
+            : document.Strokes.ToArray();
+        if (removed.Length == 0) return Array.Empty<Guid>();
+
+        var removedSet = new HashSet<InkStroke>(removed);
+        (int Index, InkStroke Stroke)[] indexed = document.Strokes
+            .Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => removedSet.Contains(item.Stroke))
+            .ToArray();
+
+        int textStart = pageTexts.Count;
+        int formulaStart = pageFormulas.Count;
+        AdaptDefaultAiInkToBackground(_papers[page], insertedTexts, insertedFormulas);
+        string group = string.IsNullOrWhiteSpace(groupId) ? Guid.NewGuid().ToString("N") : groupId.Trim();
+        long layerOrder = page.NextLayerOrder();
+        foreach (BoardTextObject text in insertedTexts)
+        {
+            text.Attach(this, page);
+            text.GroupId = group;
+            text.LayerOrder = layerOrder++;
+        }
+        foreach (BoardFormulaObject formula in insertedFormulas)
+        {
+            formula.Attach(this, page);
+            formula.GroupId = group;
+            formula.LayerOrder = layerOrder++;
+        }
+
+        void Apply()
+        {
+            document.RemoveAll(removed);
+            int textAt = Math.Clamp(textStart, 0, pageTexts.Count);
+            foreach (BoardTextObject text in insertedTexts)
+                if (!pageTexts.Contains(text)) pageTexts.Insert(textAt++, text);
+            int formulaAt = Math.Clamp(formulaStart, 0, pageFormulas.Count);
+            foreach (BoardFormulaObject formula in insertedFormulas)
+                if (!pageFormulas.Contains(formula)) pageFormulas.Insert(formulaAt++, formula);
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("replace", pageIndex, Array.Empty<BoardImageAsset>(), removed,
+                insertedTexts, insertedFormulas);
+        }
+
+        void Revert()
+        {
+            foreach (BoardTextObject text in insertedTexts) pageTexts.Remove(text);
+            foreach (BoardFormulaObject formula in insertedFormulas) pageFormulas.Remove(formula);
+            document.InsertRange(indexed.Select(item => (item.Index, item.Stroke)));
+            ImagesChanged?.Invoke();
+            RaiseAiObjectsChanged("remove", pageIndex, Array.Empty<BoardImageAsset>(), null,
+                insertedTexts, insertedFormulas);
+        }
+
+        Apply();
+        page.ClearSelection();
+        page.History.Push(new DelegateAction(
+            string.IsNullOrWhiteSpace(actionName) ? "AI 板书替换" : actionName.Trim(),
+            Apply, Revert));
+
+        return insertedTexts.Select(text => text.Id)
+            .Concat(insertedFormulas.Select(formula => formula.Id))
+            .ToArray();
+    }
+
+    /// <summary>
     /// 当前页内容包围盒（笔画 + 图片 + 媒体，世界坐标），语义与
     /// <c>SideBoardWindow.CurrentPageContentBounds</c> 一致；图片/媒体按轴对齐矩形计，
     /// 不含旋转后的精确外接框。空页返回 <see cref="Rect.Empty"/>。
@@ -917,6 +1577,18 @@ public sealed partial class BoardService
         {
             if (media.Width <= 0 || media.Height <= 0) continue;
             bounds = bounds.Union(new Rect(media.Left, media.Top, media.Left + media.Width, media.Top + media.Height));
+        }
+
+        foreach (BoardTextObject text in _textObjects[pageIndex])
+        {
+            if (text.Width <= 0 || text.Height <= 0) continue;
+            bounds = bounds.Union(text.Bounds);
+        }
+
+        foreach (BoardFormulaObject formula in _formulaObjects[pageIndex])
+        {
+            if (formula.Width <= 0 || formula.Height <= 0) continue;
+            bounds = bounds.Union(formula.Bounds);
         }
 
         return bounds;
@@ -949,6 +1621,18 @@ public sealed partial class BoardService
         {
             if (media.Width <= 0 || media.Height <= 0) continue;
             bounds = bounds.Union(new Rect(media.Left, media.Top, media.Left + media.Width, media.Top + media.Height));
+        }
+
+        foreach (BoardTextObject text in _textObjects[CurrentIndex])
+        {
+            if (text.Width <= 0 || text.Height <= 0) continue;
+            bounds = bounds.Union(text.Bounds);
+        }
+
+        foreach (BoardFormulaObject formula in _formulaObjects[CurrentIndex])
+        {
+            if (formula.Width <= 0 || formula.Height <= 0) continue;
+            bounds = bounds.Union(formula.Bounds);
         }
 
         return bounds;
@@ -1128,6 +1812,8 @@ public sealed partial class BoardService
         _papers.Clear();
         _images.Clear();
         _media.Clear();
+        _textObjects.Clear();
+        _formulaObjects.Clear();
         _states.Clear();
         _selectionElements.Clear();
         foreach (var page in loadedPages)
@@ -1141,6 +1827,12 @@ public sealed partial class BoardService
             _papers.Add(controller, page.Paper);
             _images.Add(page.Images);
             _media.Add(page.Media);
+            var texts = page.TextObjects ?? new List<BoardTextObject>();
+            var formulas = page.FormulaObjects ?? new List<BoardFormulaObject>();
+            foreach (BoardTextObject text in texts) text.Attach(this, controller);
+            foreach (BoardFormulaObject formula in formulas) formula.Attach(this, controller);
+            _textObjects.Add(texts);
+            _formulaObjects.Add(formulas);
             _states.Add(new BoardPageState
             {
                 Name = string.IsNullOrWhiteSpace(page.Name) ? $"页面 {_states.Count + 1}" : page.Name,
@@ -1156,15 +1848,27 @@ public sealed partial class BoardService
     }
 
     private sealed record PreparedPage(List<InkStroke> Strokes, List<BoardImageAsset> Images, List<BoardMediaAsset> Media, BoardPaper Paper,
-        string Name = null, float[] ViewTransform = null);
+        string Name = null, float[] ViewTransform = null,
+        List<BoardTextObject> TextObjects = null, List<BoardFormulaObject> FormulaObjects = null);
 
     private static PreparedPage PreparePage(BoardPageFile page, BoardPaper fallback)
     {
         var strokes = (page.Strokes ?? new()).Select(FromStrokeFile).ToList();
         ShapeSource.ShareDefinitions(strokes);
+        var texts = (page.TextObjects ?? new()).Select(BoardAiObjectSerialization.FromFile)
+            .Where(BoardAiObjectSerialization.IsValid).ToList();
+        var formulas = (page.FormulaObjects ?? new()).Select(BoardAiObjectSerialization.FromFile)
+            .Where(BoardAiObjectSerialization.IsValid).ToList();
+        long nextLayer = strokes.Count == 0 ? 0 : strokes.Max(stroke => stroke.LayerOrder ?? 0) + 1;
+        foreach (BoardTextObject text in texts)
+            if (text.LayerOrder is null) text.LayerOrder = nextLayer++;
+        foreach (BoardFormulaObject formula in formulas)
+            if (formula.LayerOrder is null) formula.LayerOrder = nextLayer++;
+        var paper = ReadPaper(page.Background, page.GridSpacing, fallback);
+        AdaptDefaultAiInkToBackground(paper, texts, formulas);
         return new(strokes, (page.Images ?? new()).Where(IsValidImage).ToList(),
-            (page.Media ?? new()).Where(IsValidMedia).ToList(), ReadPaper(page.Background, page.GridSpacing, fallback),
-            page.Name, page.ViewTransform);
+            (page.Media ?? new()).Where(IsValidMedia).ToList(), paper,
+            page.Name, page.ViewTransform, texts, formulas);
     }
 
     private static BoardPaper ReadPaper(string background, float? spacing, BoardPaper fallback) => new(
@@ -1183,6 +1887,12 @@ public sealed partial class BoardService
         controller.Document.AddRange(page.Strokes);
         _images[index] = page.Images;
         _media[index] = page.Media;
+        var texts = page.TextObjects ?? new List<BoardTextObject>();
+        var formulas = page.FormulaObjects ?? new List<BoardFormulaObject>();
+        foreach (BoardTextObject text in texts) text.Attach(this, controller);
+        foreach (BoardFormulaObject formula in formulas) formula.Attach(this, controller);
+        _textObjects[index] = texts;
+        _formulaObjects[index] = formulas;
         _papers[controller] = page.Paper;
 
         if (!string.IsNullOrWhiteSpace(page.Name)) _states[index].Name = page.Name;
@@ -1200,6 +1910,8 @@ public sealed partial class BoardService
         _pages.Insert(index, page);
         _images.Insert(index, new List<BoardImageAsset>());
         _media.Insert(index, new List<BoardMediaAsset>());
+        _textObjects.Insert(index, new List<BoardTextObject>());
+        _formulaObjects.Insert(index, new List<BoardFormulaObject>());
         _states.Insert(index, new BoardPageState
         {
             Name = NextPageName(),
@@ -1224,6 +1936,14 @@ public sealed partial class BoardService
         var media = _media[fromIndex];
         _media.RemoveAt(fromIndex);
         _media.Insert(toIndex, media);
+
+        var texts = _textObjects[fromIndex];
+        _textObjects.RemoveAt(fromIndex);
+        _textObjects.Insert(toIndex, texts);
+
+        var formulas = _formulaObjects[fromIndex];
+        _formulaObjects.RemoveAt(fromIndex);
+        _formulaObjects.Insert(toIndex, formulas);
 
         var state = _states[fromIndex];
         _states.RemoveAt(fromIndex);
@@ -1288,15 +2008,60 @@ public sealed partial class BoardService
         return AiPasteMetadata.TryParse(image.Metadata) is not null;
     }
 
-    private void RaiseAiObjectsChanged(string action, int pageIndex,
-        IReadOnlyList<BoardImageAsset> objects, IReadOnlyList<InkStroke> removedStrokes = null)
+    private const string DefaultDarkAiInk = "#FF202024";
+    private const string DefaultLightAiInk = "#FFF5F5F8";
+
+    /// <summary>
+    /// AI 写入使用统一默认墨色；在黑板/绿板等深色页面上把默认深色字切换为浅色，
+    /// 避免“对象存在、选择框可见但字不可见”。只替换 AI 的默认色，不覆盖用户自选颜色。
+    /// </summary>
+    private static void AdaptDefaultAiInkToBackground(BoardPaper paper,
+        IReadOnlyList<BoardTextObject> texts, IReadOnlyList<BoardFormulaObject> formulas)
     {
-        if (objects is null || objects.Count == 0) return;
+        bool darkBackground = paper.Background is BoardBackground.Black or BoardBackground.Green;
+        string source = darkBackground ? DefaultDarkAiInk : DefaultLightAiInk;
+        string target = darkBackground ? DefaultLightAiInk : DefaultDarkAiInk;
+        int changed = 0;
+        foreach (BoardTextObject text in texts)
+        {
+            if (!string.Equals(text.Source, "ai", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsDefaultInk(text.Color, source)) { text.Color = target; changed++; }
+        }
+        foreach (BoardFormulaObject formula in formulas)
+        {
+            if (!string.Equals(formula.Source, "ai", StringComparison.OrdinalIgnoreCase)) continue;
+            if (IsDefaultInk(formula.Color, source)) { formula.Color = target; changed++; }
+        }
+        if (changed > 0)
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书对象墨色适配背景：background={paper.Background}，changed={changed}，"
+                + $"target={target}", InkCanvas.Core.Diagnostics.LogType.Trace);
+    }
+
+    private static bool IsDefaultInk(string color, string expected)
+    {
+        string actual = (color ?? "").Trim().TrimStart('#');
+        return string.Equals(actual, expected.TrimStart('#'), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RaiseAiObjectsChanged(string action, int pageIndex,
+        IReadOnlyList<BoardImageAsset> objects,
+        IReadOnlyList<InkStroke> removedStrokes = null,
+        IReadOnlyList<BoardTextObject> texts = null,
+        IReadOnlyList<BoardFormulaObject> formulas = null)
+    {
+        var imageSnapshot = objects?.Where(item => item is not null).ToArray() ?? Array.Empty<BoardImageAsset>();
+        var textSnapshot = texts?.Where(item => item is not null).ToArray() ?? Array.Empty<BoardTextObject>();
+        var formulaSnapshot = formulas?.Where(item => item is not null).ToArray() ?? Array.Empty<BoardFormulaObject>();
+        if (imageSnapshot.Length + textSnapshot.Length + formulaSnapshot.Length == 0) return;
+
         AiObjectsChanged?.Invoke(new BoardAiObjectChange
         {
             Action = action,
             PageIndex = pageIndex,
-            Objects = objects.ToArray(),
+            Objects = imageSnapshot,
+            Texts = textSnapshot,
+            Formulas = formulaSnapshot,
             RemovedStrokes = removedStrokes ?? Array.Empty<InkStroke>(),
         });
     }
@@ -1389,6 +2154,12 @@ public sealed partial class BoardService
         public List<StrokeFile> Strokes { get; set; } = new();
         public List<BoardImageAsset> Images { get; set; } = new();
         public List<BoardMediaAsset> Media { get; set; } = new();
+
+        /// <summary>Optional since v4: absent in older files, treated as empty.</summary>
+        public List<BoardTextObjectFile> TextObjects { get; set; } = new();
+
+        /// <summary>Optional since v4: absent in older files, treated as empty.</summary>
+        public List<BoardFormulaObjectFile> FormulaObjects { get; set; } = new();
     }
 
     private sealed class BoardSideFile

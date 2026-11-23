@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.Board.AiObjects;
 
 namespace InkCanvas.Features.Board;
 
@@ -77,7 +78,9 @@ public sealed partial class BoardService
             _pages[index].Document.Strokes.Select(stroke => stroke.Clone()).ToList(),
             _images[index].Select(image => image.Copy(copyData: false)).ToList(),
             _media[index].Select(media => media.Copy(copyData: false)).ToList(), _papers[_pages[index]],
-            _states[index].Name, ToTransformArray(_pages[index].ViewTransform))).ToList());
+            _states[index].Name, ToTransformArray(_pages[index].ViewTransform),
+            _textObjects[index].Select(text => text.Copy()).ToList(),
+            _formulaObjects[index].Select(formula => formula.Copy()).ToList())).ToList());
 
     private SideBoardSnapshot CaptureSideSnapshot()
     {
@@ -92,6 +95,8 @@ public sealed partial class BoardService
         Background = page.Paper.Background.ToString(), GridSpacing = page.Paper.GridSpacing,
         ViewTransform = page.ViewTransform,
         Strokes = page.Strokes.Select(ToStrokeFile).ToList(), Images = page.Images, Media = page.Media,
+        TextObjects = (page.TextObjects ?? new()).Select(BoardAiObjectSerialization.ToFile).ToList(),
+        FormulaObjects = (page.FormulaObjects ?? new()).Select(BoardAiObjectSerialization.ToFile).ToList(),
     };
 
     private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, SideBoardSnapshot side, CancellationToken cancellationToken,
@@ -380,6 +385,7 @@ public sealed partial class BoardService
         foreach (var page in model.Pages)
         {
             page.Images ??= new(); page.Media ??= new();
+            page.TextObjects ??= new(); page.FormulaObjects ??= new();
         }
         ValidateSideBoard(model);
     }
@@ -393,6 +399,6 @@ public sealed partial class BoardService
         if (model.SideBoard.Pages.Count == 0) model.SideBoard.Pages.Add(new());
         if (model.SideBoard.Pages.Any(page => page is null))
             throw new InvalidDataException("板中板页面无效。");
-        foreach (var page in model.SideBoard.Pages) { page.Images ??= new(); page.Media ??= new(); }
+        foreach (var page in model.SideBoard.Pages) { page.Images ??= new(); page.Media ??= new(); page.TextObjects ??= new(); page.FormulaObjects ??= new(); }
     }
 }

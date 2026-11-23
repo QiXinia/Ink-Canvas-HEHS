@@ -62,7 +62,7 @@ public static class BoardPageRenderer
         {
             BoardPageInfo info = board.GetPageInfo(pageIndex);
             InkController controller = info.Controller;
-            Rect bounds = ContentBounds(board, controller, info.Images, info.Media);
+            Rect bounds = ContentBounds(board, controller, info.Images, info.Media, info.TextObjects, info.FormulaObjects);
             if (bounds.IsEmpty)
                 return Fail("画板页内容包围盒为空。");
 
@@ -108,6 +108,10 @@ public static class BoardPageRenderer
                 {
                     if (item.Stroke is { } stroke)
                         renderer.Strokes.Draw(session, stroke, view);
+                    else if (item.Element is IBoardTextElement text)
+                        renderer.TextObjects.Draw(session, text, view);
+                    else if (item.Element is IBoardFormulaElement formula)
+                        renderer.Formulas.Draw(session, formula, view);
                     else if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image)
                         renderer.Images.Draw(session, image, view);
                 }
@@ -141,7 +145,9 @@ public static class BoardPageRenderer
 
     private static Rect ContentBounds(
         BoardService board, InkController controller,
-        IReadOnlyList<BoardImageAsset> images, IReadOnlyList<BoardMediaAsset> media)
+        IReadOnlyList<BoardImageAsset> images, IReadOnlyList<BoardMediaAsset> media,
+        IReadOnlyList<AiObjects.BoardTextObject> textObjects = null,
+        IReadOnlyList<AiObjects.BoardFormulaObject> formulaObjects = null)
     {
         Rect bounds = Rect.Empty;
         foreach (InkStroke stroke in controller.Document.Strokes)
@@ -157,6 +163,18 @@ public static class BoardPageRenderer
         {
             if (item.PosterData is not { Length: > 0 } || item.Width <= 0 || item.Height <= 0) continue;
             bounds = bounds.Union(new BoardSelectionElement(board, item, controller).Bounds);
+        }
+
+        foreach (AiObjects.BoardTextObject text in textObjects ?? Array.Empty<AiObjects.BoardTextObject>())
+        {
+            if (text.Width <= 0 || text.Height <= 0) continue;
+            bounds = bounds.Union(text.Bounds);
+        }
+
+        foreach (AiObjects.BoardFormulaObject formula in formulaObjects ?? Array.Empty<AiObjects.BoardFormulaObject>())
+        {
+            if (formula.Width <= 0 || formula.Height <= 0) continue;
+            bounds = bounds.Union(formula.Bounds);
         }
 
         return bounds;

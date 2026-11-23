@@ -11,6 +11,7 @@ public sealed class CommittedInkLayer : IDisposable
     {
         public bool Moving;
         public IImageSelectionElement Image;
+        public ISelectionElement Element;
         public readonly List<InkStroke> Strokes = new();
         public readonly List<InkCanvas.Core.Ink.Rect> Bounds = new();
         public readonly Dictionary<(int X, int Y), List<int>> TileStrokes = new();
@@ -96,11 +97,19 @@ public sealed class CommittedInkLayer : IDisposable
                     _runs.Add(new Run { Image = image });
                     continue;
                 }
+                // Native text/formula objects are vector elements: keep each as its own ordered run so
+                // the tiled ink/image path never drops them (they used to be skipped here entirely).
+                if (item.Element is IBoardTextElement or IBoardFormulaElement)
+                {
+                    _runs.Add(new Run { Element = item.Element });
+                    continue;
+                }
                 if (item.Stroke is not { } stroke) continue;
                 if (controller.Playback?.Includes(stroke) == true || controller.IsAnimatingDot(stroke)
                     || controller.IsRecognitionPreviewSource(stroke)) continue;
                 bool moving = controller.IsPreviewStroke(stroke);
-                if (_runs.Count == 0 || _runs[^1].Image is not null || _runs[^1].Moving != moving) _runs.Add(new Run { Moving = moving });
+                if (_runs.Count == 0 || _runs[^1].Image is not null || _runs[^1].Element is not null || _runs[^1].Moving != moving)
+                    _runs.Add(new Run { Moving = moving });
                 _runs[^1].Strokes.Add(stroke);
                 var bounds = TransformBounds(stroke.Bounds, _linear * Matrix3x2.CreateTranslation(_rasterOffset));
                 _runs[^1].Bounds.Add(bounds);
@@ -123,6 +132,11 @@ public sealed class CommittedInkLayer : IDisposable
             if (run.Image is not null)
             {
                 scene.Images.Draw(session, run.Image, view, viewport);
+                continue;
+            }
+            if (run.Element is not null)
+            {
+                scene.DrawElement(session, controller, run.Element, view);
                 continue;
             }
             var runView = run.Moving ? controller.SelectionPreviewTransform * view : view;

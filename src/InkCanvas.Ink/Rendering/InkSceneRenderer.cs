@@ -1,3 +1,4 @@
+using InkCanvas.Core.Diagnostics;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Selection;
 using Microsoft.Graphics.Canvas;
@@ -21,11 +22,73 @@ public sealed class InkSceneRenderer : IDisposable
     public StrokeRenderer Strokes { get; } = new();
     private readonly StrokeRenderer _extensionStrokes = new();
     public ImageSceneRenderer Images { get; }
+    public AiTextSceneRenderer TextObjects { get; } = new();
+    public FormulaSceneRenderer Formulas { get; } = new();
 
     public InkSceneRenderer() : this(0) { }
     public InkSceneRenderer(uint maximumImageDimension) => Images = new() { MaximumDecodeDimension = maximumImageDimension };
 
     public bool ShowSelectionOutline { get; set; } = true;
+
+    private readonly HashSet<Guid> _loggedElementDraws = new();
+    private readonly HashSet<InkController> _loggedPageSummaries = new();
+
+    /// <summary>
+    /// Draws one ordered native text/formula run. The tiled <see cref="CommittedInkLayer"/> uses this
+    /// instead of its stroke-only path; every element logs once at its first real canvas draw.
+    /// </summary>
+    public void DrawElement(CanvasDrawingSession session, InkController controller, ISelectionElement element, Matrix3x2 view)
+    {
+        if (element is null || !element.IsPresent || controller is null) return;
+        if (element is IBoardTextElement text)
+        {
+            LogFirstElementDraw(controller, element);
+            TextObjects.Draw(session, text, view);
+        }
+        else if (element is IBoardFormulaElement formula)
+        {
+            LogFirstElementDraw(controller, element);
+            Formulas.Draw(session, formula, view);
+        }
+    }
+
+    private void LogFirstElementDraw(InkController controller, ISelectionElement element)
+    {
+        if (_loggedPageSummaries.Add(controller))
+        {
+            var objects = controller.DrawingObjects;
+            int texts = objects.Count(item => item.Element is IBoardTextElement);
+            int formulas = objects.Count(item => item.Element is IBoardFormulaElement);
+            int images = objects.Count(item => item.Element is IImageSelectionElement);
+            int strokes = objects.Count(item => item.Stroke is not null);
+            FileLog.WriteLogToFile(
+                $"[AI] 画布绘制页摘要：page={controller.GetHashCode():X8} texts={texts} "
+                + $"formulas={formulas} images={images} strokes={strokes}",
+                LogType.Trace);
+        }
+        if (!_loggedElementDraws.Add(element.Id)) return;
+        var frame = element.Frame;
+        string detail = element switch
+        {
+            IBoardTextElement text => $"kind=text type={text.Type} chars={text.Content?.Length ?? 0} "
+                + $"font={text.FontFamily} fontSize={text.FontSize:0.#} lineHeight={text.LineHeight:0.##} "
+                + $"align={text.Align} color={text.Color}",
+            IBoardFormulaElement formula => $"kind=formula latex={Shorten(formula.Latex)} "
+                + $"font={formula.FontFamily} fontSize={formula.FontSize:0.#} color={formula.Color}",
+            _ => "kind=other",
+        };
+        FileLog.WriteLogToFile(
+            $"[AI] 画布元素绘制入口：page={controller.GetHashCode():X8} id={element.Id} "
+            + $"left={frame.Bounds.Left:0.##} top={frame.Bounds.Top:0.##} "
+            + $"w={frame.Bounds.Width:0.##} h={frame.Bounds.Height:0.##} {detail}",
+            LogType.Trace);
+    }
+
+    private static string Shorten(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "(空)";
+        return text.Length <= 80 ? text : text[..80] + "…";
+    }
 
     /// <summary>Everything that only changes when the document, selection or view changes.</summary>
     public void DrawCommitted(CanvasDrawingSession session, InkController controller, Matrix3x2? transformOverride = null)
@@ -33,13 +96,21 @@ public sealed class InkSceneRenderer : IDisposable
         if (controller is null) return;
         var view = transformOverride ?? controller.ViewTransform;
         Images.Retain(controller);
+        var elements = controller.DrawingObjects.Select(item => item.Element).ToArray();
+        TextObjects.Retain(elements.OfType<IBoardTextElement>());
+        Formulas.Retain(elements.OfType<IBoardFormulaElement>());
         foreach (var item in controller.DrawingObjects) DrawObject(session, controller, item, view);
 
     }
 
     public void DrawObject(CanvasDrawingSession session, InkController controller, DrawingObject item, Matrix3x2 view)
     {
-        if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image) Images.Draw(session, image, view);
+        if (item.Element is IBoardTextElement text)
+            TextObjects.Draw(session, text, view);
+        else if (item.Element is IBoardFormulaElement formula)
+            Formulas.Draw(session, formula, view);
+        else if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image)
+            Images.Draw(session, image, view);
         if (item.Stroke is { } stroke && controller.Playback?.Includes(stroke) != true && !controller.IsAnimatingDot(stroke)
             && !controller.IsRecognitionPreviewSource(stroke))
             Strokes.Draw(session, stroke, controller.IsPreviewStroke(stroke) ? controller.SelectionPreviewTransform * view : view);
@@ -211,6 +282,23 @@ public sealed class InkSceneRenderer : IDisposable
         foreach (var s in strokes) Strokes.Invalidate(s);
     }
 
-    public void ReleaseResources() { Images.Clear(); Strokes.InvalidateAll(); _extensionStrokes.InvalidateAll(); }
-    public void Dispose() { Images.Dispose(); Strokes.Dispose(); _extensionStrokes.Dispose(); }
+    public void ReleaseResources()
+    {
+        Images.Clear();
+        TextObjects.Clear();
+        Formulas.Clear();
+        _loggedElementDraws.Clear();
+        _loggedPageSummaries.Clear();
+        Strokes.InvalidateAll();
+        _extensionStrokes.InvalidateAll();
+    }
+
+    public void Dispose()
+    {
+        Images.Dispose();
+        TextObjects.Dispose();
+        Formulas.Dispose();
+        Strokes.Dispose();
+        _extensionStrokes.Dispose();
+    }
 }
