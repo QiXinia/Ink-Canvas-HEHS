@@ -189,16 +189,28 @@ internal static class CustomColorsRegression
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, new object[] { pdfPath, 2 });
             await shell.OpenPdfAsync(pdfPath); await Task.Delay(100);
             var workspace = shell.OpenWindows.OfType<IDocumentWorkspace>().Single();
+            workspace.Window.Activate();
+            NativeMethods.SetForegroundWindow(WindowChrome.GetHwnd(workspace.Window));
+            await Task.Delay(250);
+            bool suppliedPdfForeground = NativeMethods.GetForegroundWindow() != WindowChrome.GetHwnd(workspace.Window);
+            if (suppliedPdfForeground) shell.RefreshDocumentTarget(WindowChrome.GetHwnd(workspace.Window));
+            checks.Add(new { check = "PDF palette uses the document toolbar target",
+                passed = ReferenceEquals(shell.OpenWindows.OfType<FloatingBarWindow>().Single().Bar.Controller, workspace.Controller),
+                foregroundContextSuppliedByTest = suppliedPdfForeground });
             shell.OpenPenPalette(false); await Task.Delay(80);
             var pdfPalette = shell.OpenWindows.OfType<PenPaletteWindow>().Single();
             Invoke(Button(pdfPalette.Content, "添加自定义颜色"));
             var pdfEditor = await Editor();
             Descendants(pdfEditor.Content).OfType<ColorPicker>().Single().Color = Windows.UI.Color.FromArgb(255, 233, 50, 100);
+            await Task.Delay(80);
             Invoke(Button(pdfEditor.Content, "保存自定义颜色"));
-            await Wait(() => !shell.OpenWindows.Contains(pdfPalette));
-            Check("PDF annotation edits and persists the shared custom palette",
-                workspace.Controller.CurrentAttributes.Color.PackedArgb == 0xffe93264 && services.Store.Load().Canvas.PenColor == 0xffe93264
-                && services.Store.Load().Canvas.CustomColors.Last() == 0xffe93264);
+            await Wait(() => services.Settings.Canvas.CustomColors.LastOrDefault() == 0xffe93264);
+            checks.Add(new { check = "PDF annotation edits and persists the shared custom palette",
+                passed = workspace.Controller.CurrentAttributes.Color.PackedArgb == 0xffe93264 && services.Store.Load().Canvas.PenColor == 0xffe93264
+                    && services.Store.Load().Canvas.CustomColors.Last() == 0xffe93264,
+                actual = workspace.Controller.CurrentAttributes.Color.PackedArgb, stored = services.Store.Load().Canvas.PenColor,
+                overlay = services.OverlayInk.CurrentAttributes.Color.PackedArgb, custom = services.Store.Load().Canvas.CustomColors.Last(),
+                documentTarget = ReferenceEquals(shell.OpenWindows.OfType<FloatingBarWindow>().Single().Bar.Controller, workspace.Controller) });
             workspace.Window.Close();
         }
         catch (Exception error) { checks.Add(new { check = "custom colours exception", passed = false, error = error.ToString() }); }

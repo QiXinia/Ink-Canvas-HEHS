@@ -5,6 +5,7 @@ using InkCanvas.Controls.Controls;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Selection;
 using InkCanvas.Host.Contracts;
+using InkCanvas.Platform.Interop;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -93,6 +94,13 @@ internal static class SelectionPaletteRegression
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, new object[] { file, 2 });
             await shell.OpenPdfAsync(file); await Task.Delay(100);
             var workspace = shell.OpenWindows.OfType<IDocumentWorkspace>().Single();
+            workspace.Window.Activate();
+            NativeMethods.SetForegroundWindow(WindowChrome.GetHwnd(workspace.Window));
+            await Task.Delay(250);
+            bool suppliedPdfForeground = NativeMethods.GetForegroundWindow() != WindowChrome.GetHwnd(workspace.Window);
+            if (suppliedPdfForeground) shell.RefreshDocumentTarget(WindowChrome.GetHwnd(workspace.Window));
+            checks.Add(new { check = "PDF selection uses the document toolbar target",
+                passed = ReferenceEquals(bar.Bar.Controller, workspace.Controller), foregroundContextSuppliedByTest = suppliedPdfForeground });
             workspace.Controller.Tool = Ink.InkTool.Pen;
             workspace.Controller.Document.Add(Stroke());
             Invoke((Button)bar.Bar.GetToolButton(Ink.InkTool.Select));
