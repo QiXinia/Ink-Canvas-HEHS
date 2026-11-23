@@ -50,10 +50,12 @@ public sealed class AppServices : IDisposable
         AutoSave = new AutoSaveService(Settings.Automation);
         Lottery = new LotteryService();
         LotteryMemory = new LotteryMemoryStore(Lottery, Store.Directory);
+        BoardResume = new BoardResumeService(Board, Store.Directory, () => Settings.Resume.Whiteboard);
         ApplySettings();
     }
 
     public SettingsStore Store { get; }
+    public BoardResumeService BoardResume { get; }
     public UpdateCache UpdateCache { get; }
     public ExtensionInstallStore ExtensionInstalls { get; }
     public ExtensionUpdateCoordinator ExtensionUpdates { get; }
@@ -148,6 +150,9 @@ public sealed class AppServices : IDisposable
         Settings.Canvas.InkWashWidth = double.IsFinite(Settings.Canvas.InkWashWidth) ? Math.Clamp(Settings.Canvas.InkWashWidth, 1, 120) : 30;
         Settings.Storage ??= new();
         Settings.Archive ??= new();
+        Settings.Resume ??= new();
+        Settings.Resume.Whiteboard = ResumeStore.Normalize(Settings.Resume.Whiteboard);
+        Settings.Resume.Pdf = ResumeStore.Normalize(Settings.Resume.Pdf);
         Settings.Archive.AutoSaveMinutes = Math.Clamp(Settings.Archive.AutoSaveMinutes, 1, 120);
         Settings.Archive.AutomaticCopiesToKeep = Math.Clamp(Settings.Archive.AutomaticCopiesToKeep, 1, 200);
         Settings.Archive.ScreenCapture.IntervalMinutes = Math.Clamp(Settings.Archive.ScreenCapture.IntervalMinutes, 1, 120);
@@ -270,6 +275,7 @@ public sealed class AppServices : IDisposable
 
     public void Dispose()
     {
+        BoardResume.Dispose();
         ExtensionUpdates.Dispose();
         Archives.Dispose();
         ScreenArchives.Dispose();

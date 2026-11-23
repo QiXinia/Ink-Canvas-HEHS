@@ -1449,6 +1449,7 @@ public sealed partial class BoardWindow : Window
         if (_closed || _archiveClosing || CurrentController.HasActiveInteraction) return false;
         try
         {
+            await _services.BoardResume.SaveAsync();
             await SaveArchiveBeforeCloseAsync("退出白板");
             if (_closed) return false;
             CurrentController.EndPlayback();
@@ -1468,7 +1469,7 @@ public sealed partial class BoardWindow : Window
         }
     }
 
-    internal void CloseForShutdown() => base.Close();
+    internal void CloseForShutdown() { _archiveCloseApproved = true; base.Close(); }
 
     private void RefreshBackground()
     {

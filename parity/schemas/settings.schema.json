@@ -4,6 +4,14 @@
   "title": "settings",
   "type": "object",
   "properties": {
+    "resume": {
+      "type": "object",
+      "properties": {
+        "whiteboard": { "type": "integer", "enum": [0, 1, 2], "default": 2 },
+        "pdf": { "type": "integer", "enum": [0, 1, 2], "default": 2 }
+      },
+      "additionalProperties": false
+    },
     "advanced": {
       "type": "object",
       "properties": {

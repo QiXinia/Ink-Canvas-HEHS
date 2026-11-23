@@ -8,7 +8,7 @@ public sealed partial class BoardWindow
 
     private void OnArchiveClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (_archiveCloseApproved && !_services.Archives.HasUnsavedChanges || !_services.Settings.Archive.SaveOnExit) return;
+        if (_archiveCloseApproved) return;
         args.Cancel = true;
         if (_archiveClosing) return;
         DispatcherQueue.TryEnqueue(() => _ = CloseWithArchiveAsync());
@@ -23,7 +23,9 @@ public sealed partial class BoardWindow
         _archiveClosing = true;
         try
         {
+            await _services.BoardResume.SaveAsync();
             await SaveArchiveBeforeCloseAsync("退出白板");
+            _archiveCloseApproved = true;
             base.Close();
             return true;
         }

@@ -144,6 +144,9 @@ public sealed partial class ShellController
         public IAiDocumentBridge DocumentAi => shell._documentAi;
         public Window Owner => shell.DocumentActive ? shell._documentWorkspace.Window : (Window)shell._board ?? shell._bar;
         public Core.Settings.AppSettings Settings => shell.Services.Settings;
+        public string DataDirectory => shell.Services.Store.Directory;
+        public void SavePreferences() => shell.Services.SaveSettings();
+        public void OfferResume(string title, string description, Func<Task> resume, Func<Task> dismiss) => shell.OfferResume(title, description, resume, dismiss);
         public Core.Ink.Rect ToolbarScreenBounds => shell.DesktopToolbarBounds;
         public Features.Board.BoardService Board => shell.Services.Board;
         public void ConfigureWindow(Window window, int width = 1120, int height = 820)

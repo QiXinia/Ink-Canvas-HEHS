@@ -265,6 +265,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             UpdateScrollbar();
             QueuePageRendering();
             _pages.ScrollIntoView(_pages.SelectedItem);
+            ReadingProgressChanged?.Invoke();
         }
         finally { _pageChanging = false; }
     }
@@ -566,6 +567,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
                 if (answer == ContentDialogResult.None) return false;
                 if (answer == ContentDialogResult.Primary && !await SaveAsync()) return false;
             }
+            if (ClosingForResume is not null) await ClosingForResume();
             _allowClose = true; Close(); await Cleanup; return true;
         }
         catch (Exception ex) { SetStatus("关闭失败 · " + ex.Message); return false; }

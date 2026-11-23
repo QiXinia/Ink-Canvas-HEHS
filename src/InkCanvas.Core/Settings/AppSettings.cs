@@ -24,6 +24,7 @@ public sealed class AppSettings
     [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
     [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
     [JsonPropertyName("archive")] public ArchiveSettings Archive { get; set; } = new();
+    [JsonPropertyName("resume")] public ResumeSettings Resume { get; set; } = new();
 
     private AiSettings _ai = new();
 

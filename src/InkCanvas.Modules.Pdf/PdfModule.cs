@@ -12,8 +12,33 @@ public sealed class PdfModule : IApplicationModule
     public void Start(IModuleContext context)
     {
         _service = new PdfWorkspaceService(context.GetService<IDocumentWorkspaceHost>());
+        _service.ConfigureReadingProgress();
         context.RegisterCleanup(_service.Dispose);
         context.Export<IPdfWorkspaceService>(_service);
+        context.Export<IPdfResumeService>(_service);
+        var workspace = context.GetService<IDocumentWorkspaceHost>();
+        context.RegisterCleanup(context.GetService<IModuleSettingsRegistry>().Register(new(
+            "inkcanvas.pdf.settings", "PDF 阅读与批注", "\uF3AD", "PDF 继续 阅读 页码 上次 进度 自动 恢复 提醒",
+            builder =>
+            {
+                builder.AddSection("阅读进度");
+                builder.AddView("PDF 续接方式", () =>
+                {
+                    var combo = new ComboBox { Header = "重新打开 PDF 时", HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 40 };
+                    foreach (string option in new[] { "从第一页开始", "自动回到上次阅读页", "快速提醒" }) combo.Items.Add(option);
+                    combo.SelectedIndex = (int)(workspace.Settings.Resume?.Pdf ?? Core.Settings.ResumeBehavior.Reminder);
+                    combo.SelectionChanged += (_, _) =>
+                    {
+                        if (combo.SelectedIndex < 0) return;
+                        workspace.Settings.Resume ??= new();
+                        workspace.Settings.Resume.Pdf = (Core.Settings.ResumeBehavior)combo.SelectedIndex;
+                        workspace.SavePreferences();
+                        _ = _service.SaveReadingProgressSafelyAsync();
+                    };
+                    return combo;
+                }, "上次阅读页 自动恢复 中断 重启");
+                builder.AddInfo("每份 PDF 分别记忆页码。重启电脑后可自动打开上次文档，或显示 8 秒的继续提醒。忽略或超时后删除对应进度记录。文件被替换或修改时从第一页开始。");
+            })).Dispose);
         _service.RegisterAssistant(context);
     }
     public void Stop() { _service?.Dispose(); _service = null; }
@@ -58,6 +83,10 @@ internal sealed partial class PdfWorkspaceService(IDocumentWorkspaceHost host) :
             window.Closed += (_, _) => { if (ReferenceEquals(_window, window)) _window = null; };
             host.Attach(window);
             window.Activate();
+            window.ReadingProgressChanged += OnReadingProgressChanged;
+            window.Closed += (_, _) => { window.ReadingProgressChanged -= OnReadingProgressChanged; _readingTimer?.Stop(); };
+            window.ClosingForResume = SaveReadingProgressSafelyAsync;
+            await ApplyReadingProgressAsync(window);
         }
         catch (OperationCanceledException) when (reportErrors) { }
         catch (Exception ex) when (reportErrors) { if (!_disposed) await NoticeAsync("打开 PDF 失败", ex.GetBaseException().Message); }
@@ -227,6 +256,7 @@ internal sealed partial class PdfWorkspaceService(IDocumentWorkspaceHost host) :
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        _readingTimer?.Stop();
         _lifetime.Cancel(); CloseOperationWindow(); _window?.ForceClose(); _window = null;
     }
 }

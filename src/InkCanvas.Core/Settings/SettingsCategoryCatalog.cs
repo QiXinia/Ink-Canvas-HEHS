@@ -7,7 +7,7 @@ public static class SettingsCategoryCatalog
 {
     public static IReadOnlyList<SettingsCategory> Pages { get; } = new SettingsCategory[]
     {
-        new("常规", "\uF610", "使用与书写", "启动选项 开机 启动 退出 确认 自动选项 应用兼容"),
+        new("常规", "\uF610", "使用与书写", "启动选项 开机 启动 退出 确认 自动选项 应用兼容 白板 续接 中断 恢复 提醒"),
         new("书写与擦除", "\uF3DD", "使用与书写", "画板选项 画笔 笔尖 笔锋 压感 水墨 荧光笔 橡皮 颜色 色板 自定义 RGB HEX"),
         new("画布与识别", "\uF1E3", "使用与书写", "画板选项 墨迹识别选项 白板 图片 背景 形状识别 对齐 自动选项"),
         new("触控与手势", "\uE6E5", "使用与书写", "手势选项 高级选项 显示器 多屏 红外屏 校准 防误触"),

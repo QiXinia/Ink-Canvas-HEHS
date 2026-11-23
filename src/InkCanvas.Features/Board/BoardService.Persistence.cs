@@ -47,7 +47,10 @@ public sealed partial class BoardService
     public Task SaveBoardArchiveAsync(string path, BoardArchiveMetadata metadata, bool overwrite = true, CancellationToken cancellationToken = default) =>
         QueueSave(path, CaptureSnapshot(Enumerable.Range(0, PageCount), metadata), overwrite, cancellationToken);
 
-    private Task QueueSave(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken)
+    public Task SaveRecoveryAsync(string path, bool currentPageOnly = false, CancellationToken cancellationToken = default) =>
+        QueueSave(path, CaptureSnapshot(currentPageOnly ? new[] { CurrentIndex } : Enumerable.Range(0, PageCount), null), true, cancellationToken, includePreview: false);
+
+    private Task QueueSave(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken, bool includePreview = true)
     {
         var previous = _saveQueue;
         return _saveQueue = SaveAfterPreviousAsync();
@@ -57,7 +60,7 @@ public sealed partial class BoardService
             // Keep request order so an older large snapshot cannot overwrite a newer small one.
             try { await previous.ConfigureAwait(false); }
             catch (Exception) { }
-            await SaveSnapshotAsync(path, snapshot, overwrite, cancellationToken).ConfigureAwait(false);
+            await SaveSnapshotAsync(path, snapshot, overwrite, cancellationToken, includePreview).ConfigureAwait(false);
         }
     }
 
@@ -73,7 +76,7 @@ public sealed partial class BoardService
         new Dictionary<string, byte[]>(_extensions, StringComparer.Ordinal));
     }
 
-    private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken) => Task.Run(async () =>
+    private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken, bool includePreview = true) => Task.Run(async () =>
     {
         cancellationToken.ThrowIfCancellationRequested();
         string destination = Path.GetFullPath(path);
@@ -99,7 +102,7 @@ public sealed partial class BoardService
                 using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
                 {
                     // Covers are optional derived data. A device-loss must never prevent saving editable content.
-                    try
+                    if (includePreview) try
                     {
                         var previewBoard = new BoardService();
                         try

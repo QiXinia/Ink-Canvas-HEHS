@@ -11,6 +11,9 @@ public sealed partial class SettingsWindow
     private void BuildGeneralSettings()
     {
         AddSection("启动行为");
+        _content.Children.Add(ComboRow("重启电脑后的白板续接", new[] { "关闭", "自动恢复", "快速提醒" },
+            () => (int)S.Resume.Whiteboard, value => S.Resume.Whiteboard = (ResumeBehavior)value));
+        _content.Children.Add(InfoRow("快速提醒显示 8 秒，可点击继续。忽略或超时后清除上次留存的恢复进度。PDF 续接在 PDF 插件设置中单独调整。"));
         _content.Children.Add(ToggleRow("开机时运行", () => Platform.System.AutoStartService.IsEnabled(),
             v => Platform.System.AutoStartService.SetEnabled(v, Environment.ProcessPath ?? "InkCanvas.exe")));
         _content.Children.Add(ToggleRow("开机运行后收纳到侧边栏", () => S.Startup.IsFoldAtStartup,

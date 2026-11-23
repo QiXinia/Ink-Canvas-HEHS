@@ -254,6 +254,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window)) yield return window;
             if (_settings is not null) yield return _settings;
             if (_colorEditor is not null) yield return _colorEditor;
+            foreach (var reminder in _resumeReminders) yield return reminder;
             if (_countdown is not null) yield return _countdown;
             if (_lottery is not null) yield return _lottery;
             if (_replay is not null) yield return _replay;
@@ -2236,6 +2237,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 { await NotifyAsync("截图白板存档失败", captureError); return; }
             }
             if (_documentWorkspace is not null && !await _documentWorkspace.CloseAsync()) return;
+            if (!await SaveResumeAsync(force: true))
+            {
+                await NotifyAsync("续接进度保存失败", "请检查用户数据目录的可用空间和写入权限后重试。");
+                return;
+            }
             if (Services.Settings.Archive.SaveOnExit)
             {
                 try
@@ -2278,6 +2284,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        _resumeTimer?.Stop();
+        foreach (var reminder in _resumeReminders.ToArray()) reminder.Close();
         _pptPreviewSource?.Dispose();
         _board?.CloseForShutdown();
         _cachedBoard?.CloseForShutdown();

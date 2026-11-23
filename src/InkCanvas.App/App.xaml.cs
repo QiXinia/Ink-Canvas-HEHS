@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var resumeCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--resumecheck=", StringComparison.Ordinal));
+        if (resumeCheck is not null) { _ = Diagnostics.ResumeRegression.Run(resumeCheck["--resumecheck=".Length..]); return; }
         var selectionPaletteCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--selectionpalettecheck=", StringComparison.Ordinal));
         if (selectionPaletteCheck is not null) { _ = Diagnostics.SelectionPaletteRegression.Run(selectionPaletteCheck["--selectionpalettecheck=".Length..]); return; }
         var customColorsCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--customcolorscheck=", StringComparison.Ordinal));
@@ -250,6 +252,9 @@ public partial class App : Application
             var activationReport = Environment.GetCommandLineArgs().FirstOrDefault(argument => argument.StartsWith("--pdfactivationreport=", StringComparison.Ordinal));
             if (activationReport is not null) _ = Diagnostics.PdfActivationRegression.ObserveAsync(_shell, pdfPath, activationReport["--pdfactivationreport=".Length..]);
         }
+
+        _ = _shell.InitializeResumeAsync(boardArgument is null && pdfArgument is null
+            && !Environment.GetCommandLineArgs().Any(argument => argument is "--board" or "--passthrough"));
 
         // "--board" opens straight into the blackboard, mirroring the original launcher switches.
         foreach (var a in Environment.GetCommandLineArgs())
