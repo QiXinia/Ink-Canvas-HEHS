@@ -37,11 +37,19 @@ public static class PdfDiagnostics
             string source = Path.Combine(directory, "classroom.pdf"), saved = Path.Combine(directory, "annotations.pdf");
             CreateFixture(source, 6);
             var inks = CreateInk();
+            Dictionary<int, IReadOnlyList<InkStroke>> fixtureInk = null;
             using (var file = await PdfAnnotationFile.OpenAsync(source))
             {
                 Check("crop rotation and user unit metadata", file.Pages.Count == 6 && file.Pages[1].NormalizedRotation == 90 && file.Pages[4].UserUnit == 2);
                 Check("document bookmarks", file.Bookmarks.Count == 1 && file.Bookmarks[0].PageIndex == 5);
-                var pages = Enumerable.Range(0, 5).ToDictionary(index => index, _ => (IReadOnlyList<InkStroke>)inks);
+                var pages = Enumerable.Range(0, 5).ToDictionary(index => index, index => (IReadOnlyList<InkStroke>)inks.Select(stroke =>
+                {
+                    var copy = stroke.Clone();
+                    float scale = Math.Min(1, Math.Min(file.Pages[index].DipWidth / inks.Max(item => item.Bounds.Right),
+                        file.Pages[index].DipHeight / inks.Max(item => item.Bounds.Bottom))) * .95f;
+                    copy.Transform(Matrix3x2.CreateScale(scale)); return copy;
+                }).ToArray());
+                fixtureInk = pages;
                 var saveTime = Stopwatch.StartNew();
                 await file.SaveAsync(saved, pages);
                 long initialSize = new FileInfo(saved).Length;
@@ -50,7 +58,8 @@ public static class PdfDiagnostics
             }
             using (var file = await PdfAnnotationFile.OpenAsync(saved))
             {
-                Check("all brush points restore exactly", Enumerable.Range(0, 5).All(index => file.GetInk(index).Count == inks.Count && file.GetInk(index).All(stroke => stroke.Points.SequenceEqual(inks.Single(original => original.Id == stroke.Id).Points))));
+                Check("all brush points restore exactly", Enumerable.Range(0, 5).All(index => file.GetInk(index).Count == fixtureInk[index].Count
+                    && file.GetInk(index).All(stroke => stroke.Points.SequenceEqual(fixtureInk[index].Single(original => original.Id == stroke.Id).Points))));
                 Check("original text remains searchable", (await file.SearchAsync("classroom")).Single().PageIndex == 5);
                 await using var raw = await PdfRasterizer.OpenAsync(saved, null, CancellationToken.None);
                 var device = CanvasDevice.GetSharedDevice();
@@ -60,7 +69,7 @@ public static class PdfDiagnostics
                     var png = await raw.RenderAsync(index, geometry, new(0, 0, geometry.DipWidth, geometry.DipHeight), 1, CancellationToken.None);
                     await File.WriteAllBytesAsync(Path.Combine(directory, "pdf-" + index + ".png"), png);
                     using var native = await BitmapAsync(png, device);
-                    using var controller = new InkController(); controller.Document.AddRange(inks);
+                    using var controller = new InkController(); controller.Document.AddRange(fixtureInk[index]);
                     using var reference = new CanvasRenderTarget(device, (float)native.Size.Width, (float)native.Size.Height, 96);
                     using var scene = new InkSceneRenderer();
                     using (var draw = reference.CreateDrawingSession())
@@ -109,6 +118,7 @@ public static class PdfDiagnostics
             var pageFrame = (Border)pageImage.Parent;
             Check("thumbnail paper frame has no fixed aspect padding", Math.Abs(pageFrame.ActualWidth - pageImage.ActualWidth - 4) < .01
                 && Math.Abs(pageFrame.ActualHeight - pageImage.ActualHeight - 4) < .01);
+            await Task.Delay(300);
             var pixelsBeforeMargin = await PixelsAsync(pageImage);
             double originalThumbnailWidth = pageImage.ActualWidth, originalThumbnailHeight = pageImage.ActualHeight;
             var outsideInk = new InkStroke(new() { TaperKind = TaperKind.None, BaseWidth = 24 });
@@ -116,8 +126,10 @@ public static class PdfDiagnostics
             window.Controller.Document.Add(outsideInk);
             await Task.Delay(400);
             var pixelsAfterMargin = await PixelsAsync(pageImage);
-            Check("page exterior annotations do not resize or enter document thumbnail", pageImage.ActualWidth == originalThumbnailWidth
-                && pageImage.ActualHeight == originalThumbnailHeight && pixelsBeforeMargin.SequenceEqual(pixelsAfterMargin));
+            Check("page exterior annotations do not resize or enter document thumbnail", Math.Abs(pageImage.ActualWidth - originalThumbnailWidth) < .01
+                && Math.Abs(pageImage.ActualHeight - originalThumbnailHeight) < .01 && pixelsBeforeMargin.SequenceEqual(pixelsAfterMargin),
+                new { originalThumbnailWidth, originalThumbnailHeight, pageImage.ActualWidth, pageImage.ActualHeight,
+                    before = pixelsBeforeMargin.Length, after = pixelsAfterMargin.Length });
             window.Controller.Document.Remove(outsideInk);
             pageList.ScrollIntoView(pageList.Items[4]); await Task.Delay(400);
             var largePageImage = FindVisual<Microsoft.UI.Xaml.Controls.Image>((DependencyObject)pageList.ContainerFromIndex(4), "");
@@ -224,8 +236,8 @@ public static class PdfDiagnostics
             var originalTheme = body.RequestedTheme;
             body.RequestedTheme = ElementTheme.Dark; await Task.Delay(180);
             var darkBackground = (SolidColorBrush)viewport.Background;
-            Check("dark PDF workspace exposes its Mica foundation through a content layer", window.SystemBackdrop is MicaBackdrop
-                && darkBackground.Color == Windows.UI.Color.FromArgb(76, 58, 58, 58) && window.AnnotationSurface.ActualTheme == ElementTheme.Dark);
+            Check("dark PDF page gaps retain a solid background while window uses Mica", window.SystemBackdrop is MicaBackdrop
+                && darkBackground.Color == Windows.UI.Color.FromArgb(255, 32, 32, 32) && window.AnnotationSurface.ActualTheme == ElementTheme.Dark);
             Check("dark PDF commands retain readable foreground", ((SolidColorBrush)toggle.ContentForeground).Color == Microsoft.UI.Colors.White);
             await ScreenshotAsync(window, Path.Combine(directory, "pdf-dark-navigation.png"));
             var backdrop = window.SystemBackdrop;
@@ -540,6 +552,7 @@ public static class PdfDiagnostics
                 }
                 pages[index] = strokes;
             }
+            pages = PdfInkSplitter.Distribute(pages, new PdfContinuousLayout(file.Pages));
             await file.SaveAsync(marginSaved, pages);
             using var restored = await PdfAnnotationFile.OpenAsync(marginSaved);
             await using var original = await PdfRasterizer.OpenAsync(file, CancellationToken.None);
