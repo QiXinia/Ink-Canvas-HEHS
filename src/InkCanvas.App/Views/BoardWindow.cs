@@ -625,10 +625,14 @@ public sealed partial class BoardWindow : Window
         if (ShowDetachedPanel(_inkOptionsFlyout)) return;
         if (_inkOptionsFlyout is not null && ReferenceEquals(_activeBoardFlyout, _inkOptionsFlyout)) { DismissBoardFlyout(); return; }
         var palette = _boardPenPalette = new BoardPenPalette(CurrentController, _services.Settings, _boardTheme);
-        palette.EditColorAsync = color => _shell?.EditCustomColorAsync(color) ?? Task.FromResult<InkCanvas.Core.Ink.InkColor?>(null);
+        palette.EditColorAsync = (anchor, color, changed) => _shell?.EditCustomColorAsync(anchor, color, changed) ?? Task.CompletedTask;
         var flyout = new Flyout { Content = palette, Placement = FlyoutPlacementMode.Top };
         palette.SettingsChanged += () => { _services.ApplySettings(); _services.SaveSettings(); };
-        palette.ColorPicked += () => { _services.RememberToolOptions(CurrentController); HideBoardFlyout(flyout); };
+        palette.ColorPicked += () =>
+        {
+            _services.RememberToolOptions(CurrentController);
+            if (!palette.IsEditingColor) HideBoardFlyout(flyout);
+        };
         _inkOptionsFlyout = flyout;
         ShowBoardFlyout(_inkOptionsFlyout, _penCell.Button);
     }
@@ -653,7 +657,8 @@ public sealed partial class BoardWindow : Window
                 _activeBoardHeader = header;
                 panelFlyout.Content = null;
                 var window = new ToolOptionsWindow(this, panelContent, header, () => WindowChrome.GetScreenBounds(this, anchor),
-                    () => _services.Settings.Appearance.BlackboardScale / 100.0, _boardTheme, GetToolbarBounds);
+                    () => _services.Settings.Appearance.BlackboardScale / 100.0, _boardTheme, GetToolbarBounds,
+                    isEditing: () => panelContent is BoardPenPalette palette && palette.IsEditingColor);
                 _toolPanels.Add(flyout, window);
                 SizeChangedEventHandler fit = (_, _) => { DispatcherQueue.TryEnqueue(window.Fit); };
                 _contentRoot.SizeChanged += fit;

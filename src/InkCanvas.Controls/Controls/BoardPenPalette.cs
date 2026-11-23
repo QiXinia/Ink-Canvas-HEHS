@@ -23,6 +23,13 @@ public sealed class BoardPenPalette : UserControl
     private readonly PenStylePicker _styles = new();
     private readonly Slider _width = new() { Minimum = 1, StepFrequency = 1, Width = 106, MinHeight = 0, Height = 28 };
     private bool _refreshingWidth;
+    private readonly PointerSlider _alpha = new()
+    {
+        Minimum = 0, Maximum = 100, StepFrequency = 1, MinHeight = 0, Height = 28,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+    };
+    private readonly TextBlock _alphaValue = new() { TextAlignment = TextAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
+    private bool _refreshingAlpha;
     public event Action SettingsChanged;
     public event Action ColorPicked;
     public PopupHeader Header { get; }
@@ -35,7 +42,7 @@ public sealed class BoardPenPalette : UserControl
         _foreground = new(theme == 2 ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black);
         var columns = new Grid { ColumnSpacing = 12, Padding = new Thickness(12, 10, 12, 12) };
         columns.ColumnDefinitions.Add(new() { Width = new GridLength(268) });
-        columns.ColumnDefinitions.Add(new() { Width = new GridLength(130) });
+        columns.ColumnDefinitions.Add(new() { Width = new GridLength(176) });
         var pen = new StackPanel { Spacing = 6 };
         var options = new Grid { ColumnSpacing = 8, RowSpacing = 4 };
         options.ColumnDefinitions.Add(new() { Width = new GridLength(150) });
@@ -111,16 +118,26 @@ public sealed class BoardPenPalette : UserControl
             NotifySettingsChanged();
         };
         highlighter.Children.Add(highlighterWidth);
-        highlighter.Children.Add(Text("不透明度", 10));
-        var alpha = new Slider { Minimum = 20, Maximum = 240, StepFrequency = 20, Value = Math.Clamp(settings.Canvas.InkAlpha, 20, 240), MinHeight = 0, Height = 28 };
-        AutomationProperties.SetName(alpha, "荧光笔不透明度");
-        alpha.ValueChanged += (_, e) =>
+        var alphaLabel = new Grid();
+        alphaLabel.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        alphaLabel.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        _alphaValue.FontSize = 10;
+        _alphaValue.Foreground = _foreground;
+        Add(alphaLabel, Text("不透明度", 10), 0, 0);
+        Add(alphaLabel, _alphaValue, 0, 1);
+        highlighter.Children.Add(alphaLabel);
+        AutomationProperties.SetName(_alpha, "荧光笔不透明度");
+        AutomationProperties.SetHelpText(_alpha, "范围 0% 到 100%，步长 1%");
+        RefreshAlpha();
+        _alpha.ValueChanged += (_, e) =>
         {
-            settings.Canvas.InkAlpha = (int)e.NewValue;
-            _controller.CurrentAttributes.HighlighterAlpha = (byte)e.NewValue;
+            if (_refreshingAlpha) return;
+            settings.Canvas.InkAlpha = OriginalMenuCatalog.ToStoredHighlighterAlpha(e.NewValue);
+            _controller.CurrentAttributes.HighlighterAlpha = (byte)settings.Canvas.InkAlpha;
+            _alphaValue.Text = e.NewValue.ToString("0") + "%";
             NotifySettingsChanged();
         };
-        highlighter.Children.Add(alpha);
+        highlighter.Children.Add(_alpha);
         highlighter.Children.Add(_highlighterPreview);
         _highlighterColors = new InkColorPalette(settings.Canvas, true, theme == 1, compact: true);
         _highlighterColors.ApplyTheme(theme);
@@ -132,7 +149,7 @@ public sealed class BoardPenPalette : UserControl
         Header = new PopupHeader("墨迹选项", theme);
         content.Children.Add(Header);
         content.Children.Add(columns);
-        Content = new Border { Width = 436, Background = new SolidColorBrush(theme == 2 ? Windows.UI.Color.FromArgb(191, 0, 0, 0) : Windows.UI.Color.FromArgb(191, 255, 255, 255)),
+        Content = new Border { Width = 482, Background = new SolidColorBrush(theme == 2 ? Windows.UI.Color.FromArgb(191, 0, 0, 0) : Windows.UI.Color.FromArgb(191, 255, 255, 255)),
             BorderBrush = Theming.PopupBrushes.ToolPanelBorder(theme), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = content };
         RefreshSwatches();
     }
@@ -160,7 +177,18 @@ public sealed class BoardPenPalette : UserControl
     {
         RefreshNibMode();
         RefreshWidth();
+        RefreshAlpha();
         RefreshSwatches();
+    }
+    private void RefreshAlpha()
+    {
+        _refreshingAlpha = true;
+        try
+        {
+            _alpha.Value = OriginalMenuCatalog.ToHighlighterOpacityPercent(_settings.Canvas.InkAlpha);
+            _alphaValue.Text = _alpha.Value.ToString("0") + "%";
+        }
+        finally { _refreshingAlpha = false; }
     }
     private StackPanel Row(string label, UIElement control)
     {
@@ -168,7 +196,8 @@ public sealed class BoardPenPalette : UserControl
         row.Children.Add(Text(label, 12)); row.Children.Add(control); return row;
     }
     private TextBlock Text(string text, double size) => new() { Text = text, FontSize = size, Foreground = _foreground, VerticalAlignment = VerticalAlignment.Center };
-    public Func<InkColor, Task<InkColor?>> EditColorAsync
+    public bool IsEditingColor => _penColors.IsEditingColor || _highlighterColors.IsEditingColor;
+    public Func<FrameworkElement, InkColor, Action<InkColor>, Task> EditColorAsync
     {
         set { _penColors.EditColorAsync = value; _highlighterColors.EditColorAsync = value; }
     }

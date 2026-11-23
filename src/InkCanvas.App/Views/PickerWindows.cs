@@ -113,7 +113,7 @@ public sealed class PenPaletteWindow : Window
     }
     public Action AttributesChanged { get => _palette.AttributesChanged; set => _palette.AttributesChanged = value; }
     public Action ColorPaletteChanged { get => _palette.ColorPaletteChanged; set => _palette.ColorPaletteChanged = value; }
-    public Func<Core.Ink.InkColor, Task<Core.Ink.InkColor?>> EditColorAsync { get => _palette.EditColorAsync; set => _palette.EditColorAsync = value; }
+    public Func<FrameworkElement, Core.Ink.InkColor, Action<Core.Ink.InkColor>, Task> EditColorAsync { get => _palette.EditColorAsync; set => _palette.EditColorAsync = value; }
     public int HighlighterAlpha { get => _palette.HighlighterAlpha; set => _palette.HighlighterAlpha = value; }
     public bool LightColorScheme { get => _palette.LightColorScheme; set => _palette.LightColorScheme = value; }
 

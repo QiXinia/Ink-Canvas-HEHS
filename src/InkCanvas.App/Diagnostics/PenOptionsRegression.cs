@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using InkCanvas.App.Services;
 using InkCanvas.Ink;
@@ -93,9 +93,9 @@ internal static class PenOptionsRegression
                     services.OverlayInk.Tool = InkTool.Highlighter;
                     Check("highlighter restores its independent width", services.OverlayInk.CurrentAttributes.BaseWidth == 60);
                     width.Value = 18;
-                    var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔透明度"));
-                    ((IRangeValueProvider)new SliderAutomationPeer(alpha).GetPattern(PatternInterface.RangeValue)).SetValue(220);
-                    Check("alpha updates and saves", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 220 && services.Store.Load().Canvas.InkAlpha == 220);
+                    var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔不透明度"));
+                    ((IRangeValueProvider)new SliderAutomationPeer(alpha).GetPattern(PatternInterface.RangeValue)).SetValue(80);
+                    Check("alpha updates and saves", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 204 && services.Store.Load().Canvas.InkAlpha == 204);
                 }
                 Check("inline choices fit palette " + highlighter, Descendants(palette).OfType<SegmentedSelector>().All(selector => Fits(selector, palette.CardSurface)));
                 await BoardWindowRegression.SaveVisual(palette, Path.Combine(directory, highlighter ? "highlighter.png" : "pen.png"));

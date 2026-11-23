@@ -31,13 +31,13 @@ public sealed class PenPalette : UserControl
     };
     private readonly PointerSlider _alpha = new()
     {
-        Minimum = OriginalMenuCatalog.HighlighterAlphaMinimum,
-        Maximum = OriginalMenuCatalog.HighlighterAlphaMaximum,
-        StepFrequency = OriginalMenuCatalog.HighlighterAlphaStep,
+        Minimum = OriginalMenuCatalog.HighlighterOpacityMinimum,
+        Maximum = OriginalMenuCatalog.HighlighterOpacityMaximum,
+        StepFrequency = OriginalMenuCatalog.HighlighterOpacityStep,
         HorizontalAlignment = HorizontalAlignment.Stretch,
     };
     private readonly TextBlock _widthValue = new() { MinWidth = 32, TextAlignment = TextAlignment.Right };
-    private readonly TextBlock _alphaValue = new() { Text = "140", MinWidth = 32, TextAlignment = TextAlignment.Right };
+    private readonly TextBlock _alphaValue = new() { Text = "55%", MinWidth = 36, TextAlignment = TextAlignment.Right };
     private readonly PenStylePicker _style;
     private readonly SegmentedSelector _nib = new(new[] { "圆形", "斜椭圆" }) { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly TextBlock _alphaAvailability = new()
@@ -72,7 +72,7 @@ public sealed class PenPalette : UserControl
             Controller.CurrentAttributes.Color = color;
             AttributesChanged?.Invoke();
             RefreshFromController();
-            if (!Header.IsPinned) RequestClose?.Invoke();
+            if (!Header.IsPinned && !_colors.IsEditingColor) RequestClose?.Invoke();
         };
         if (!highlighter) _style = new PenStylePicker { HorizontalAlignment = HorizontalAlignment.Stretch };
         if (highlighter) _preview.PreviewHeight = 96;
@@ -88,7 +88,7 @@ public sealed class PenPalette : UserControl
             AttributesChanged?.Invoke();
             UpdatePreview();
         };
-        _alpha.Value = _highlighterAlpha;
+        _alpha.Value = OriginalMenuCatalog.ToHighlighterOpacityPercent(_highlighterAlpha);
         if (_style is not null)
         {
             Accessible(_style, "笔迹风格", string.Join("、", OriginalMenuCatalog.PenStyles));
@@ -129,17 +129,17 @@ public sealed class PenPalette : UserControl
         _alpha.ValueChanged += (_, e) =>
         {
             if (Controller is null || _suppress || InkAlphaChanged is null) return;
-            int snapped = (int)Snap(e.NewValue, OriginalMenuCatalog.HighlighterAlphaMinimum,
-                OriginalMenuCatalog.HighlighterAlphaStep);
+            int snapped = (int)Snap(e.NewValue, OriginalMenuCatalog.HighlighterOpacityMinimum,
+                OriginalMenuCatalog.HighlighterOpacityStep);
             if (Math.Abs(snapped - e.NewValue) > 0.001)
             {
                 _alpha.Value = snapped;
                 return;
             }
-            _highlighterAlpha = snapped;
+            _highlighterAlpha = OriginalMenuCatalog.ToStoredHighlighterAlpha(snapped);
             Controller.Tool = InkTool.Highlighter;
-            _alphaValue.Text = snapped.ToString();
-            InkAlphaChanged.Invoke(snapped);
+            _alphaValue.Text = snapped + "%";
+            InkAlphaChanged.Invoke(_highlighterAlpha);
             AttributesChanged?.Invoke();
             UpdatePreview();
         };
@@ -149,8 +149,7 @@ public sealed class PenPalette : UserControl
         panel.Children.Add(ChoiceRow("笔尖", _nib));
         if (highlighter)
         {
-            // 原右栏顺序：荧光笔标题 → 不透明度 → 3×2 色板；粗细为拆分菜单后保留的调节项。
-            panel.Children.Add(SliderRow("不透明度", _alpha, _alphaValue, "荧光笔透明度，范围 20 到 240，步长 20"));
+            panel.Children.Add(SliderRow("不透明度", _alpha, _alphaValue, "荧光笔不透明度"));
             panel.Children.Add(_colors);
             panel.Children.Add(SliderRow("粗细", _width, _widthValue, "荧光笔粗细，范围 1 到 120，步长 1"));
             panel.Children.Add(_preview);
@@ -283,7 +282,7 @@ public sealed class PenPalette : UserControl
     public Border CardSurface => _card;
     public bool IsEditingColor => _colors.IsEditingColor;
     public Action ColorPaletteChanged { get; set; }
-    public Func<InkColor, Task<InkColor?>> EditColorAsync { get => _colors.EditColorAsync; set => _colors.EditColorAsync = value; }
+    public Func<FrameworkElement, InkColor, Action<InkColor>, Task> EditColorAsync { get => _colors.EditColorAsync; set => _colors.EditColorAsync = value; }
     public InkController Controller { get; set; }
 
     public Action RequestClose { get; set; }
@@ -303,9 +302,8 @@ public sealed class PenPalette : UserControl
             {
                 if (_inkAlphaChanged is not null)
                 {
-                    _alpha.Value = Math.Clamp(_highlighterAlpha, OriginalMenuCatalog.HighlighterAlphaMinimum,
-                        OriginalMenuCatalog.HighlighterAlphaMaximum);
-                    _alphaValue.Text = _highlighterAlpha.ToString();
+                    _alpha.Value = OriginalMenuCatalog.ToHighlighterOpacityPercent(_highlighterAlpha);
+                    _alphaValue.Text = _alpha.Value.ToString("0") + "%";
                 }
             }
             finally
@@ -321,16 +319,13 @@ public sealed class PenPalette : UserControl
         get => _highlighterAlpha;
         set
         {
-            _highlighterAlpha = (int)Snap(Math.Clamp(value,
-                (int)OriginalMenuCatalog.HighlighterAlphaMinimum,
-                (int)OriginalMenuCatalog.HighlighterAlphaMaximum),
-                OriginalMenuCatalog.HighlighterAlphaMinimum, OriginalMenuCatalog.HighlighterAlphaStep);
+            _highlighterAlpha = Math.Clamp(value, 0, 255);
             if (InkAlphaChanged is null) return;
             _suppress = true;
             try
             {
-                _alpha.Value = _highlighterAlpha;
-                _alphaValue.Text = _highlighterAlpha.ToString();
+                _alpha.Value = OriginalMenuCatalog.ToHighlighterOpacityPercent(_highlighterAlpha);
+                _alphaValue.Text = _alpha.Value.ToString("0") + "%";
             }
             finally { _suppress = false; }
         }
@@ -365,10 +360,8 @@ public sealed class PenPalette : UserControl
             if (_style is not null) _style.SelectedIndex = OriginalMenuCatalog.ToPenStyle(Controller.CurrentAttributes.TaperKind);
             if (InkAlphaChanged is not null)
             {
-                _alpha.Value = Math.Clamp(HighlighterAlpha,
-                    OriginalMenuCatalog.HighlighterAlphaMinimum,
-                    OriginalMenuCatalog.HighlighterAlphaMaximum);
-                _alphaValue.Text = HighlighterAlpha.ToString();
+                _alpha.Value = OriginalMenuCatalog.ToHighlighterOpacityPercent(HighlighterAlpha);
+                _alphaValue.Text = _alpha.Value.ToString("0") + "%";
             }
             _colors.Refresh(Controller.GetDrawingAttributes(_highlighter).Color, settings);
         }
@@ -393,11 +386,11 @@ public sealed class PenPalette : UserControl
             bool wired = InkAlphaChanged is not null;
             _alpha.IsEnabled = wired;
             _alphaAvailability.Text = wired
-                ? "原菜单范围 20–240，步长 20。"
+                ? "不透明度范围 0–100%，步长 1%。"
                 : "透明度尚未接入笔迹模型，因此不可调整。";
             _alphaAvailability.Visibility = wired ? Visibility.Collapsed : Visibility.Visible;
-            Accessible(_alpha, "荧光笔透明度", wired
-                ? "原菜单范围 20 到 240，步长 20"
+            Accessible(_alpha, "荧光笔不透明度", wired
+                ? "范围 0% 到 100%，步长 1%"
                 : "暂不可用：荧光笔透明度尚未接入笔迹模型");
         }
     }

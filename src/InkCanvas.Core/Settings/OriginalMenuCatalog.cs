@@ -28,6 +28,7 @@ public static class OriginalMenuCatalog
         new Swatch("荧光笔红色", InkColor.Opaque(220, 38, 38), InkColor.Opaque(220, 38, 38)),
         new Swatch("荧光笔橙色", InkColor.Opaque(234, 88, 12), InkColor.Opaque(234, 88, 12)),
         new Swatch("荧光笔黄色", InkColor.Opaque(234, 179, 8), InkColor.Opaque(234, 179, 8)),
+        new Swatch("荧光笔绿色", InkColor.Opaque(22, 163, 74), InkColor.Opaque(22, 163, 74)),
         new Swatch("荧光笔青色", InkColor.Opaque(13, 148, 136), InkColor.Opaque(13, 148, 136)),
         new Swatch("荧光笔蓝色", InkColor.Opaque(37, 99, 235), InkColor.Opaque(37, 99, 235)),
         new Swatch("荧光笔紫色", InkColor.Opaque(147, 51, 234), InkColor.Opaque(147, 51, 234)),
@@ -92,9 +93,15 @@ public static class OriginalMenuCatalog
     public const double PenWidthMaximum = 30;
     public const double HighlighterWidthMaximum = 120;
     public const double PenWidthStep = 1;
-    public const double HighlighterAlphaMinimum = 20;
-    public const double HighlighterAlphaMaximum = 240;
-    public const double HighlighterAlphaStep = 20;
+    public const double HighlighterOpacityMinimum = 0;
+    public const double HighlighterOpacityMaximum = 100;
+    public const double HighlighterOpacityStep = 1;
+
+    public static double ToHighlighterOpacityPercent(int alpha) =>
+        Math.Round(Math.Clamp(alpha, 0, 255) * 100d / 255, MidpointRounding.AwayFromZero);
+
+    public static int ToStoredHighlighterAlpha(double percent) =>
+        (int)Math.Round(Math.Clamp(percent, 0, 100) * 255 / 100, MidpointRounding.AwayFromZero);
 
     public static double ToStoredPenWidth(double menuWidth) => menuWidth / 2;
 

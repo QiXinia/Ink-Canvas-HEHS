@@ -63,7 +63,7 @@ internal static class SettingsRegression
             var searchTimer = System.Diagnostics.Stopwatch.StartNew();
             var searchHits = window.SearchSettings("荧光笔");
             Check("search indexes real setting labels across categories", searchHits.Any(hit => hit.Title == "荧光笔粗细")
-                && searchHits.Any(hit => hit.Title == "荧光笔透明度"));
+                && searchHits.Any(hit => hit.Title == "荧光笔不透明度"));
             Check("search indexing preserves settings and selected category", JsonSerializer.Serialize(services.Settings) == original
                 && Descendants(window.Content).OfType<WindowWorkspace>().Single().SelectedPage == "常规");
             Check("search index builds without blocking the window", searchTimer.ElapsedMilliseconds < 1500);
@@ -73,7 +73,7 @@ internal static class SettingsRegression
             var highlighterMatches = window.SearchSettings("画板 荧光笔");
             Check("search handles case and category terms", window.SearchSettings("powerpoint").Any()
                 && highlighterMatches.Any(hit => hit.Title == "荧光笔粗细")
-                && highlighterMatches.Any(hit => hit.Title == "荧光笔透明度")
+                && highlighterMatches.Any(hit => hit.Title == "荧光笔不透明度")
                 && highlighterMatches.All(hit => hit.Category == "书写与擦除"));
             Check("search missing and empty queries have no matches", window.SearchSettings("不存在的设置条目").Count == 0
                 && window.SearchSettings(" ").Count == 0);
@@ -262,9 +262,9 @@ internal static class SettingsRegression
             Check("extended highlighter width applies", services.OverlayInk.CurrentAttributes.BaseWidth == 60);
             services.OverlayInk.Tool = InkTool.Pen;
             Check("highlighter width does not change pen", services.OverlayInk.CurrentAttributes.BaseWidth == services.Settings.Canvas.InkWidth);
-            var alpha = Find<Slider>("荧光笔透明度");
-            alpha.Value = 180;
-            Check("highlighter alpha applies", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 180);
+            var alpha = Find<Slider>("荧光笔不透明度");
+            alpha.Value = 80;
+            Check("highlighter alpha applies", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 204);
             window.SelectCategory("书写与擦除");
             var penStyles = Find<ComboBox>("笔迹风格");
             penStyles.SelectedIndex = 7;
@@ -294,7 +294,7 @@ internal static class SettingsRegression
                 await Task.Delay(100);
                 Check("theme rebuild preserves edited values " + themeIndex,
                     Find<Slider>("浮动工具栏 UI 缩放 (%)").Value == 125
-                    && Find<Slider>("荧光笔透明度").Value == 180);
+                    && Find<Slider>("荧光笔不透明度").Value == 80);
             }
 
             string lastPath = Path.Combine(directory, "close-before-debounce");

@@ -1664,18 +1664,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
         WindowChrome.EnsureAbove(_palette);
     }
 
-    public async Task<InkColor?> EditCustomColorAsync(InkColor color)
+    public async Task EditCustomColorAsync(FrameworkElement anchor, InkColor color, Action<InkColor> changed)
     {
-        if (_colorEditor is not null) { _colorEditor.Activate(); return null; }
-        var window = new ColorEditorWindow(color, EffectiveTheme);
+        if (_colorEditor is not null) { _colorEditor.Activate(); return; }
+        var candidates = OpenWindows.Concat(_board?.ToolPanels.Cast<Window>() ?? Enumerable.Empty<Window>());
+        var owner = candidates.FirstOrDefault(window => window.Content is FrameworkElement root && ReferenceEquals(root.XamlRoot, anchor.XamlRoot));
+        if (owner is null) return;
+        var window = new ColorEditorWindow(owner, WindowChrome.GetScreenBounds(owner, anchor), color, EffectiveTheme, changed);
         _colorEditor = window;
         try
         {
             NotifyWindowOpened(window);
-            WindowChrome.CenterOnOwner(window, _documentWorkspace?.Window ?? (Window)_board ?? _bar);
             window.Activate();
             WindowChrome.EnsureAbove(window);
-            return await window.Result;
+            await window.Completion;
         }
         finally { if (ReferenceEquals(_colorEditor, window)) _colorEditor = null; }
     }

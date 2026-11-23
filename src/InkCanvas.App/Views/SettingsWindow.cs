@@ -472,11 +472,11 @@ public sealed partial class SettingsWindow : Window
     }
 
     private UIElement SliderRow(string header, Func<double> get, double min, double max,
-        Action<double> set, double step = 1, double[] presets = null, string presetsLabel = null, Func<double, string> formatPreset = null)
+        Action<double> set, double step = 1, double[] presets = null, string presetsLabel = null, Func<double, string> formatPreset = null, string unit = "")
     {
         var readout = new TextBlock
         {
-            Text = get().ToString("0.##"),
+            Text = get().ToString("0.##") + unit,
             MinWidth = 48,
             TextAlignment = TextAlignment.Right,
             VerticalAlignment = VerticalAlignment.Center,
@@ -491,10 +491,10 @@ public sealed partial class SettingsWindow : Window
             MinWidth = 100,
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        Accessible(slider, header, $"范围 {min:0.##} 到 {max:0.##}，步长 {step:0.##}");
+        Accessible(slider, header, $"范围 {min:0.##}{unit} 到 {max:0.##}{unit}，步长 {step:0.##}{unit}");
         slider.ValueChanged += (_, e) =>
         {
-            readout.Text = e.NewValue.ToString("0.##");
+            readout.Text = e.NewValue.ToString("0.##") + unit;
             if (_building || _synchronizingControls || !slider.IsEnabled || Math.Abs(e.NewValue - get()) < .0001) return;
             set(e.NewValue);
             Commit();
@@ -502,7 +502,7 @@ public sealed partial class SettingsWindow : Window
         _refreshControls.Add(() =>
         {
             slider.Value = Math.Clamp(get(), min, max);
-            readout.Text = get().ToString("0.##");
+            readout.Text = get().ToString("0.##") + unit;
         });
         var row = new Grid();
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

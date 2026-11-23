@@ -6,6 +6,29 @@ namespace InkCanvas.Core.Tests;
 
 public sealed class CustomColorSettingsTests
 {
+    [Fact]
+    public void EveryWholeOpacityPercentageSurvivesByteStorage()
+    {
+        for (int percent = 0; percent <= 100; percent++)
+            Assert.Equal(percent, OriginalMenuCatalog.ToHighlighterOpacityPercent(OriginalMenuCatalog.ToStoredHighlighterAlpha(percent)));
+        Assert.Equal(0, OriginalMenuCatalog.ToStoredHighlighterAlpha(0));
+        Assert.Equal(128, OriginalMenuCatalog.ToStoredHighlighterAlpha(50));
+        Assert.Equal(255, OriginalMenuCatalog.ToStoredHighlighterAlpha(100));
+    }
+
+    [Theory]
+    [InlineData(-20, 0)]
+    [InlineData(140, 55)]
+    [InlineData(255, 100)]
+    [InlineData(300, 100)]
+    public void OpacityReadoutClampsWithoutChangingStoredAlpha(int alpha, int percent)
+    {
+        var settings = new AppSettings();
+        settings.Canvas.InkAlpha = alpha;
+        Assert.Equal(percent, OriginalMenuCatalog.ToHighlighterOpacityPercent(settings.Canvas.InkAlpha));
+        Assert.Equal(alpha, settings.Clone().Canvas.InkAlpha);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("{\"canvas\":{\"customColors\":null}}")]

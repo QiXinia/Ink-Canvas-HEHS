@@ -2,6 +2,7 @@ using System.Text.Json;
 using InkCanvas.App.Services;
 using InkCanvas.App.Views;
 using InkCanvas.Controls.Controls;
+using InkCanvas.Features.Ppt;
 using InkCanvas.Host.Contracts;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -36,7 +37,7 @@ internal static class MoreMenuRegression
             await Task.Delay(250);
             var bar = shell.OpenWindows.OfType<FloatingBarWindow>().Single();
             foreach (int theme in new[] { 1, 2 })
-            foreach (int scale in new[] { 50, 100, 150 })
+            foreach (int scale in new[] { 50, 100, 150, 200 })
             {
                 services.Settings.Appearance.Theme = theme;
                 services.Settings.Appearance.FloatingBarScale = scale;
@@ -52,6 +53,19 @@ internal static class MoreMenuRegression
                 Check($"desktop menu consolidates insertion and duplicate plugins {theme}-{scale}", labels.Contains("插入")
                     && !labels.Any(label => label is "插入图片" or "插入视频" or "PDF 导入画板" or "AI 助手" or "文稿库" or "指南"));
                 Check($"retired classroom tools are absent {theme}-{scale}", !labels.Any(label => label is "课堂工具" or "开始时光机录制" or "时光机录制"));
+                Check($"presentation helpers are absent from the menu {theme}-{scale}",
+                    !labels.Any(label => label is "课件页导航" or "翻页悬浮窗" or "黑屏 / 恢复"));
+                var rows = buttons.GroupBy(button => (StackPanel)button.Parent).Select(group => group.ToArray()).ToArray();
+                var footer = rows[^1];
+                Check($"more tools use four aligned columns {theme}-{scale}", footer.Length == 4
+                    && rows.Take(rows.Length - 2).All(row => row.Length == 4)
+                    && rows.All(row => row.Length <= 4 && row.Select((button, column) =>
+                        Math.Abs(button.TransformToVisual((UIElement)panel.Content).TransformPoint(default).X
+                            - footer[column].TransformToVisual((UIElement)panel.Content).TransformPoint(default).X) < 1).All(aligned => aligned)));
+                var menuBounds = WindowChrome.GetScreenBounds(panel, (FrameworkElement)panel.Content);
+                var work = WindowChrome.GetWorkArea(panel);
+                Check($"four column menu fits the work area {theme}-{scale}", menuBounds.X >= work.X - 1 && menuBounds.Y >= work.Y - 1
+                    && menuBounds.X + menuBounds.Width <= work.X + work.Width + 1 && menuBounds.Y + menuBounds.Height <= work.Y + work.Height + 1);
                 Check($"PDF viewer remains a tool {theme}-{scale}", disabled || Array.IndexOf(labels, "打开 PDF") is var pdf && pdf >= 0 && pdf < Array.IndexOf(labels, "保存墨迹"));
                 await BoardWindowRegression.SaveVisual((FrameworkElement)panel.Content, Path.Combine(directory, $"more-{theme}-{scale}.png"));
                 Invoke(buttons.Single(button => button.Label == "插入"));
@@ -67,6 +81,15 @@ internal static class MoreMenuRegression
                 Check($"closing insertion returns to more tools {theme}-{scale}", bar.Bar.IsExpanded && !popup.IsOpen);
                 bar.ClosePanels();
             }
+
+            var updateNavigation = typeof(ShellController).GetMethod("UpdatePptNavigation", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            services.Settings.PowerPoint.IsShowBottomPPTNavigationPanel = true;
+            services.Settings.PowerPoint.IsShowSidePPTNavigationPanel = true;
+            updateNavigation.Invoke(shell, new object[] { new PptSnapshot { State = PptConnectionState.SlideShow } });
+            Check("slideshow state automatically loads four navigation panels", shell.OpenWindows.OfType<PptNavigationWindow>().Count() == 4
+                && shell.OpenWindows.OfType<PptNavigationWindow>().All(window => window.AppWindow.IsVisible));
+            updateNavigation.Invoke(shell, new object[] { PptSnapshot.Detached });
+            Check("ending the slideshow releases navigation panels", !shell.OpenWindows.OfType<PptNavigationWindow>().Any());
 
             if (!disabled)
             {

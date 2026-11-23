@@ -28,8 +28,8 @@ public interface IShellActions
     void OpenReplay();
     void OpenGuide();
     void OpenPenPalette(bool highlighter);
-    Task<InkCanvas.Core.Ink.InkColor?> EditCustomColorAsync(InkCanvas.Core.Ink.InkColor color)
-        => Task.FromResult<InkCanvas.Core.Ink.InkColor?>(null);
+    Task EditCustomColorAsync(FrameworkElement anchor, InkCanvas.Core.Ink.InkColor color, Action<InkCanvas.Core.Ink.InkColor> changed)
+        => Task.CompletedTask;
     void OpenShapePicker();
     void InsertImage();
     void InsertVideo() { }
@@ -635,36 +635,20 @@ public sealed class FloatingBar : UserControl
         _insertFlyout = null;
         _moreRows.Children.Clear();
         _badgeBorders.Clear();
-        var classroom = MoreRow();
-        classroom.Margin = new Thickness(0, 4 * S, 0, 0);
-        AddMore(classroom, Glyphs.TimerWpf, "倒计时", () => Shell?.OpenTimer());
-        AddMore(classroom, Glyphs.Rand, "随机抽选", () => Shell?.OpenLottery());
-        AddMore(classroom, Glyphs.Rand, "单次抽选", () => Shell?.OpenLotteryQuick(), badge: true);
-        _moreRows.Children.Add(classroom);
-
-        var drawing = MoreRow();
-        AddMore(drawing, Glyphs.ReplayWpf, "播放墨迹", () => Shell?.OpenReplay());
+        StackPanel tools = null;
+        AddTool(Glyphs.TimerWpf, "倒计时", () => Shell?.OpenTimer());
+        AddTool(Glyphs.Rand, "随机抽选", () => Shell?.OpenLottery());
+        AddTool(Glyphs.Rand, "单次抽选", () => Shell?.OpenLotteryQuick(), badge: true);
+        AddTool(Glyphs.ReplayWpf, "播放墨迹", () => Shell?.OpenReplay());
         TouchIconButton insert = null;
-        insert = AddMore(drawing, Glyphs.InsertMedia, "插入", () => ShowInsertMenu(insert), closePanel: false);
-        AddMore(drawing, Glyphs.Camera, "截屏", async () => { if (Shell is not null) await Shell.ScreenshotAsync(); });
-        _moreRows.Children.Add(drawing);
-
-        var presentation = MoreRow();
-        AddMore(presentation, Glyphs.SlideList, "课件页导航", () => Shell?.ToggleSlideNavigator());
-        AddMore(presentation, Glyphs.ChevronRight, "翻页悬浮窗", () => Shell?.TogglePptNavigationWindow());
-        AddMore(presentation, Glyphs.Lock, "黑屏 / 恢复", () => Shell?.ToggleBlackScreen());
-        _moreRows.Children.Add(presentation);
+        insert = AddTool(Glyphs.InsertMedia, "插入", () => ShowInsertMenu(insert), closePanel: false);
+        AddTool(Glyphs.Camera, "截屏", async () => { if (Shell is not null) await Shell.ScreenshotAsync(); });
 
         var commands = (Shell?.ExtensionCommands ?? Array.Empty<ExtensionCommand>())
             .Where(command => command.PluginId is not ("inkcanvas.ai-assistant" or "inkcanvas.library")
                 && !(command.PluginId == "inkcanvas.pdf" && command.CommandId == "import"));
-        foreach (var batch in commands.Chunk(4))
-        {
-            var row = MoreRow();
-            foreach (var command in batch)
-                AddMore(row, ExtensionCommandIcons.For(command), command.Title, async () => { if (Shell is not null) await Shell.ExecuteExtensionCommandAsync(command); });
-            _moreRows.Children.Add(row);
-        }
+        foreach (var command in commands)
+            AddTool(ExtensionCommandIcons.For(command), command.Title, async () => { if (Shell is not null) await Shell.ExecuteExtensionCommandAsync(command); });
 
         var files = MoreRow();
         files.Margin = new Thickness(0, 8, 0, 4);
@@ -673,6 +657,17 @@ public sealed class FloatingBar : UserControl
         AddMore(files, Glyphs.Settings, "设置", () => Shell?.OpenSettings());
         _exitButton = AddMore(files, Glyphs.ExitWpf, "退出", () => Shell?.Exit());
         _moreRows.Children.Add(files);
+
+        TouchIconButton AddTool(string glyph, string label, Action action, bool badge = false, bool closePanel = true)
+        {
+            if (tools is null || tools.Children.Count == 4)
+            {
+                tools = MoreRow();
+                if (_moreRows.Children.Count == 0) tools.Margin = new Thickness(0, 4 * S, 0, 0);
+                _moreRows.Children.Add(tools);
+            }
+            return AddMore(tools, glyph, label, action, badge, closePanel);
+        }
     }
 
     private void ShowInsertMenu(FrameworkElement anchor)
@@ -692,7 +687,8 @@ public sealed class FloatingBar : UserControl
         action();
     }
 
-    private StackPanel MoreRow() => new() { Orientation = Orientation.Horizontal, Spacing = 0, Height = MoreBtn, HorizontalAlignment = HorizontalAlignment.Center };
+    private StackPanel MoreRow() => new() { Orientation = Orientation.Horizontal, Spacing = 0,
+        Width = MoreBtn * 4, Height = MoreBtn, HorizontalAlignment = HorizontalAlignment.Center };
 
     private TouchIconButton AddMore(StackPanel row, string glyph, string label, Action onClick, bool badge = false, bool closePanel = true)
     {

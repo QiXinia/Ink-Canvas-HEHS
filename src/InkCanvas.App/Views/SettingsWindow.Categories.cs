@@ -50,8 +50,8 @@ public sealed partial class SettingsWindow
             value => S.Canvas.EnableCustomColorPalette = value,
             note: "在亮系、暗系后切换到自定义色板，可添加、编辑和删除颜色并自动保存。画笔与荧光笔共用自定义颜色。"));
         AddSection("荧光笔");
-        _content.Children.Add(SliderRow("荧光笔透明度", () => S.Canvas.InkAlpha,
-            20, 240, v => S.Canvas.InkAlpha = (int)v, 20));
+        _content.Children.Add(SliderRow("荧光笔不透明度", () => OriginalMenuCatalog.ToHighlighterOpacityPercent(S.Canvas.InkAlpha),
+            0, 100, v => S.Canvas.InkAlpha = OriginalMenuCatalog.ToStoredHighlighterAlpha(v), unit: "%"));
         _content.Children.Add(SliderRow("荧光笔粗细", () => (S.Canvas.HighlighterWidth ?? S.Canvas.InkWidth) * 2,
             1, OriginalMenuCatalog.HighlighterWidthMaximum, v => S.Canvas.HighlighterWidth = v / 2));
         AddSection("水墨笔刷");
