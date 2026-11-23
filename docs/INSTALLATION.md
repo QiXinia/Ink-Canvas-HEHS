@@ -2,6 +2,8 @@
 
 GitHub Release 同时提供 MSI 安装版和 ZIP 便携版。两者均包含 Windows App SDK，首次运行需要 .NET 10 x64 运行时。MSI 会检查运行时，缺少时显示下载地址。
 
+可先执行 `tools/install-runtime.ps1` 检查并补装 .NET 10 x64 Runtime，使用 `-CheckOnly` 仅检查环境。传入 `-MsiPath` 可在环境就绪后继续安装应用。发布包中的对应路径为 `Tools/install-runtime.ps1`。完整命令、离线部署及开源组件见 [作品说明](PROJECT-DESCRIPTION.md)。
+
 ## MSI 安装版
 
 双击 `InkCanvas-WinUI3-版本-win-x64.msi`，默认安装到当前用户的 `%LOCALAPPDATA%\Programs\Ink Canvas`。安装向导可选择目录，开始菜单提供 Ink Canvas 入口。安装和升级由 Windows Installer 管理，在 Windows 设置的“已安装的应用”中可卸载。

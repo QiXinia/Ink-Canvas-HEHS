@@ -75,6 +75,8 @@ tests/InkCanvas.Core.Tests  单元测试（含笔锋回归）
 
 ## 快速开始
 
+作品评审所需的环境依赖、一键安装脚本、部署步骤、开源组件说明及预留的“码道”应用总结见 [作品说明文档](docs/PROJECT-DESCRIPTION.md)。
+
 ```powershell
 .\build.ps1 build
 .\build.ps1 test
