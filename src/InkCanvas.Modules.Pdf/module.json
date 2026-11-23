@@ -1,7 +1,7 @@
 {
   "Id": "inkcanvas.pdf",
   "Name": "PDF 阅读与批注",
-  "Version": "1.3.0",
+  "Version": "1.4.0",
   "ApiVersion": 1,
   "EntryAssembly": "InkCanvas.Modules.Pdf.dll",
   "EntryType": "InkCanvas.Modules.Pdf.PdfModule",
