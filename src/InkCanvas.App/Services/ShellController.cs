@@ -2284,6 +2284,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_disposed) return; _disposed = true;
         _palette?.FlushSliderChanges();
         foreach (var palette in _detachedPalettes.ToArray()) palette.FlushSliderChanges();
+        _bar?.GetOpenPanel(BarPanelKind.Eraser)?.FlushSettingsChanges();
         _resumeTimer?.Stop();
         foreach (var reminder in _resumeReminders.ToArray()) reminder.Close();
         _pptPreviewSource?.Dispose();

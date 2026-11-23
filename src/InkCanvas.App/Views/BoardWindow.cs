@@ -877,7 +877,7 @@ public sealed partial class BoardWindow : Window
         if (_eraserFlyout is not null && ReferenceEquals(_activeBoardFlyout, _eraserFlyout)) { DismissBoardFlyout(); return; }
         SetTool(InkTool.Eraser);
         ApplyEraserSize();
-        var palette = new EraserPalette(CurrentController, _services.Settings.Canvas.EraserSize, _boardTheme);
+        var palette = new EraserPalette(CurrentController, OriginalMenuCatalog.GetEraserDiameter(_services.Settings.Canvas), _boardTheme);
         var header = new PopupHeader("橡皮", _boardTheme);
         var flyout = new Flyout { Placement = FlyoutPlacementMode.Top };
         palette.ModePicked += mode =>
@@ -895,13 +895,12 @@ public sealed partial class BoardWindow : Window
             SetTool(InkTool.Eraser);
             HideBoardFlyout(flyout);
         };
-        palette.SizePicked += size =>
+        palette.DiameterChanged += diameter =>
         {
-            _services.Settings.Canvas.EraserSize = size;
-            _services.ApplySettings();
-            ApplyEraserSize();
-            _services.SaveSettings();
+            _services.Settings.Canvas.EraserDiameter = diameter;
+            CurrentController.EraserRadius = (float)(diameter / 2);
         };
+        palette.SettingsChanged += () => { _services.ApplySettings(); ApplyEraserSize(); _services.SaveSettings(); };
         flyout.Content = new Border { Background = _barBg, BorderBrush = InkCanvas.Controls.Theming.PopupBrushes.ToolPanelBorder(_boardTheme), BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8), Child = new StackPanel { Children = { header, palette } } };
         _eraserFlyout = flyout;
@@ -910,7 +909,7 @@ public sealed partial class BoardWindow : Window
 
     private void ApplyEraserSize()
     {
-        float radius = OriginalMenuCatalog.ToEraserRadius(_services.Settings.Canvas.EraserSize);
+        float radius = OriginalMenuCatalog.ToEraserRadius(_services.Settings.Canvas);
         foreach (var page in _board.Pages)
             page.EraserRadius = page.EraserMode == InkEraserMode.WholeStroke ? 2.5f : radius;
     }

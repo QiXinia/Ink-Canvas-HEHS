@@ -334,6 +334,11 @@
         "eraserSize": {
           "type": "number"
         },
+        "eraserDiameter": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 200
+        },
         "eraserType": {
           "type": "number"
         },

@@ -142,6 +142,7 @@ public sealed class AppSettings
         Canvas.HighlighterColor = null;
         Canvas.ShapeKind = null;
         Canvas.EraserSize = 1;
+        Canvas.EraserDiameter = null;
         Canvas.EraserType = 0;
         Canvas.HideStrokeWhenSelecting = false;
         Canvas.UsingWhiteboard = false;
@@ -264,6 +265,8 @@ public sealed class CanvasSettings
     [JsonPropertyName("shapeKind")] public Shapes.ShapeKind? ShapeKind { get; set; }
 
     [JsonPropertyName("eraserSize")] public int EraserSize { get; set; } = 2;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("eraserDiameter")] public double? EraserDiameter { get; set; }
 
     /// <summary>0 = legacy default, 1 = area eraser, 2 = stroke eraser, 3 = lasso eraser.</summary>
     [JsonPropertyName("eraserType")] public int EraserType { get; set; }

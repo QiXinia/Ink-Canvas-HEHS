@@ -69,6 +69,15 @@ public static class OriginalMenuCatalog
     private static readonly float[] EraserFactors = { .5f, .8f, 1f, 1.25f, 1.8f };
     public static float ToEraserRadius(int size) => 45 * EraserFactors[Math.Clamp(size, 0, EraserFactors.Length - 1)];
 
+    public const double EraserDiameterMinimum = 10;
+    public const double EraserDiameterMaximum = 200;
+
+    public static double GetEraserDiameter(CanvasSettings settings) => settings.EraserDiameter is double diameter && double.IsFinite(diameter)
+        ? Math.Clamp(diameter, EraserDiameterMinimum, EraserDiameterMaximum)
+        : ToEraserRadius(settings.EraserSize) * 2;
+
+    public static float ToEraserRadius(CanvasSettings settings) => (float)(GetEraserDiameter(settings) / 2);
+
     public static IReadOnlyList<string> EraserSizes { get; } = Array.AsReadOnly(new[]
     {
         "小", "较小", "中（默认）", "较大", "大",

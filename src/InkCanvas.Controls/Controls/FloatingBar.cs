@@ -270,7 +270,7 @@ public sealed class FloatingBar : UserControl
 
     public UIElement CreateEraserPanelContent()
     {
-        var palette = new EraserPalette(Controller, Cfg.Canvas.EraserSize, Theme);
+        var palette = new EraserPalette(Controller, OriginalMenuCatalog.GetEraserDiameter(Cfg.Canvas), Theme);
         palette.ModePicked += mode =>
         {
             Cfg.Canvas.EraserType = mode switch
@@ -280,17 +280,17 @@ public sealed class FloatingBar : UserControl
                 _ => 3,
             };
             Controller.EraserMode = mode;
-            Controller.EraserRadius = OriginalMenuCatalog.ToEraserRadius(Cfg.Canvas.EraserSize);
+            Controller.EraserRadius = OriginalMenuCatalog.ToEraserRadius(Cfg.Canvas);
             SettingsEdited?.Invoke();
             SetTool(InkTool.Eraser);
             PanelRequested?.Invoke(BarPanelKind.Eraser, false);
         };
-        palette.SizePicked += size =>
+        palette.DiameterChanged += diameter =>
         {
-            Cfg.Canvas.EraserSize = size;
-            Controller.EraserRadius = OriginalMenuCatalog.ToEraserRadius(size);
-            SettingsEdited?.Invoke();
+            Cfg.Canvas.EraserDiameter = diameter;
+            Controller.EraserRadius = (float)(diameter / 2);
         };
+        palette.SettingsChanged += () => SettingsEdited?.Invoke();
         return palette;
     }
 

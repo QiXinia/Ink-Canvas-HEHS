@@ -192,7 +192,7 @@ public sealed class AppServices : IDisposable
         controller.CurrentAttributes.Nib = Enum.IsDefined(Settings.Canvas.PenNib) ? Settings.Canvas.PenNib : PenNib.Round;
         controller.CurrentAttributes.HighlighterAlpha = (byte)Math.Clamp(Settings.Canvas.InkAlpha, 0, 255);
         controller.ShowPenCursor = Settings.Canvas.IsShowCursor;
-        controller.EraserRadius = OriginalMenuCatalog.ToEraserRadius(Settings.Canvas.EraserSize);
+        controller.EraserRadius = OriginalMenuCatalog.ToEraserRadius(Settings.Canvas);
         if (Settings.Canvas.EraserType == 1) controller.EraserMode = InkEraserMode.Area;
         else if (Settings.Canvas.EraserType == 2) controller.EraserMode = InkEraserMode.WholeStroke;
         else if (Settings.Canvas.EraserType == 3) controller.EraserMode = InkEraserMode.Lasso;

@@ -67,8 +67,9 @@ public sealed partial class SettingsWindow
         _content.Children.Add(SliderRow("水墨扁笔侧锋度（%）", () => Math.Round(S.Canvas.InkWash.Flatness * 100),
             0, 90, value => S.Canvas.InkWash = S.Canvas.InkWash with { Flatness = (float)(value / 100) }));
         AddSection("橡皮");
-        _content.Children.Add(ComboRow("橡皮大小", OriginalMenuCatalog.EraserSizes,
-            () => S.Canvas.EraserSize, i => S.Canvas.EraserSize = i));
+        _content.Children.Add(SliderRow("面积擦直径（px）", () => OriginalMenuCatalog.GetEraserDiameter(S.Canvas),
+            OriginalMenuCatalog.EraserDiameterMinimum, OriginalMenuCatalog.EraserDiameterMaximum,
+            value => S.Canvas.EraserDiameter = value));
         _content.Children.Add(ComboRow("橡皮模式", OriginalMenuCatalog.EraserModes,
             () => S.Canvas.EraserType, i => S.Canvas.EraserType = i));
     }

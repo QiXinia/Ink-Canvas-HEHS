@@ -51,6 +51,8 @@ internal sealed class ToolOptionsWindow : Window
         {
             _closed = true;
             if (content is BoardPenPalette palette) palette.FlushSliderChanges();
+            if (content is Border { Child: StackPanel panel })
+                foreach (var eraser in panel.Children.OfType<EraserPalette>()) eraser.FlushSizeChanges();
             _detachAnchor?.Invoke(); _detachAnchor = null;
             header.CloseRequested -= Close;
             content.Loaded -= OnLoaded;

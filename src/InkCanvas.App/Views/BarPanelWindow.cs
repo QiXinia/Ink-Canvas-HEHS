@@ -96,6 +96,7 @@ internal sealed class BarPanelWindow : Window
         Closed += (_, _) =>
         {
             _closed = true;
+            FlushSettingsChanges();
             _detachAnchor?.Invoke(); _detachAnchor = null;
             if (_trackedRoot is not null) _trackedRoot.Changed -= OnXamlRootChanged;
             _bar.ThemeRefreshed -= ApplyChrome;
@@ -123,6 +124,7 @@ internal sealed class BarPanelWindow : Window
     }
 
     public bool IsMore => _isMore;
+    internal void FlushSettingsChanges() { if (_content is EraserPalette eraser) eraser.FlushSizeChanges(); }
     internal void Detach()
     {
         IsDetached = true; _title.IsPinned = true;
@@ -137,6 +139,7 @@ internal sealed class BarPanelWindow : Window
         _host.Background = bg;
         _host.BorderBrush = PopupBrushes.ToolPanelBorder(theme);
         _title.ApplyTheme(theme);
+        if (_content is EraserPalette eraser) eraser.ApplyTheme(theme);
         FloatingBarWindow.UpdateAcrylicTint(this, theme);
     }
 
