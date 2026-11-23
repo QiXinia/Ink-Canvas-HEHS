@@ -26,7 +26,8 @@ public sealed class SelectionToolbar : UserControl
     private Action _refreshProperties;
     private Action _refreshLayers;
 
-    public SelectionToolbar(Func<InkController> controller, Action export, Action sendToBoard, string sendLabel)
+    public SelectionToolbar(Func<InkController> controller, Action export, Action sendToBoard, string sendLabel,
+        Action ungroup = null, Action<string> aiEdit = null)
     {
         _controller = controller;
         _fold = Button("收起", "\uE76B", ToggleCollapsed);
@@ -38,7 +39,7 @@ public sealed class SelectionToolbar : UserControl
         _actions.Children.Add(_geometry);
         _actions.Children.Add(Button("变换", "\uE7AD", () => ToggleSection("变换", BuildTransform)));
         _actions.Children.Add(Button("层级", "\uE81E", () => ToggleSection("层级", BuildLayers)));
-        _actions.Children.Add(Button("更多", "\uE712", () => ToggleSection("更多", () => new StackPanel
+        var more = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             Children =
@@ -47,7 +48,16 @@ public sealed class SelectionToolbar : UserControl
                 Button(sendLabel, "\uE8A5", () => { ClosePanels(); sendToBoard(); }),
                 Button("取消选择", "\uE711", () => Controller.ClearSelection()),
             },
-        })));
+        };
+        if (ungroup is not null)
+            more.Children.Add(Button("取消 AI 分组", "\uE8C8", () => { ClosePanels(); ungroup(); }));
+        if (aiEdit is not null)
+        {
+            more.Children.Add(Button("AI 字号+", "\uE8E8", () => { ClosePanels(); aiEdit("字号大一点"); }));
+            more.Children.Add(Button("AI 两列", "\uE8EF", () => { ClosePanels(); aiEdit("改成两列"); }));
+            more.Children.Add(Button("只保留公式", "\uE8A1", () => { ClosePanels(); aiEdit("只保留公式"); }));
+        }
+        _actions.Children.Add(Button("更多", "\uE712", () => ToggleSection("更多", () => more)));
         _actions.Children.Add(Button("删除", "\uE74D", () => Controller.DeleteSelection()));
         _primary.Children.Add(_fold);
         _primary.Children.Add(_actions);

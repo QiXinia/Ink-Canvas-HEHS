@@ -172,4 +172,139 @@ public sealed class BoardContentLayoutPlannerTests
         Assert.False(plan.NeedsNewPage);
         Assert.Empty(plan.Placements);
     }
+
+    [Fact]
+    public void Plan_SafeInsets_KeepsCardsClearOfTopAndBottomBars()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 800);
+        var cards = new[] { new BoardCardSize(300, 120) };
+        var safe = new BoardSafeInsets(96, 120, 24, 24);
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.Placed, plan.Status);
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.True(placement.Left >= 24 + 32 - Epsilon);
+        Assert.True(placement.Top >= 96 + 32 - Epsilon);
+        Assert.True(placement.Top + placement.Height <= 800 - 120 - 32 + Epsilon);
+    }
+
+    [Fact]
+    public void Plan_ZeroSafeInsets_KeepsLegacyTopMargin()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 800);
+        var cards = new[] { new BoardCardSize(300, 120) };
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport);
+
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.Equal(32, placement.Top, 3);
+        Assert.Equal(32, placement.Left, 3);
+    }
+
+    [Fact]
+    public void Plan_SafeInsets_ShrinkPlacementStaysInsideSafeArea()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 800);
+        var content = new AssistantRect(0, 0, 480, 800);
+        var cards = new[] { new BoardCardSize(850, 200) };
+        var safe = new BoardSafeInsets(96, 120, 24, 24);
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            content, cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.NeedsShrink, plan.Status);
+        Assert.Equal(0.5, plan.Scale, 6);
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.True(placement.Left >= content.Right + BoardContentLayoutPlanner.DefaultGap - Epsilon);
+        Assert.True(placement.Top >= 96 + 32 - Epsilon);
+        Assert.True(placement.Top + placement.Height <= 800 - 120 - 32 + Epsilon);
+    }
+
+    [Fact]
+    public void Plan_SafeAreaTooSmall_NeedsMove()
+    {
+        var viewport = new AssistantRect(0, 0, 900, 400);
+        var cards = new[] { new BoardCardSize(400, 200) };
+        var safe = new BoardSafeInsets(100, 150, 20, 20);
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.NeedsMove, plan.Status);
+        Assert.Contains("调整", plan.Message);
+    }
+
+    [Fact]
+    public void Plan_FullPageWithSafeInsets_NeedsNewPage()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 800);
+        var cards = new[] { new BoardCardSize(300, 120) };
+        var safe = new BoardSafeInsets(96, 120, 24, 24);
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            viewport, cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.NeedsNewPage, plan.Status);
+        Assert.Contains("新的一页", plan.Message);
+    }
+
+    [Fact]
+    public void Plan_MainBoardSafeInsets_ReserveSelectionToolbarAtTopAndBottom()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 800);
+        var cards = new[] { new BoardCardSize(300, 120) };
+        BoardSafeInsets safe = BoardContentLayoutPlanner.DefaultMainBoardInsets;
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.Placed, plan.Status);
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.True(placement.Top >= safe.Top + BoardContentLayoutPlanner.DefaultMargin - Epsilon);
+        Assert.True(placement.Top + placement.Height
+            <= viewport.Bottom - safe.Bottom - BoardContentLayoutPlanner.DefaultMargin + Epsilon);
+        Assert.True(viewport.Bottom - (placement.Top + placement.Height)
+            >= BoardContentLayoutPlanner.SelectionToolbarReserve + 120 + 32 - Epsilon);
+    }
+
+    [Fact]
+    public void Plan_TightPageWithSelectionReserve_ShrinksAndKeepsBottomClearance()
+    {
+        var viewport = new AssistantRect(0, 0, 1000, 500);
+        var cards = new[] { new BoardCardSize(300, 120) };
+        BoardSafeInsets safe = BoardContentLayoutPlanner.DefaultMainBoardInsets;
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.NeedsShrink, plan.Status);
+        Assert.Equal(0.5, plan.Scale, 6);
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.True(placement.Top >= safe.Top + BoardContentLayoutPlanner.DefaultMargin - Epsilon);
+        Assert.True(placement.Top + placement.Height
+            <= viewport.Bottom - safe.Bottom - BoardContentLayoutPlanner.DefaultMargin + Epsilon);
+    }
+
+    [Fact]
+    public void Plan_SideBoardSafeInsets_KeepSelectionReserve()
+    {
+        BoardSafeInsets safe = BoardContentLayoutPlanner.DefaultSideBoardInsets;
+        Assert.Equal(48 + BoardContentLayoutPlanner.SelectionToolbarReserve, safe.Top);
+        Assert.Equal(96 + BoardContentLayoutPlanner.SelectionToolbarReserve, safe.Bottom);
+
+        var viewport = new AssistantRect(0, 0, 800, 600);
+        var cards = new[] { new BoardCardSize(200, 100) };
+
+        BoardLayoutPlan plan = BoardContentLayoutPlanner.Plan(
+            new AssistantRect(0, 0, 0, 0), cards, viewport, safeInsets: safe);
+
+        Assert.Equal(BoardLayoutStatus.Placed, plan.Status);
+        BoardCardPlacement placement = Assert.Single(plan.Placements);
+        Assert.True(placement.Top >= safe.Top + BoardContentLayoutPlanner.DefaultMargin - Epsilon);
+        Assert.True(placement.Top + placement.Height
+            <= viewport.Bottom - safe.Bottom - BoardContentLayoutPlanner.DefaultMargin + Epsilon);
+    }
 }

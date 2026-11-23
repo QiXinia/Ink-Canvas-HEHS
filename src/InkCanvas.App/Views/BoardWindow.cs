@@ -8,6 +8,7 @@ using InkCanvas.Core.Ink;
 using InkCanvas.Core.Shapes;
 using InkCanvas.Core.AiAssistant;
 using InkCanvas.Features.AiAssistant;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Core.Settings;
 using InkCanvas.Core.Selection;
 using InkCanvas.Features.Board;
@@ -121,6 +122,10 @@ private readonly Grid _surfaceHost;
     private float _viewScale = 1f;
     private long _lastImageTapTicks;
     private Windows.Foundation.Point _lastImageTapPoint;
+    private long _lastNativeTapTicks;
+    private Windows.Foundation.Point _lastNativeTapPoint;
+    private bool _pendingAiNativeEdit;
+    private Windows.Foundation.Point _pendingAiNativeEditPoint;
     private bool _editingAiCard;
 
     // Selection panel clone toggle (WPF ToggleButtonStrokeSelectionClone) and its icon/label,
@@ -197,6 +202,10 @@ private readonly Grid _surfaceHost;
         _surface.DrawCommitted = false;
         _surfaceHost.Children.Add(_surface);
         _surface.InputBegan += OnCanvasInputBegan;
+        _surface.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnNativeObjectDoubleTapped), true);
+        // Select mode makes _surface non-hit-testable, so the double-tap observer must live on the
+        // always-hit-testable host as well; otherwise native objects never receive the edit gesture.
+        _surfaceHost.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(OnNativeObjectDoubleTapped), true);
         // handledEventsToo: the host must also observe presses the element layers already handled,
         // so a second finger can start a selection gesture even when the first landed on an image.
         _surfaceHost.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnSurfaceHostPointerPressed), true);
@@ -621,6 +630,20 @@ private readonly Grid _surfaceHost;
 
     internal Windows.Graphics.RectInt32 GetToolbarBounds() => WindowChrome.GetScreenBounds(this, _dock);
 
+    /// <summary>
+    /// AI 自动布局安全区（屏幕 DIP）：顶部标题/悬浮栏 96，底部按工具栏实测高度；
+    /// 上下再叠加选中对象浮动工具栏的余量，避免卡片被浮动条遮挡。
+    /// </summary>
+    public BoardSafeInsets GetContentSafeInsets()
+    {
+        double reserve = BoardContentLayoutPlanner.SelectionToolbarReserve;
+        return new(
+            96 + reserve,
+            Math.Max(120, _dock.ActualHeight + 16) + reserve,
+            24,
+            24);
+    }
+
     private void ShowBoardFlyout(FlyoutBase flyout, FrameworkElement anchor)
     {
         DismissBoardFlyout();
@@ -825,6 +848,8 @@ private readonly Grid _surfaceHost;
         _media.IsHitTestVisible = select;
         if (!select)
         {
+            _pendingAiNativeEdit = false;
+            _lastNativeTapTicks = 0;
             _images.ClearSelection();
             _media.ClearSelection();
             // WPF InkCanvas drops the selection when the editing mode leaves Select.
@@ -1194,7 +1219,8 @@ private readonly Grid _surfaceHost;
         if (_selectionToolbar is null)
         {
             _selectionToolbar = new SelectionToolbar(() => CurrentController,
-                async () => await SaveSelectionAsImageAsync(), CloneSelectionToNewPage, "衍至新页");
+                async () => await SaveSelectionAsImageAsync(), CloneSelectionToNewPage, "衍至新页",
+                UngroupSelectedAiGroup, instruction => _shell?.ApplyAiBoardEdit(instruction));
             _selectionToolbar.LayoutChanged += () => { _selectionMeasureDirty = true; PlaceSelectionPanel(); };
             _selectionPanel.SizeChanged += (_, _) => PlaceSelectionPanel();
         }
@@ -1240,7 +1266,8 @@ private readonly Grid _surfaceHost;
             float left = PagePaneOpen && !PageNavigator.IsOverview ? (float)_pagePane.ActualWidth + 8 : 8;
             var work = new Rect(left, 8, (float)_contentRoot.ActualWidth - 8, (float)_contentRoot.ActualHeight - 8);
             var dock = new Rect(0, (float)(_contentRoot.ActualHeight - _dock.ActualHeight), (float)_contentRoot.ActualWidth, (float)_contentRoot.ActualHeight);
-            var place = FloatingToolbarLayout.Place(work, CurrentController.SelectionVisualBounds, dock, new Vector2(width, height));
+            var place = FloatingToolbarLayout.Place(work, CurrentController.SelectionVisualBounds, dock,
+                new Vector2(width, height), gap: 8);
             var margin = new Thickness(Math.Round(place.Left), Math.Round(place.Top), 0, 0);
             if (_selectionPanel.Margin != margin) _selectionPanel.Margin = margin;
         });
@@ -1549,20 +1576,32 @@ private static bool IsDarkBackground(BoardBackground background)
     private void OnImageLayerPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var point = e.GetCurrentPoint(_images).Position;
+        var viewPoint = e.GetCurrentPoint(_surfaceHost).Position;
         long now = Environment.TickCount64;
         bool isDoubleTap = now - _lastImageTapTicks <= 450
-            && Math.Abs(point.X - _lastImageTapPoint.X) <= 6
-            && Math.Abs(point.Y - _lastImageTapPoint.Y) <= 6;
+            && Math.Abs(viewPoint.X - _lastImageTapPoint.X) <= 6
+            && Math.Abs(viewPoint.Y - _lastImageTapPoint.Y) <= 6;
         _lastImageTapTicks = isDoubleTap ? 0 : now;
-        _lastImageTapPoint = point;
+        _lastImageTapPoint = viewPoint;
         if (!isDoubleTap) return;
 
+        if (TryEditAiObjectAtView(new Vector2((float)viewPoint.X, (float)viewPoint.Y), "手动双击判定"))
+        {
+            e.Handled = true;
+            return;
+        }
         if (TryEditAiCardAt(point, "手动双击判定"))
             e.Handled = true;
     }
 
     private void OnImageDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
+        var viewPoint = e.GetPosition(_surfaceHost);
+        if (TryEditAiObjectAtView(new Vector2((float)viewPoint.X, (float)viewPoint.Y), "DoubleTapped"))
+        {
+            e.Handled = true;
+            return;
+        }
         var point = e.GetPosition(_images);
         if (TryEditAiCardAt(point, "DoubleTapped"))
             e.Handled = true;
@@ -1639,6 +1678,97 @@ private static bool IsDarkBackground(BoardBackground background)
         finally
         {
             _editingAiCard = false;
+        }
+    }
+
+    /// <summary>原生 AI 文本/公式双击：视图坐标反变换到世界坐标后命中。</summary>
+    private void OnNativeObjectDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (_board?.Current is null) return;
+        var point = e.GetPosition(_surfaceHost);
+        if (TryEditAiObjectAtView(new Vector2((float)point.X, (float)point.Y), "DoubleTapped"))
+            e.Handled = true;
+    }
+
+    /// <summary>
+    /// Shared native-object edit entry point. Logs both hit and miss (world point, object count,
+    /// nearest bounds distance). Uses the same transformed Bounds as the committed canvas renderer.
+    /// </summary>
+    private bool TryEditAiObjectAtView(Vector2 viewPoint, string source)
+    {
+        var controller = _board?.Current;
+        if (controller is null) return false;
+
+        ISelectionElement hit = BoardAiObjectHitTest.HitTestView(
+            _board.CurrentTextObjects, _board.CurrentFormulaObjects,
+            viewPoint.X, viewPoint.Y, controller.ViewTransform,
+            out Vector2 world, out int objectCount, out float nearestDistance);
+        string distance = float.IsPositiveInfinity(nearestDistance) ? "∞" : nearestDistance.ToString("0.##");
+
+        if (hit is null)
+        {
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 原生对象双击（{source}）：view=({viewPoint.X:0.0},{viewPoint.Y:0.0}) "
+                + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 未命中，nearestDistance={distance}",
+                InkCanvas.Core.Diagnostics.LogType.Trace);
+            return false;
+        }
+
+        InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 原生对象双击（{source}）：view=({viewPoint.X:0.0},{viewPoint.Y:0.0}) "
+            + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 命中={hit.GetType().Name} "
+            + $"id={hit.Id} nearestDistance={distance}，进入编辑",
+            InkCanvas.Core.Diagnostics.LogType.Event);
+        _ = EditAiObjectAsync(hit);
+        return true;
+    }
+
+    private async Task EditAiObjectAsync(ISelectionElement element)
+    {
+        if (_editingAiCard) return;
+        if (Content is not FrameworkElement root || root.XamlRoot is null) return;
+
+        _editingAiCard = true;
+        try
+        {
+            bool updated = element switch
+            {
+                BoardTextObject text => await AiCardEditor.EditTextAsync(_board, text, root.XamlRoot),
+                BoardFormulaObject formula => await AiCardEditor.EditFormulaAsync(_board, formula, root.XamlRoot),
+                _ => false,
+            };
+            if (updated)
+            {
+                _board.Current.NotifyElementsChanged();
+                _drawingLayers.Invalidate();
+                _paper.Invalidate();
+            }
+        }
+        finally
+        {
+            _editingAiCard = false;
+        }
+    }
+
+    /// <summary>取消当前选中 AI 对象的共享分组；组内对象随后可独立移动/缩放。</summary>
+    private void UngroupSelectedAiGroup()
+    {
+        string group = _board.Current.SelectedElements
+            .OfType<IGroupedSelectionElement>()
+            .Select(element => element.SelectionGroupId)
+            .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        if (string.IsNullOrWhiteSpace(group))
+        {
+            _ = ShowMessageAsync("当前选择没有 AI 分组。");
+            return;
+        }
+
+        if (_board.UngroupAiObjects(group) > 0)
+        {
+            _board.Current.ClearSelection();
+            _board.Current.NotifyElementsChanged();
+            _drawingLayers.Invalidate();
+            _paper.Invalidate();
         }
     }
 
@@ -1895,11 +2025,24 @@ private static bool IsDarkBackground(BoardBackground background)
         _selectionPointers[p.Id] = p;
         _board.Current.OnPointerDown(p);
         e.Handled = true;
+        TrackNativeDoubleTap(p);
     }
 
     private void OnSurfaceHostPointerMoved(object sender, PointerRoutedEventArgs e)
     {
         if (_board.Current.Tool != InkTool.Select || !_selectionPointers.ContainsKey(e.Pointer.PointerId)) return;
+        if (_pendingAiNativeEdit)
+        {
+            var point = e.GetCurrentPoint(_surfaceHost).Position;
+            if (Math.Abs(point.X - _pendingAiNativeEditPoint.X) > 6
+                || Math.Abs(point.Y - _pendingAiNativeEditPoint.Y) > 6)
+            {
+                _pendingAiNativeEdit = false;
+                InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                    "[AI] 原生对象双击候选已取消：指针移动，按选择拖动处理",
+                    InkCanvas.Core.Diagnostics.LogType.Trace);
+            }
+        }
         var p = ToOverlayPointer(e);
         _selectionPointers[p.Id] = p;
         _board.Current.OnPointerMove(p);
@@ -1908,7 +2051,35 @@ private static bool IsDarkBackground(BoardBackground background)
 
     private void OnSurfaceHostPointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (_board.Current.Tool != InkTool.Select) return;
+        if (_board.Current.Tool != InkTool.Select)
+        {
+            _pendingAiNativeEdit = false;
+            return;
+        }
+        var viewPoint = e.GetCurrentPoint(_surfaceHost).Position;
+        bool pending = _pendingAiNativeEdit;
+        _pendingAiNativeEdit = false;
+        if (pending)
+        {
+            if (Math.Abs(viewPoint.X - _pendingAiNativeEditPoint.X) > 6
+                || Math.Abs(viewPoint.Y - _pendingAiNativeEditPoint.Y) > 6)
+            {
+                InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                    "[AI] 原生对象双击候选已取消：释放位置偏离",
+                    InkCanvas.Core.Diagnostics.LogType.Trace);
+            }
+            else
+            {
+                var editPoint = _pendingAiNativeEditPoint;
+                InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                    $"[AI] 原生对象双击确认：view=({editPoint.X:0.0},{editPoint.Y:0.0})，释放后打开编辑",
+                    InkCanvas.Core.Diagnostics.LogType.Trace);
+                // Complete this click/selection first, then open the editor on the next dispatcher turn.
+                DispatcherQueue.TryEnqueue(() =>
+                    TryEditAiObjectAtView(
+                        new Vector2((float)editPoint.X, (float)editPoint.Y), "双击释放"));
+            }
+        }
         var p = ToOverlayPointer(e);
         if (_selectionPointers.Remove(p.Id))
         {
@@ -1920,9 +2091,52 @@ private static bool IsDarkBackground(BoardBackground background)
 
     private void OnSurfaceHostPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
+        _pendingAiNativeEdit = false;
         if (_board.Current.Tool != InkTool.Select) return;
         if (_selectionPointers.Remove(e.Pointer.PointerId, out var last))
             _board.Current.OnPointerUp(last);
+    }
+
+    /// <summary>
+    /// Manual fallback for native-object double tap: observes presses only (never suppresses the
+    /// selection pointer stream). A second press within 450 ms / 6 DIP becomes a candidate that is
+    /// confirmed on release without movement, so drag transforms keep working.
+    /// </summary>
+    private void TrackNativeDoubleTap(OverlayPointer p)
+    {
+        var point = new Windows.Foundation.Point(p.X, p.Y);
+        long now = Environment.TickCount64;
+        bool isDoubleTap = now - _lastNativeTapTicks <= 450
+            && Math.Abs(point.X - _lastNativeTapPoint.X) <= 6
+            && Math.Abs(point.Y - _lastNativeTapPoint.Y) <= 6;
+        _lastNativeTapTicks = isDoubleTap ? 0 : now;
+        _lastNativeTapPoint = point;
+        _pendingAiNativeEdit = false;
+        if (!isDoubleTap) return;
+
+        var controller = _board?.Current;
+        if (controller is null) return;
+        ISelectionElement hit = BoardAiObjectHitTest.HitTestView(
+            _board.CurrentTextObjects, _board.CurrentFormulaObjects,
+            p.X, p.Y, controller.ViewTransform,
+            out Vector2 world, out int objectCount, out float nearestDistance);
+        string distance = float.IsPositiveInfinity(nearestDistance) ? "∞" : nearestDistance.ToString("0.##");
+        if (hit is null)
+        {
+            InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 原生对象双击候选（手动）：view=({p.X:0.0},{p.Y:0.0}) "
+                + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 未命中，nearestDistance={distance}",
+                InkCanvas.Core.Diagnostics.LogType.Trace);
+            return;
+        }
+
+        _pendingAiNativeEdit = true;
+        _pendingAiNativeEditPoint = point;
+        InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 原生对象双击候选（手动）：view=({p.X:0.0},{p.Y:0.0}) "
+            + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 命中={hit.GetType().Name} "
+            + $"id={hit.Id} nearestDistance={distance}，等待释放确认（不拦截拖动）",
+            InkCanvas.Core.Diagnostics.LogType.Trace);
     }
 
     /// <summary>

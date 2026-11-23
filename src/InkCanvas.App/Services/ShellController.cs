@@ -3527,6 +3527,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     // ---- AI 助教 ---------------------------------------------------------
 
+    /// <summary>板工具栏/选中态连续修改入口：复用预览编辑策略与选中 AI 组批量更新。</summary>
+    public void ApplyAiBoardEdit(string instruction)
+        => OnAiBoardPlanEditRequested(instruction);
+
     public void OpenAiAssistant()
     {
         Core.Diagnostics.FileLog.WriteLogToFile(
@@ -4824,6 +4828,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_aiSession is null || _aiAssistant is null) return;
         if (!AiTargetStillCurrent(writeBack: false)) return;
 
+        // 选中 AI 组时优先本地修改现有原生对象，不新增、不调用模型。
+        if (TryApplySelectedAiObjectEdit(instruction)) return;
+
         AssistantBoardPlan plan = _aiBoardPlan ?? _aiSession.BoardPlan;
         if (plan is null || plan.IsEmpty)
         {
@@ -4978,15 +4985,14 @@ public sealed partial class ShellController : IShellActions, IDisposable
         window.SetBusy(true);
         window.SetBoardPlanBusy(true);
 
-        BoardPlanRenderResult rendered;
+        BoardPlanNativeResult created;
         try
         {
-            rendered = await BoardPlanWriter.RenderAsync(
-                selectedPlan, instruction, null, window.Content as Microsoft.UI.Xaml.FrameworkElement);
+            created = BoardPlanWriter.Create(selectedPlan, instruction);
         }
         catch (Exception ex)
         {
-            rendered = new BoardPlanRenderResult { Error = ex.Message };
+            created = new BoardPlanNativeResult { Error = ex.Message };
         }
 
         if (!ReferenceEquals(_aiAssistant, window)) return;
@@ -4997,13 +5003,13 @@ public sealed partial class ShellController : IShellActions, IDisposable
             return;
         }
 
-        if (!rendered.Success)
+        if (!created.Success)
         {
             window.SetBoardPlanBusy(false);
             window.SetBusy(false);
-            window.ShowNotice($"板书渲染失败：{rendered.Error}，已保留计划，可重试。");
+            window.ShowNotice($"板书对象创建失败：{created.Error}，已保留计划，可重试。");
             Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[AI] 板书渲染失败：intent={_aiBoardIntent}，error={rendered.Error}",
+                $"[AI] 板书对象创建失败：intent={_aiBoardIntent}，error={created.Error}",
                 Core.Diagnostics.LogType.Error);
             return;
         }
@@ -5019,9 +5025,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
             return;
         }
 
-        var sizes = new List<BoardCardSize>(rendered.Cards.Count);
-        foreach (BoardPlanCardDraft card in rendered.Cards)
-            sizes.Add(new BoardCardSize(card.Width, card.Height));
+        var sizes = new List<BoardCardSize>(created.Count);
+        foreach (var text in created.Texts)
+            sizes.Add(new BoardCardSize(text.Width, text.Height));
+        foreach (var formula in created.Formulas)
+            sizes.Add(new BoardCardSize(formula.Width, formula.Height));
 
         bool selectionOnly = board.Current.HasSelection;
         bool hasStrokeSelection = selectionOnly && board.Current.Selection.Count > 0;
@@ -5037,7 +5045,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
             : board.GetContentBounds();
         var contentBounds = new AssistantRect(content.Left, content.Top, content.Right, content.Bottom);
         AssistantRect viewport = BoardViewportRect(board);
-        BoardLayoutPlan layout = BoardContentLayoutPlanner.Plan(contentBounds, sizes, viewport);
+        BoardSafeInsets safeInsets = BoardSafeInsetsFor(board);
+        BoardLayoutPlan layout = BoardContentLayoutPlanner.Plan(
+            contentBounds, sizes, viewport, safeInsets: safeInsets);
 
         int writePageIndex = pageIndex;
         bool newPage = false;
@@ -5071,7 +5081,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 newPage = true;
                 writePageIndex = board.CurrentIndex;
                 writeLayout = BoardContentLayoutPlanner.Plan(
-                    new AssistantRect(0, 0, 0, 0), sizes, BoardViewportRect(board));
+                    new AssistantRect(0, 0, 0, 0), sizes, BoardViewportRect(board),
+                    safeInsets: BoardSafeInsetsFor(board));
 
                 if (!writeLayout.IsComplete)
                 {
@@ -5094,64 +5105,73 @@ public sealed partial class ShellController : IShellActions, IDisposable
             window.SetBusy(false);
             window.ShowNotice(writeLayout.Message);
             Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[AI] 板书空间不足：blocks={rendered.Cards.Count}，status={writeLayout.Status}，"
+                $"[AI] 板书空间不足：blocks={created.Count}，status={writeLayout.Status}，"
                 + $"message={writeLayout.Message}",
                 Core.Diagnostics.LogType.Info);
             return;
         }
 
-        var assets = new List<BoardImageAsset>(rendered.Cards.Count);
-        for (int index = 0; index < rendered.Cards.Count; index++)
+        if (!newPage && HasSameInstructionOnPage(board, instruction))
         {
-            BoardPlanCardDraft card = rendered.Cards[index];
+            window.SetBoardPlanBusy(false);
+            window.SetBusy(false);
+            window.ShowNotice("目标页已存在相同指令的 AI 板书对象，请先选中修改或清空后再写入；未重复插入。");
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"[AI] 板书写入已阻止：同页已有相同 Instruction，instruction={instruction}",
+                Core.Diagnostics.LogType.Info);
+            return;
+        }
+
+        string groupId = Guid.NewGuid().ToString("N");
+        for (int index = 0; index < created.Texts.Count; index++)
+        {
             BoardCardPlacement placement = writeLayout.Placements[index];
-            assets.Add(new BoardImageAsset
-            {
-                Name = card.Name,
-                Data = card.Png,
-                ContentType = "image/png",
-                Left = (float)placement.Left,
-                Top = (float)placement.Top,
-                Width = (float)placement.Width,
-                Height = (float)placement.Height,
-                Metadata = card.Metadata,
-            });
+            created.Texts[index].Left = (float)placement.Left;
+            created.Texts[index].Top = (float)placement.Top;
+            created.Texts[index].Width = (float)placement.Width;
+            created.Texts[index].Height = (float)placement.Height;
+        }
+        for (int index = 0; index < created.Formulas.Count; index++)
+        {
+            BoardCardPlacement placement = writeLayout.Placements[created.Texts.Count + index];
+            created.Formulas[index].Left = (float)placement.Left;
+            created.Formulas[index].Top = (float)placement.Top;
+            created.Formulas[index].Width = (float)placement.Width;
+            created.Formulas[index].Height = (float)placement.Height;
         }
 
         bool effectiveReplace = replaceOriginal && !newPage;
         int removedStrokes = 0;
-        IReadOnlyList<int> indexes;
+        IReadOnlyList<Guid> objectIds;
 
         if (effectiveReplace)
         {
             if (selectionOnly && !hasStrokeSelection)
             {
-                window.ShowNotice("选区中没有笔画，已仅插入新卡片（未删除原迹）。");
-                indexes = board.AddImagesAtomic(assets, "AI 板书");
+                window.ShowNotice("选区中没有笔画，已仅插入原生对象（未删除原迹）。");
+                objectIds = board.AddAiObjectsAtomic(created.Texts, created.Formulas, "AI 板书", groupId);
             }
             else
             {
                 removedStrokes = strokesToRemove.Count;
-                bool replaced = board.ReplaceStrokesWithImagesAtomic(strokesToRemove, assets, "AI 板书替换");
-                if (replaced)
-                {
-                    indexes = Enumerable.Range(0, assets.Count).ToArray();
-                }
-                else
+                objectIds = board.ReplaceStrokesWithAiObjectsAtomic(
+                    strokesToRemove, created.Texts, created.Formulas, "AI 板书替换", groupId);
+                if (objectIds.Count == 0)
                 {
                     removedStrokes = 0;
-                    indexes = board.AddImagesAtomic(assets, "AI 板书");
-                    if (indexes.Count > 0)
-                        window.ShowNotice("当前页没有可替换的原笔画，已仅插入新卡片。");
+                    objectIds = board.AddAiObjectsAtomic(created.Texts, created.Formulas, "AI 板书", groupId);
+                    if (objectIds.Count > 0)
+                        window.ShowNotice("当前页没有可替换的原笔画，已仅插入原生对象。");
                 }
             }
         }
         else
         {
-            indexes = board.AddImagesAtomic(assets, newPage ? "AI 板书（新页）" : "AI 板书");
+            objectIds = board.AddAiObjectsAtomic(created.Texts, created.Formulas,
+                newPage ? "AI 板书（新页）" : "AI 板书", groupId);
         }
 
-        if (indexes.Count == 0)
+        if (objectIds.Count == 0)
         {
             if (newPage) board.RemovePage(writePageIndex);
             window.SetBoardPlanBusy(false);
@@ -5159,6 +5179,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
             window.ShowNotice("板书写入失败，已保留计划，可重试。");
             return;
         }
+
+        SelectAiBoardGroup(board, groupId);
 
         if (newPage)
         {
@@ -5178,8 +5200,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Core.Diagnostics.FileLog.WriteLogToFile(
             $"[AI] 板书写入完成：board={(_aiTarget?.Kind == AssistantCanvasKind.SideBoard ? "side" : "main")}，"
             + $"page={writePageIndex}，newPage={newPage}，selected={selectedPlan.Blocks.Count}/{plan.Blocks.Count}，"
-            + $"replace={effectiveReplace}，removedStrokes={removedStrokes}，blocks={assets.Count}，"
-            + $"layout={writeLayout.Status}，scale={writeLayout.Scale:0.00}，indexes={string.Join(",", indexes)}",
+            + $"replace={effectiveReplace}，removedStrokes={removedStrokes}，"
+            + $"nativeTexts={created.Texts.Count}，nativeFormulas={created.Formulas.Count}，"
+            + $"objects={objectIds.Count}，images=0，layout={writeLayout.Status}，"
+            + $"scale={writeLayout.Scale:0.00}，ids={string.Join(",", objectIds)}",
             Core.Diagnostics.LogType.Event);
 
         _aiBoardPlan = null;
@@ -5193,12 +5217,80 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
         string scaleNote = string.IsNullOrEmpty(writeLayout.Message) ? "" : writeLayout.Message;
         string actionNote = newPage
-            ? "已写入新的一页；页面保留，可用 Ctrl+Z 撤销卡片。"
+            ? "已写入新的一页（原生对象）；页面保留，可用 Ctrl+Z 撤销。"
             : removedStrokes > 0
-                ? $"已替换原板书（删除 {removedStrokes} 笔），可 Ctrl+Z 一次撤销。"
-                : "已写入展板，可 Ctrl+Z 整体撤销。";
+                ? $"已替换原板书（删除 {removedStrokes} 笔），原生对象可 Ctrl+Z 一次撤销。"
+                : "已写入展板（原生对象），可 Ctrl+Z 整体撤销。";
         window.ShowNotice(scaleNote + actionNote);
     }
+
+    /// <summary>写入后选中同一次 AI 写入的全部原生对象，便于整体移动/缩放与取消分组。</summary>
+    private static void SelectAiBoardGroup(BoardService board, string groupId)
+    {
+        if (board is null || string.IsNullOrWhiteSpace(groupId)) return;
+
+        var first = board.GetSelectionElements()
+            .FirstOrDefault(element => element.IsPresent
+                && element is IGroupedSelectionElement grouped
+                && string.Equals(grouped.SelectionGroupId, groupId, StringComparison.Ordinal));
+        if (first is not null) board.Current.SelectElement(first);
+    }
+
+    /// <summary>
+    /// 连续修改指令优先作用于当前选中的 AI 对象组：批量更新样式/过滤删除，
+    /// 一次撤销、不新增对象、不调用 AI。无选中 AI 组时返回 false，交给预览 plan 路径。
+    /// </summary>
+    private bool TryApplySelectedAiObjectEdit(string instruction)
+    {
+        BoardService board = AiTargetBoard();
+        if (board?.Current is null) return false;
+
+        var groups = board.Current.SelectedElements
+            .OfType<IGroupedSelectionElement>()
+            .Select(element => element.SelectionGroupId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal);
+        if (groups.Count == 0) return false;
+
+        var targets = board.CurrentTextObjects
+            .Where(text => groups.Contains(text.GroupId))
+            .Cast<ISelectionElement>()
+            .Concat(board.CurrentFormulaObjects.Where(formula => groups.Contains(formula.GroupId)))
+            .ToList();
+        if (targets.Count == 0) return false;
+
+        if (!BoardPlanEditPolicy.TryParseObjectEdit(
+                instruction, out BoardPlanEditPolicy.BoardObjectEdit edit, out _))
+            return false;
+
+        if (!board.ApplyAiObjectEdit(targets, edit, "连续修改 AI 板书"))
+        {
+            _aiAssistant?.ShowNotice("选中 AI 对象已是最新状态，或过滤后没有可保留对象。");
+            return true;
+        }
+
+        string primaryGroup = groups.First();
+        board.Current.ClearSelection();
+        SelectAiBoardGroup(board, primaryGroup);
+        board.Current.NotifyElementsChanged();
+        _aiAssistant?.ShowNotice($"已更新选中 AI 组（{targets.Count} 个对象），未新增、未调用 AI。");
+        Core.Diagnostics.FileLog.WriteLogToFile(
+            $"[AI] 连续修改现有 AI 对象：groups={groups.Count}，targets={targets.Count}，"
+            + $"fontScale={edit.FontScale:0.00}，columns={edit.Columns?.ToString() ?? "-"}，"
+            + $"keep={string.Join(",", edit.KeepKinds)}，remove={string.Join(",", edit.RemoveKinds)}",
+            Core.Diagnostics.LogType.Event);
+        return true;
+    }
+
+    private static bool HasSameInstructionOnPage(BoardService board, string instruction)
+    {
+        if (board is null || string.IsNullOrWhiteSpace(instruction)) return false;
+        return board.CurrentTextObjects.Any(text =>
+                   string.Equals(text.Instruction, instruction, StringComparison.Ordinal))
+            || board.CurrentFormulaObjects.Any(formula =>
+                   string.Equals(formula.Instruction, instruction, StringComparison.Ordinal));
+    }
+
 
     /// <summary>空间不足时让用户选择：缩小排版写入、写入新的一页或取消。</summary>
     private async Task<BoardLayoutChoice> ShowBoardLayoutDialogAsync(
@@ -5234,6 +5326,24 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (result == ContentDialogResult.Primary) return spec.PrimaryChoice;
         if (result == ContentDialogResult.Secondary) return spec.SecondaryChoice;
         return BoardLayoutChoice.Cancel;
+    }
+
+    /// <summary>把目标窗口工具栏高度换算为 world DIP 安全区（视图缩放时按比例放大）。</summary>
+    private BoardSafeInsets BoardSafeInsetsFor(BoardService board)
+    {
+        BoardSafeInsets screenInsets = board == Services.SideBoard
+            ? _sideBoard?.GetContentSafeInsets() ?? BoardContentLayoutPlanner.DefaultSideBoardInsets
+            : _board?.GetContentSafeInsets() ?? BoardContentLayoutPlanner.DefaultMainBoardInsets;
+
+        Matrix3x2 transform = board.Current.ViewTransform;
+        double scale = Math.Sqrt(Math.Abs(transform.M11 * transform.M22 - transform.M12 * transform.M21));
+        if (!(scale > 0.05) || !double.IsFinite(scale)) scale = 1.0;
+
+        return new BoardSafeInsets(
+            screenInsets.Top / scale,
+            screenInsets.Bottom / scale,
+            screenInsets.Left / scale,
+            screenInsets.Right / scale);
     }
 
     /// <summary>当前板视口（客户区）反变换到世界坐标，供自动落点使用。</summary>

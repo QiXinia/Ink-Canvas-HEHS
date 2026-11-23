@@ -41,6 +41,8 @@ public interface IShellActions
     void OpenPresetEditor();
     void PasteSpotlightToBoard();
     void AskAiFromSpotlight();
+    /// <summary>对当前选中 AI 对象或预览 plan 应用本地连续修改指令（不调用 AI）。</summary>
+    void ApplyAiBoardEdit(string instruction) { }
     void OpenPenPalette(bool highlighter);
     void OpenShapePicker();
     void InsertImage();

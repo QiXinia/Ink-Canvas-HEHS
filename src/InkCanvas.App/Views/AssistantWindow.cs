@@ -1435,13 +1435,12 @@ public sealed class AssistantWindow : Window
         string text = _followUp.Text?.Trim();
         if (string.IsNullOrEmpty(text)) return;
 
-        // 预览存在时先尝试本地调整（字号/列/过滤/移动/行距），命中则不发起网络请求。
-        if (_boardPlan is { IsEmpty: false }
-            && BoardPlanEditPolicy.TryApply(_boardPlan, text, out _, out _))
+        // 可识别的连续修改统一交给 Shell：优先作用于当前选中的 AI 对象组，
+// 无选中时才回到预览 plan；两条路径都不调用 AI、不新增内容。
+        if (BoardPlanEditPolicy.TryParseObjectEdit(text, out _, out _))
         {
             _followUp.Text = "";
             BoardPlanEditRequested?.Invoke(text);
-            ShowNotice("已本地调整预览，未重新生成。");
             return;
         }
 

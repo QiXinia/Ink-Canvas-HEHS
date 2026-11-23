@@ -3,11 +3,13 @@ using System.Numerics;
 using InkCanvas.App.Services;
 using InkCanvas.Controls.Controls;
 using InkCanvas.Controls.Theming;
+using InkCanvas.Core.AiAssistant;
 using InkCanvas.Core.Diagnostics;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Settings;
 using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
 using InkCanvas.Platform.System;
@@ -255,6 +257,20 @@ BindPage();
         WindowChrome.Place(this, clamped.X, clamped.Y, clamped.Width, clamped.Height);
     }
 
+    /// <summary>
+    /// AI 自动布局安全区（屏幕 DIP）：顶部标题 48，底部按工具栏实测高度；
+    /// 上下再叠加选中对象浮动工具栏的余量。
+    /// </summary>
+    public BoardSafeInsets GetContentSafeInsets()
+    {
+        double reserve = BoardContentLayoutPlanner.SelectionToolbarReserve;
+        return new(
+            48 + reserve,
+            Math.Max(96, _bar.ActualHeight + 12) + reserve,
+            12,
+            12);
+    }
+
     private Border BuildToolbar()
     {
         var row1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, HorizontalAlignment = HorizontalAlignment.Center };
@@ -276,6 +292,10 @@ BindPage();
         ToolButton(row2, Glyphs.SlideList, "页面", "页面管理与总览", () => SetPagePaneOpen(!_pagePaneOpen));
         _nextButton = ToolButton(row2, Glyphs.ChevronRight, "下一页", "下一页", NavigateNext);
         ToolButton(row2, Glyphs.Add, "加页", "新增一页", InsertPage);
+        ToolButton(row2, Glyphs.Delete, "解组", "取消 AI 对象分组", UngroupSelectedAiGroup);
+        ToolButton(row2, Glyphs.Ai, "A+", "AI 字号放大", () => _shell?.ApplyAiBoardEdit("字号大一点"), 38);
+        ToolButton(row2, Glyphs.Ai, "两列", "AI 改为两列", () => _shell?.ApplyAiBoardEdit("改成两列"), 44);
+        ToolButton(row2, Glyphs.Ai, "公式", "AI 只保留公式", () => _shell?.ApplyAiBoardEdit("只保留公式"), 44);
         ToolButton(row2, Glyphs.FoldWpf, "收回", "收回板中板", RequestHide);
 
         var rows = new StackPanel { Spacing = 2 };
@@ -471,8 +491,27 @@ BindPage();
     private bool TryEditAiCardAt(Windows.Foundation.Point point, string source)
     {
         if (_boundController is null) return false;
-        if (!Matrix3x2.Invert(_boundController.ViewTransform, out Matrix3x2 inverse)) return false;
-        Vector2 world = Vector2.Transform(new Vector2((float)point.X, (float)point.Y), inverse);
+        Vector2 viewPoint = new((float)point.X, (float)point.Y);
+        var nativeHit = BoardAiObjectHitTest.HitTestView(
+            _board.CurrentTextObjects, _board.CurrentFormulaObjects,
+            viewPoint.X, viewPoint.Y, _boundController.ViewTransform,
+            out Vector2 world, out int objectCount, out float nearestDistance);
+        string distance = float.IsPositiveInfinity(nearestDistance) ? "∞" : nearestDistance.ToString("0.##");
+        if (nativeHit is not null)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板原生对象双击（{source}）：view=({point.X:0.0},{point.Y:0.0}) "
+                + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 命中={nativeHit.GetType().Name} "
+                + $"id={nativeHit.Id} nearestDistance={distance}，进入编辑",
+                LogType.Event);
+            _ = EditAiObjectAsync(nativeHit);
+            return true;
+        }
+
+        FileLog.WriteLogToFile(
+            $"[AI] 板中板原生对象双击（{source}）：view=({point.X:0.0},{point.Y:0.0}) "
+            + $"world=({world.X:0.0},{world.Y:0.0}) objects={objectCount} 未命中，nearestDistance={distance}",
+            LogType.Trace);
 
         BoardImageAsset asset = BoardImageHitTest.HitTest(_board.CurrentImages, world.X, world.Y);
         if (asset is null)
@@ -545,6 +584,56 @@ BindPage();
         finally
         {
             _editingAiCard = false;
+        }
+    }
+
+    private async Task EditAiObjectAsync(ISelectionElement element)
+    {
+        if (_editingAiCard) return;
+        if (Content is not FrameworkElement root || root.XamlRoot is null) return;
+
+        _editingAiCard = true;
+        try
+        {
+            bool updated = element switch
+            {
+                BoardTextObject text => await AiCardEditor.EditTextAsync(_board, text, root.XamlRoot),
+                BoardFormulaObject formula => await AiCardEditor.EditFormulaAsync(_board, formula, root.XamlRoot),
+                _ => false,
+            };
+            if (updated)
+            {
+                _board.Current.NotifyElementsChanged();
+                _paper.Invalidate();
+                _drawingLayers.Invalidate();
+            }
+        }
+        catch (Exception ex)
+        {
+            FileLog.WriteLogToFile(
+                $"[AI] 板中板原生对象编辑失败：{ex.Message ?? ex.GetType().Name}", LogType.Error);
+        }
+        finally
+        {
+            _editingAiCard = false;
+        }
+    }
+
+    /// <summary>取消当前选中 AI 对象的共享分组。</summary>
+    private void UngroupSelectedAiGroup()
+    {
+        string group = _board.Current.SelectedElements
+            .OfType<IGroupedSelectionElement>()
+            .Select(element => element.SelectionGroupId)
+            .FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        if (string.IsNullOrWhiteSpace(group)) return;
+
+        if (_board.UngroupAiObjects(group) > 0)
+        {
+            _board.Current.ClearSelection();
+            _board.Current.NotifyElementsChanged();
+            _paper.Invalidate();
+            _drawingLayers.Invalidate();
         }
     }
 

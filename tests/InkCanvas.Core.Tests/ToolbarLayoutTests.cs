@@ -39,6 +39,56 @@ public sealed class ToolbarLayoutTests
     }
 
     [Fact]
+    public void SelectionToolbarPrefersTheAreaAboveTheSelection()
+    {
+        var work = new Rect(0, 8, 1200, 792);
+        var selection = new Rect(400, 300, 700, 500);
+        var result = FloatingToolbarLayout.Place(work, selection, Rect.Empty, new Vector2(274, 58), gap: 8);
+
+        Assert.False(result.Intersects(selection));
+        Assert.Equal(selection.Top - 8, result.Bottom, 2);
+        Assert.True(result.Top >= work.Top && result.Bottom <= work.Bottom);
+    }
+
+    [Fact]
+    public void SelectionToolbarFallsBelowWhenAboveWouldOverlapTheTopEdge()
+    {
+        var work = new Rect(0, 8, 1200, 792);
+        var selection = new Rect(400, 12, 700, 150);
+        var result = FloatingToolbarLayout.Place(work, selection, Rect.Empty, new Vector2(274, 58), gap: 8);
+
+        Assert.False(result.Intersects(selection));
+        Assert.True(result.Top >= selection.Bottom + 8 - .01f);
+        Assert.True(result.Top >= work.Top && result.Bottom <= work.Bottom);
+    }
+
+    [Fact]
+    public void SelectionToolbarAvoidsSelectionAndDockNearTheBottom()
+    {
+        var work = new Rect(0, 8, 1200, 792);
+        var selection = new Rect(400, 620, 700, 760);
+        var dock = new Rect(0, 720, 1200, 792);
+        var result = FloatingToolbarLayout.Place(work, selection, dock, new Vector2(274, 58), gap: 8);
+
+        Assert.False(result.Intersects(selection));
+        Assert.False(result.Intersects(dock));
+        Assert.True(result.Left >= work.Left && result.Right <= work.Right);
+        Assert.True(result.Top >= work.Top && result.Bottom <= work.Bottom);
+    }
+
+    [Fact]
+    public void SelectionToolbarIsHorizontallyClampedAtTheWindowEdge()
+    {
+        var work = new Rect(0, 8, 1200, 792);
+        var selection = new Rect(1000, 300, 1150, 450);
+        var result = FloatingToolbarLayout.Place(work, selection, Rect.Empty, new Vector2(274, 58), gap: 8);
+
+        Assert.False(result.Intersects(selection));
+        Assert.True(result.Left >= work.Left && result.Right <= work.Right);
+        Assert.Equal(work.Right, result.Right, 2);
+    }
+
+    [Fact]
     public void HighlighterWidthSurvivesToolSwitchAndStrokeSave()
     {
         using var controller = new InkController();

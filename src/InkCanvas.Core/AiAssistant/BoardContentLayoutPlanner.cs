@@ -6,6 +6,17 @@ public readonly record struct BoardCardSize(double Width, double Height);
 /// <summary>规划器输出的单卡落点（世界坐标，DIP）。</summary>
 public readonly record struct BoardCardPlacement(int Index, double Left, double Top, double Width, double Height);
 
+/// <summary>
+/// 自动布局安全区（world DIP）：避开展板顶部/底部悬浮工具栏与边缘。
+/// 由调用方按窗口实际工具栏高度换算后传入。
+/// </summary>
+public readonly record struct BoardSafeInsets(double Top, double Bottom, double Left, double Right)
+{
+    public static BoardSafeInsets None => default;
+
+    public bool IsZero => Top <= 0 && Bottom <= 0 && Left <= 0 && Right <= 0;
+}
+
 /// <summary>一次板书落点规划的结论。</summary>
 public enum BoardLayoutStatus
 {
@@ -74,20 +85,36 @@ public static class BoardContentLayoutPlanner
     /// <summary>最小缩小目标。</summary>
     public const double ShrinkMinimum = 0.5;
 
-    /// <summary>内容包围盒占视口面积达到该比例时判定“需要新页”。</summary>
+    /// <summary>内容包围盒占可用区面积达到该比例时判定“需要新页”。</summary>
     public const double FullPageRatio = 0.6;
+
+    /// <summary>
+    /// 选中对象浮动工具栏（收起/克隆/样式/变换/层级/更多/删除）的预留高度。
+    /// 工具栏位于对象底部边缘，空间不足时会翻转到上方，故上下安全区都叠加该余量。
+    /// </summary>
+    public const double SelectionToolbarReserve = 72;
+
+    /// <summary>主展板默认安全区（顶部标题/悬浮栏 96 + 选中工具栏 72，底部工具栏 120 + 选中工具栏 72，左右 24）。</summary>
+    public static readonly BoardSafeInsets DefaultMainBoardInsets =
+        new(96 + SelectionToolbarReserve, 120 + SelectionToolbarReserve, 24, 24);
+
+    /// <summary>板中板默认安全区（顶部 48 + 选中工具栏 72，底部工具栏 96 + 选中工具栏 72，左右 12）。</summary>
+    public static readonly BoardSafeInsets DefaultSideBoardInsets =
+        new(48 + SelectionToolbarReserve, 96 + SelectionToolbarReserve, 12, 12);
 
     private const int MaxProbes = 60000;
 
     /// <param name="contentBounds">当前页已有内容包围盒（世界坐标）；空页传 <see cref="AssistantRect"/> 默认值。</param>
     /// <param name="cards">待写入卡片尺寸（DIP）。</param>
     /// <param name="viewport">可视区域（世界坐标）。</param>
+    /// <param name="safeInsets">顶部/底部/左右安全区（world DIP），避开展板工具栏。</param>
     public static BoardLayoutPlan Plan(
         AssistantRect contentBounds,
         IReadOnlyList<BoardCardSize> cards,
         AssistantRect viewport,
         double gap = DefaultGap,
-        double margin = DefaultMargin)
+        double margin = DefaultMargin,
+        BoardSafeInsets safeInsets = default)
     {
         if (cards is null || cards.Count == 0)
             return new BoardLayoutPlan { Status = BoardLayoutStatus.Placed, Message = "没有可写入的板书内容。" };
@@ -96,10 +123,10 @@ public static class BoardContentLayoutPlanner
         margin = Math.Max(0, margin);
 
         var usable = new AssistantRect(
-            viewport.Left + margin,
-            viewport.Top + margin,
-            viewport.Right - margin,
-            viewport.Bottom - margin);
+            viewport.Left + margin + safeInsets.Left,
+            viewport.Top + margin + safeInsets.Top,
+            viewport.Right - margin - safeInsets.Right,
+            viewport.Bottom - margin - safeInsets.Bottom);
         if (usable.IsEmpty)
             return NeedsMove("当前视口太小，无法排下板书；请先调整窗口或清理原迹，或写入新的一页。");
 
@@ -119,7 +146,7 @@ public static class BoardContentLayoutPlanner
             return NeedsShrinkPlan(placements, ShrinkMinimum,
                 $"当前页空间不足，建议缩小到 {Percent(ShrinkMinimum)} 后写入。");
 
-        double ratio = Coverage(contentBounds, viewport);
+        double ratio = Coverage(contentBounds, usable);
         if (!contentBounds.IsEmpty && ratio >= FullPageRatio)
             return NeedsNewPage(
                 $"当前页空间不足，缩小到 {Percent(ShrinkMinimum)} 仍无法排下；建议写入新的一页。");

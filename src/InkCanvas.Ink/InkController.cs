@@ -269,8 +269,22 @@ public sealed partial class InkController : IDisposable
         Tool = InkTool.Select;
         ClearSelection();
         SelectedElements.Add(element);
+        AddSelectionGroupMembers(element);
         SelectionChanged?.Invoke();
         Invalidated?.Invoke();
+    }
+
+    /// <summary>AI objects written in one gesture share a GroupId; selecting one selects the whole group.</summary>
+    private void AddSelectionGroupMembers(ISelectionElement element)
+    {
+        if (element is not IGroupedSelectionElement grouped) return;
+        string groupId = grouped.SelectionGroupId;
+        if (string.IsNullOrEmpty(groupId) || GetSelectableElements is null) return;
+        foreach (ISelectionElement candidate in GetSelectableElements())
+            if (candidate.IsPresent && candidate is IGroupedSelectionElement sibling
+                && string.Equals(sibling.SelectionGroupId, groupId, StringComparison.Ordinal)
+                && !SelectedElements.Contains(candidate))
+                SelectedElements.Add(candidate);
     }
 
     public void SetSelectionImageOpacity(float opacity)
@@ -1588,7 +1602,11 @@ public sealed partial class InkController : IDisposable
             if (hitElement is not null)
             {
                 if (p.Control && SelectedElements.Contains(hitElement)) SelectedElements.Remove(hitElement);
-                else if (!SelectedElements.Contains(hitElement)) SelectedElements.Add(hitElement);
+                else if (!SelectedElements.Contains(hitElement))
+                {
+                    SelectedElements.Add(hitElement);
+                    AddSelectionGroupMembers(hitElement);
+                }
             }
             if (hitStroke is not null)
             {

@@ -138,6 +138,13 @@ public static class BoardPlanEditPolicy
                 changes.Add($"列数={columns.Value}");
             }
 
+            string align = ReadAlign(clause);
+            if (!string.IsNullOrEmpty(align))
+            {
+                ApplyAlign(blocks, align);
+                changes.Add($"对齐={align}");
+            }
+
             if (ApplyFilter(clause, ref blocks, changes) && blocks.Count == 0)
             {
                 message = "过滤后没有可保留的板书块";
@@ -286,6 +293,21 @@ public static class BoardPlanEditPolicy
             EnsureStyle(block).Columns = clamped;
     }
 
+    private static void ApplyAlign(List<AssistantBoardBlock> blocks, string align)
+    {
+        foreach (AssistantBoardBlock block in blocks)
+            EnsureStyle(block).Align = align;
+    }
+
+    private static string ReadAlign(string clause)
+    {
+        if (ContainsAny(clause, "两端对齐", "分散对齐", "justify")) return "justify";
+        if (ContainsAny(clause, "右对齐", "靠右", "右端")) return "right";
+        if (ContainsAny(clause, "左对齐", "靠左", "左端")) return "left";
+        if (ContainsAny(clause, "居中", "中间对齐", "center")) return "center";
+        return null;
+    }
+
     private static void ReassignRects(List<AssistantBoardBlock> blocks, int columns)
     {
         if (blocks.Count == 0) return;
@@ -337,6 +359,161 @@ public static class BoardPlanEditPolicy
             Note = source.Note ?? "",
             Confidence = source.Confidence,
         };
+    }
+
+    /// <summary>
+    /// 解析后的连续修改意图，可同时用于预览 plan 与当前选中的原生对象。
+    /// 只描述样式/过滤，不包含任何 AI 生成内容。
+    /// </summary>
+    public sealed class BoardObjectEdit
+    {
+        public double? ExplicitFontSize { get; set; }
+
+        public double FontScale { get; set; } = 1;
+
+        public int? Columns { get; set; }
+
+        public double? ExplicitLineHeight { get; set; }
+
+        public double LineHeightScale { get; set; } = 1;
+
+        public string Align { get; set; } = "";
+
+        public string TargetBoard { get; set; } = "";
+
+        public HashSet<string> KeepKinds { get; } = new();
+
+        public HashSet<string> RemoveKinds { get; } = new();
+
+        public bool HasStyleChange => ExplicitFontSize.HasValue
+            || Math.Abs(FontScale - 1) > 0.001
+            || Columns.HasValue
+            || ExplicitLineHeight.HasValue
+            || Math.Abs(LineHeightScale - 1) > 0.001
+            || !string.IsNullOrEmpty(Align);
+
+        public bool HasFilter => KeepKinds.Count > 0 || RemoveKinds.Count > 0;
+
+        public bool IsEmpty => !HasStyleChange && !HasFilter && string.IsNullOrWhiteSpace(TargetBoard);
+    }
+
+    /// <summary>
+    /// 解析“字号/列/行距/对齐/过滤/目标画板”指令，供选中 AI 对象批量修改使用。
+    /// 未识别到任何可执行项时返回 false。
+    /// </summary>
+    public static bool TryParseObjectEdit(
+        string instruction, out BoardObjectEdit edit, out string message)
+    {
+        edit = null;
+        message = "";
+        if (string.IsNullOrWhiteSpace(instruction))
+        {
+            message = "调整指令为空";
+            return false;
+        }
+
+        string text = Normalize(instruction);
+        var result = new BoardObjectEdit();
+        var changes = new List<string>();
+        bool hasExplicitFont = TryReadExplicitFontSize(text, out double explicitFontSize);
+        if (hasExplicitFont)
+        {
+            result.ExplicitFontSize = ClampFont(explicitFontSize);
+            changes.Add($"字号={Format(result.ExplicitFontSize.Value)}");
+        }
+
+        foreach (string clause in SplitClauses(text))
+        {
+            bool mentionsLine = ContainsAny(clause, "行距", "行高", "间距");
+            bool mentionsFont = ContainsAny(clause, "字号", "字体");
+            bool grow = ContainsAny(clause, GrowWords);
+            bool shrink = ContainsAny(clause, ShrinkWords);
+
+            if (!hasExplicitFont && (mentionsFont || (!mentionsLine && !HasOtherDirective(clause))))
+            {
+                if (grow)
+                {
+                    result.FontScale *= FontGrowFactor;
+                    changes.Add($"字号×{Format(FontGrowFactor)}");
+                }
+                else if (shrink)
+                {
+                    result.FontScale *= FontShrinkFactor;
+                    changes.Add($"字号×{Format(FontShrinkFactor)}");
+                }
+            }
+
+            if (mentionsLine)
+            {
+                if (grow)
+                {
+                    result.LineHeightScale *= LineGrowFactor;
+                    changes.Add($"行距×{Format(LineGrowFactor)}");
+                }
+                else if (shrink)
+                {
+                    result.LineHeightScale *= LineShrinkFactor;
+                    changes.Add($"行距×{Format(LineShrinkFactor)}");
+                }
+            }
+
+            int? columns = ReadColumns(clause);
+            if (columns.HasValue)
+            {
+                result.Columns = Math.Clamp(columns.Value, MinColumns, MaxColumns);
+                changes.Add($"列数={result.Columns.Value}");
+            }
+
+            string align = ReadAlign(clause);
+            if (!string.IsNullOrEmpty(align))
+            {
+                result.Align = align;
+                changes.Add($"对齐={align}");
+            }
+
+            bool keep = ContainsAny(clause, KeepWords);
+            bool remove = ContainsAny(clause, RemoveWords);
+            if (keep || remove)
+            {
+                var kinds = new List<string>();
+                foreach ((string[] words, string kind) in KindWords)
+                {
+                    if (!ContainsAny(clause, words)) continue;
+                    if (!kinds.Contains(kind)) kinds.Add(kind);
+                }
+
+                if (kinds.Count > 0)
+                {
+                    foreach (string kind in kinds)
+                    {
+                        if (keep) result.KeepKinds.Add(kind);
+                        if (remove) result.RemoveKinds.Add(kind);
+                    }
+                    changes.Add((keep ? "仅保留" : "去掉") + string.Join("、", kinds.Select(KindLabel)));
+                }
+            }
+
+            if (ContainsAny(clause, "板中板", "侧板", "副板"))
+            {
+                result.TargetBoard = "side";
+                changes.Add("目标=板中板");
+            }
+            else if (ContainsAny(clause, "主展板", "主画板", "主白板", "主板"))
+            {
+                result.TargetBoard = "main";
+                changes.Add("目标=主展板");
+            }
+        }
+
+        if (result.IsEmpty)
+        {
+            message = "未识别到可执行的调整指令（支持字号/列/过滤/行距/对齐）";
+            return false;
+        }
+
+        edit = result;
+        message = "已识别本地调整：" + string.Join("；", changes.Distinct());
+        return true;
     }
 
     // ---- helpers --------------------------------------------------------------

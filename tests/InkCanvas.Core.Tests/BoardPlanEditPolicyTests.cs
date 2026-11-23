@@ -251,4 +251,28 @@ public sealed class BoardPlanEditPolicyTests
         Assert.Equal(plan.Originals, updated.Originals);
         Assert.Equal(plan.Warnings, updated.Warnings);
     }
+
+    [Fact]
+    public void ObjectEditParser_ReadsStyleFilterAndAlign()
+    {
+        Assert.True(BoardPlanEditPolicy.TryParseObjectEdit(
+            "字号大一点，改成两列，居中，只保留公式", out BoardPlanEditPolicy.BoardObjectEdit edit,
+            out string message), message);
+
+        Assert.Equal(1.2, edit.FontScale, 3);
+        Assert.Equal(2, edit.Columns);
+        Assert.Equal("center", edit.Align);
+        Assert.Contains("formula", edit.KeepKinds);
+        Assert.Empty(edit.RemoveKinds);
+        Assert.False(edit.IsEmpty);
+    }
+
+    [Fact]
+    public void ObjectEditParser_RejectsUnknownInstruction()
+    {
+        Assert.False(BoardPlanEditPolicy.TryParseObjectEdit(
+            "把颜色改成红色", out BoardPlanEditPolicy.BoardObjectEdit edit, out string message));
+        Assert.Null(edit);
+        Assert.Contains("未识别", message);
+    }
 }

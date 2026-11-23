@@ -1,249 +1,256 @@
-using System.Text.Json;
 using InkCanvas.Core.AiAssistant;
-using Microsoft.UI.Xaml;
+using InkCanvas.Core.Diagnostics;
+using InkCanvas.Features.Board.AiObjects;
 
 namespace InkCanvas.Features.AiAssistant;
 
-/// <summary>单张待写入展板的 AI 板书卡片（PNG + DIP 尺寸 + 可编辑元数据）。</summary>
-public sealed class BoardPlanCardDraft
+/// <summary>
+/// 结构化板书计划的本地原生对象结果：只包含可编辑文本/公式对象，绝不含 PNG 卡片。
+/// </summary>
+public sealed class BoardPlanNativeResult
 {
-    public AssistantBoardBlock Block { get; init; }
+    public IReadOnlyList<BoardTextObject> Texts { get; init; } = Array.Empty<BoardTextObject>();
 
-    public string Name { get; init; } = "AI 板书";
-
-    public byte[] Png { get; init; } = Array.Empty<byte>();
-
-    public double Width { get; init; }
-
-    public double Height { get; init; }
-
-    public string Metadata { get; init; } = "";
-
-    public bool IsValid => Png is { Length: > 0 } && Width > 0 && Height > 0;
-}
-
-public sealed class BoardPlanRenderResult
-{
-    public IReadOnlyList<BoardPlanCardDraft> Cards { get; init; } = Array.Empty<BoardPlanCardDraft>();
+    public IReadOnlyList<BoardFormulaObject> Formulas { get; init; } = Array.Empty<BoardFormulaObject>();
 
     public string Error { get; init; } = "";
 
-    public bool Success => Cards.Count > 0 && string.IsNullOrEmpty(Error);
+    public int Count => Texts.Count + Formulas.Count;
+
+    public bool Success => Count > 0 && string.IsNullOrEmpty(Error);
 }
 
 /// <summary>
-/// 把结构化 <see cref="AssistantBoardPlan"/> 渲染为多张 <see cref="BoardImageAsset"/>：
-/// 公式优先 <see cref="BoardFormulaRenderer"/>（LaTeX → MathML → 位图），转换或渲染失败时
-/// 回退 <see cref="BoardTextCardRenderer"/> 并保留 LaTeX 源；古诗/词语/段落按块类型排版。
+/// 把 <see cref="AssistantBoardPlan"/> 转换为原生展板对象。文本/词语/古诗/段落生成
+/// <see cref="BoardTextObject"/>，公式生成 <see cref="BoardFormulaObject"/> 并保留 LaTeX；
+/// 本类不调用任何 PNG 渲染器，也不生成 <c>BoardImageAsset</c>。
 /// </summary>
 public static class BoardPlanWriter
 {
-    public const string FormulaStageNote = "阶段 2：LaTeX 排版，失败时回退文本";
+    private const string TextFontFamily = "Microsoft YaHei UI";
+    private const string FormulaFontFamily = "Cambria Math";
+    private const string TextColor = "#FF202024";
+    private const double MinFontSize = 12;
+    private const double MaxFontSize = 96;
+    private const double MinTextWidth = 220;
+    private const double MaxTextWidth = 640;
+    private const double MinTextHeight = 80;
+    private const double MaxTextHeight = 1200;
 
-    private const int FormulaMaxWidthDip = 560;
-
-    private static readonly JsonSerializerOptions StyleJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        PropertyNameCaseInsensitive = true,
-    };
-
-    public static Task<BoardPlanRenderResult> RenderAsync(
+    public static BoardPlanNativeResult Create(
         AssistantBoardPlan plan, string instruction, long? nowMs = null)
-        => RenderAsync(plan, instruction, nowMs, null);
-
-    /// <summary>
-    /// <paramref name="formulaHost"/> 必须是前台窗口已挂载的根元素；
-    /// 为空或公式渲染失败时公式块回退为文本卡片。
-    /// </summary>
-    public static async Task<BoardPlanRenderResult> RenderAsync(
-        AssistantBoardPlan plan, string instruction, long? nowMs, FrameworkElement formulaHost)
     {
         if (plan is null || plan.IsEmpty)
-            return new BoardPlanRenderResult { Error = "板书计划为空" };
+            return new BoardPlanNativeResult { Error = "板书计划为空" };
 
         long createdAt = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var cards = new List<BoardPlanCardDraft>(plan.Blocks.Count);
+        var texts = new List<BoardTextObject>(plan.Blocks.Count);
+        var formulas = new List<BoardFormulaObject>();
 
         for (int index = 0; index < plan.Blocks.Count; index++)
         {
             AssistantBoardBlock block = plan.Blocks[index];
-            BoardPlanCardDraft card = await RenderBlockAsync(block, plan, instruction, createdAt, formulaHost);
-            if (!card.IsValid)
+            string kind = NormalizeKind(block.Kind);
+
+            if (kind == "formula")
             {
-                return new BoardPlanRenderResult
-                {
-                    Error = $"第 {index + 1} 块（{KindLabel(block.Kind)}）渲染失败",
-                };
+                if (string.IsNullOrWhiteSpace(block.Latex))
+                    return new BoardPlanNativeResult { Error = $"第 {index + 1} 块（公式）LaTeX 为空" };
+
+                formulas.Add(CreateFormula(block, kind, instruction, createdAt));
+                continue;
             }
 
-            cards.Add(card);
+            BoardTextObject? text = CreateText(block, kind, instruction, createdAt, index);
+            if (text is null)
+                return new BoardPlanNativeResult { Error = $"第 {index + 1} 块（{KindLabel(kind)}）内容为空" };
+            texts.Add(text);
         }
 
-        return new BoardPlanRenderResult { Cards = cards };
+        if (texts.Count + formulas.Count == 0)
+            return new BoardPlanNativeResult { Error = "板书计划没有可写入的对象" };
+
+        FileLog.WriteLogToFile(
+            $"[AI] 板书原生对象：texts={texts.Count}，formulas={formulas.Count}，images=0，"
+            + $"instruction={Shorten(instruction, 60)}",
+            LogType.Event);
+
+        return new BoardPlanNativeResult { Texts = texts, Formulas = formulas };
     }
 
-    private static async Task<BoardPlanCardDraft> RenderBlockAsync(
+    private static BoardTextObject? CreateText(
         AssistantBoardBlock block,
-        AssistantBoardPlan plan,
+        string kind,
         string instruction,
         long createdAt,
-        FrameworkElement formulaHost)
+        int blockIndex)
     {
-        string kind = string.IsNullOrWhiteSpace(block.Kind) ? "text" : block.Kind.Trim().ToLowerInvariant();
-        string name = "AI 板书·" + KindLabel(kind);
-
-        if (kind == "formula")
-            return await RenderFormulaAsync(block, plan, instruction, createdAt, formulaHost, name);
-
-        var spec = new BoardTextCardSpec
-        {
-            Kind = kind,
-            Title = block.Title ?? "",
-            Subtitle = kind == "poem" ? block.Author ?? "" : "",
-            Text = block.Text ?? "",
-            Lines = block.Lines ?? Array.Empty<string>(),
-            FontSize = block.Style?.FontSize ?? 24,
-            LineHeight = block.Style?.LineHeight ?? 1.4,
-            Align = block.Style?.Align ?? (kind == "poem" ? "center" : "left"),
-            Columns = block.Style?.Columns ?? 1,
-        };
-
-        BoardTextCardRenderResult rendered = await BoardTextCardRenderer.RenderAsync(spec);
-        return new BoardPlanCardDraft
-        {
-            Block = block,
-            Name = name,
-            Png = rendered.Png,
-            Width = rendered.Width,
-            Height = rendered.Height,
-            Metadata = BuildMetadata(block, plan, instruction, createdAt, rendered.Truncated ? "内容过长已截断" : ""),
-        };
-    }
-
-    private static async Task<BoardPlanCardDraft> RenderFormulaAsync(
-        AssistantBoardBlock block,
-        AssistantBoardPlan plan,
-        string instruction,
-        long createdAt,
-        FrameworkElement formulaHost,
-        string name)
-    {
-        string latex = block.Latex ?? "";
-        BoardFormulaRenderResult formula = await BoardFormulaRenderer.RenderPngAsync(
-            latex, FormulaMaxWidthDip, 2.0, formulaHost);
-
-        if (formula.Success)
-        {
-            return new BoardPlanCardDraft
-            {
-                Block = block,
-                Name = name,
-                Png = formula.Png,
-                Width = formula.Width,
-                Height = formula.Height,
-                Metadata = BuildMetadata(block, plan, instruction, createdAt, ""),
-            };
-        }
-
-        // 公式渲染不可用（非 UI 线程/无前台宿主/转换失败）：回退文本并保留 LaTeX 源。
-        string reason = string.IsNullOrWhiteSpace(formula.Error) ? "公式渲染不可用" : formula.Error;
-        InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] 板书公式回退文本：{reason}，latex={ShortenLatex(latex)}",
-            InkCanvas.Core.Diagnostics.LogType.Trace);
-        var fallbackSpec = new BoardTextCardSpec
-        {
-            Kind = "text",
-            Title = "公式（LaTeX）",
-            Text = string.IsNullOrWhiteSpace(latex) ? "（空公式）" : latex,
-            FontSize = block.Style?.FontSize ?? 22,
-            LineHeight = block.Style?.LineHeight ?? 1.5,
-            Align = "left",
-        };
-
-        BoardTextCardRenderResult fallback = await BoardTextCardRenderer.RenderAsync(fallbackSpec);
-        return new BoardPlanCardDraft
-        {
-            Block = block,
-            Name = name,
-            Png = fallback.Png,
-            Width = fallback.Width,
-            Height = fallback.Height,
-            Metadata = BuildMetadata(
-                block, plan, instruction, createdAt,
-                $"LaTeX 排版回退为文本：{reason}"),
-        };
-    }
-
-    private static string BuildMetadata(
-        AssistantBoardBlock block,
-        AssistantBoardPlan plan,
-        string instruction,
-        long createdAt,
-        string extraNote)
-    {
-        var lines = new List<string>();
-        if (block.Lines is { Count: > 0 }) lines.AddRange(block.Lines);
-        else if (!string.IsNullOrWhiteSpace(block.Text))
-            lines.AddRange(block.Text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'));
+        string content = BuildContent(block, kind);
+        string title = (block.Title ?? "").Trim();
+        if (content.Length == 0 && title.Length == 0) return null;
 
         AssistantBoardStyle style = block.Style ?? new AssistantBoardStyle();
-        string styleJson;
-        try
-        {
-            styleJson = JsonSerializer.Serialize(style, StyleJsonOptions);
-        }
-        catch (Exception)
-        {
-            styleJson = "";
-        }
+        double fontSize = Clamp(style.FontSize > 0 ? style.FontSize : 24, MinFontSize, MaxFontSize);
+        double lineHeight = Clamp(style.LineHeight > 0 ? style.LineHeight : 1.4, 1.0, 3.0);
+        int columns = (int)Clamp(style.Columns <= 0 ? 1 : style.Columns, 1, 3);
+        string align = NormalizeAlign(style.Align, kind);
 
-        List<string> notes = BuildNotes(block, plan);
-        if (!string.IsNullOrWhiteSpace(extraNote) && !notes.Contains(extraNote))
-            notes.Add(extraNote);
+        (double width, double height) = EstimateTextGeometry(
+            content, title, block.Author, fontSize, lineHeight, columns);
 
-        return new AiPasteMetadata
+        return new BoardTextObject
         {
-            Kind = AiPasteKind.BoardPlan,
-            BlockKind = string.IsNullOrWhiteSpace(block.Kind) ? "text" : block.Kind.Trim().ToLowerInvariant(),
-            Title = block.Title ?? "",
-            Author = block.Author ?? "",
-            Schema = plan.Schema,
-            Latex = block.Latex ?? "",
-            Text = block.Text ?? "",
-            Lines = lines,
-            StyleJson = styleJson,
+            Type = kind,
+            Content = content,
+            Title = title,
+            Author = (block.Author ?? "").Trim(),
+            Dynasty = "",
+            FontFamily = TextFontFamily,
+            FontSize = fontSize,
+            Color = TextColor,
+            LineHeight = lineHeight,
+            Align = align,
+            Columns = columns,
+            Left = 0,
+            Top = 0,
+            Width = (float)width,
+            Height = (float)height,
+            Source = "ai",
             Instruction = instruction ?? "",
             CreatedAt = createdAt,
-            Notes = notes,
-        }.Serialize();
+        };
     }
 
-    private static List<string> BuildNotes(AssistantBoardBlock block, AssistantBoardPlan plan)
+    private static BoardFormulaObject CreateFormula(
+        AssistantBoardBlock block,
+        string kind,
+        string instruction,
+        long createdAt)
     {
-        var notes = new List<string>();
-        if (!string.IsNullOrWhiteSpace(block.Note)) notes.Add(block.Note.Trim());
+        AssistantBoardStyle style = block.Style ?? new AssistantBoardStyle();
+        double fontSize = Clamp(style.FontSize > 0 ? style.FontSize : 30, MinFontSize, MaxFontSize);
+        string latex = (block.Latex ?? "").Trim();
 
-        foreach (string note in plan.Notes ?? Array.Empty<string>())
+        double width = Clamp(EstimateLineWidth(latex, fontSize, 0.55) + 48, 180, 720);
+        double height = Clamp(fontSize * 2.4, 60, 480);
+
+        return new BoardFormulaObject
         {
-            if (string.IsNullOrWhiteSpace(note)) continue;
-            string trimmed = note.Trim();
-            if (!notes.Contains(trimmed)) notes.Add(trimmed);
+            Latex = latex,
+            FontFamily = FormulaFontFamily,
+            FontSize = fontSize,
+            Color = TextColor,
+            Left = 0,
+            Top = 0,
+            Width = (float)width,
+            Height = (float)height,
+            Source = "ai",
+            Instruction = instruction ?? "",
+            CreatedAt = createdAt,
+        };
+    }
+
+    private static string BuildContent(AssistantBoardBlock block, string kind)
+    {
+        IReadOnlyList<string> lines = block.Lines ?? Array.Empty<string>();
+        string text = (block.Text ?? "").TrimEnd();
+
+        if (kind is "wordList" or "poem")
+        {
+            if (lines.Count > 0)
+                return string.Join("\n", lines.Select(line => (line ?? "").TrimEnd()));
+            return text.Trim();
         }
 
-        return notes;
+        if (text.Length > 0) return text;
+        return lines.Count > 0 ? string.Join("\n", lines) : "";
     }
 
-    private static string ShortenLatex(string latex)
+    private static (double Width, double Height) EstimateTextGeometry(
+        string content,
+        string title,
+        string author,
+        double fontSize,
+        double lineHeight,
+        int columns)
     {
-        if (string.IsNullOrEmpty(latex)) return "(空)";
-        return latex.Length <= 120 ? latex : latex[..120] + "…";
+        string[] lines = content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+        double longest = 0;
+        foreach (string line in lines) longest = Math.Max(longest, EstimateLineWidth(line, fontSize, 0.6));
+
+        double columnGap = columns > 1 ? fontSize * 0.5 : 0;
+        double contentWidth = columns > 1 ? longest / columns : longest;
+        double width = Clamp(
+            contentWidth + columnGap * (columns - 1) + 32,
+            MinTextWidth,
+            MaxTextWidth);
+
+        int rows;
+        if (columns > 1 && lines.Length > 1)
+        {
+            rows = (lines.Length + columns - 1) / columns;
+        }
+        else
+        {
+            double usableWidth = Math.Max(1, width - 32);
+            double charsPerLine = Math.Max(1, usableWidth / Math.Max(1, fontSize * 0.62));
+            rows = Math.Max(1, (int)Math.Ceiling(content.Length / charsPerLine));
+        }
+
+        double headerHeight = 0;
+        if (!string.IsNullOrWhiteSpace(title)) headerHeight += fontSize * 1.3 * 1.25 + fontSize * 0.25;
+        if (!string.IsNullOrWhiteSpace(author)) headerHeight += fontSize * 0.78 * 1.25 + fontSize * 0.2;
+        double bodyHeight = rows * fontSize * lineHeight;
+        double height = Clamp(headerHeight + bodyHeight + 32, MinTextHeight, MaxTextHeight);
+
+        return (width, height);
     }
 
-    private static string KindLabel(string kind) => (kind ?? "").Trim().ToLowerInvariant() switch
+    private static double EstimateLineWidth(string text, double fontSize, double asciiRatio)
+    {
+        double width = 0;
+        foreach (char character in text ?? "")
+        {
+            if (char.IsWhiteSpace(character)) width += fontSize * 0.3;
+            else if (character < 0x80) width += fontSize * asciiRatio;
+            else width += fontSize;
+        }
+
+        return width;
+    }
+
+    private static string NormalizeKind(string? kind) => (kind ?? "").Trim().ToLowerInvariant() switch
+    {
+        "formula" => "formula",
+        "wordlist" => "wordList",
+        "poem" => "poem",
+        "summary" => "summary",
+        _ => "text",
+    };
+
+    private static string NormalizeAlign(string? align, string kind)
+        => (align ?? "").Trim().ToLowerInvariant() switch
+        {
+            "center" => "center",
+            "right" => "right",
+            "justify" => "justify",
+            "left" => "left",
+            _ => kind == "poem" ? "center" : "left",
+        };
+
+    private static double Clamp(double value, double min, double max)
+        => !double.IsFinite(value) ? min : Math.Clamp(value, min, max);
+
+    private static string Shorten(string? text, int max)
+    {
+        string value = (text ?? "").ReplaceLineEndings(" ");
+        return value.Length <= max ? value : value[..max] + "…";
+    }
+
+    private static string KindLabel(string kind) => kind switch
     {
         "formula" => "公式",
-        "wordlist" => "词语",
+        "wordList" => "词语",
         "poem" => "古诗",
         _ => "文本",
     };
