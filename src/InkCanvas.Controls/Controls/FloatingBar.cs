@@ -886,6 +886,10 @@ public sealed class FloatingBar : UserControl
         if (_selectButton is not null) _selectButton.IsSelected = ink && tool == InkTool.Select;
         if (_shapeButton is not null) _shapeButton.IsSelected = ink && tool == InkTool.Shape;
         if (_cursorButton is not null) _cursorButton.IsSelected = false;
+        var color = Controller?.CurrentAttributes.Color;
+        _penButton?.SetInkColorBadge(color);
+        _highlighterButton?.SetInkColorBadge(color);
+        _shapeButton?.SetInkColorBadge(color);
 
         if (_canvasControls is not null)
             _canvasControls.Visibility = ClickThroughActive ? Visibility.Collapsed : Visibility.Visible;

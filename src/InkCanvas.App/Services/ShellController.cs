@@ -1128,6 +1128,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void RefreshPaletteNibModes()
     {
         _board?.RefreshToolSettings();
+        _bar?.Bar.RefreshSelection();
         if (_palette is not null) { ConfigurePaletteNibMode(_palette); _palette.RefreshFromController(Services.Settings.Canvas); }
         foreach (var palette in _detachedPalettes) { ConfigurePaletteNibMode(palette); palette.RefreshFromController(Services.Settings.Canvas); }
     }

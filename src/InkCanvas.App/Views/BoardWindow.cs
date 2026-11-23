@@ -350,6 +350,11 @@ public sealed partial class BoardWindow : Window
         _toolCells.Add((_penCell, () => _board.Current.Tool is InkTool.Pen or InkTool.Highlighter));
         _toolCells.Add((_eraserCell, () => _board.Current.Tool == InkTool.Eraser));
         _toolCells.Add((_shapeCell, () => _board.Current.Tool == InkTool.Shape));
+        foreach (var cell in new[] { _penCell, _shapeCell })
+        {
+            cell.ColorBadge = new InkColorBadge { VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed };
+            cell.IconHost.Children.Add(cell.ColorBadge);
+        }
 
         // Right mirror: 加页 | 上一页 | 页码 | 下一页/加页 (MainWindow.xaml 2837-2976).
         var right = new StackPanel
@@ -448,7 +453,9 @@ public sealed partial class BoardWindow : Window
             VerticalAlignment = VerticalAlignment.Bottom,
         };
         var content = new Grid { Margin = new Thickness(5) };
-        content.Children.Add(iconHost);
+        var iconOverlay = new Grid { Width = 28, Height = 28, HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top, Children = { iconHost } };
+        content.Children.Add(iconOverlay);
         content.Children.Add(labelText);
         var selection = new SelectionIndicator { Margin = new Thickness(2), CornerRadius = new CornerRadius(4) };
         var face = new Border { BorderThickness = border, CornerRadius = corner,
@@ -468,7 +475,8 @@ public sealed partial class BoardWindow : Window
         ToolTipService.SetToolTip(button, label);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, label);
         if (onClick is not null) button.Click += (_, _) => onClick();
-        var cell = new ToolCell { Button = button, Face = face, Icon = icon, BadgeIcon = badgeIcon, Label = labelText, Content = content, Selection = selection };
+        var cell = new ToolCell { Button = button, Face = face, Icon = icon, BadgeIcon = badgeIcon, Label = labelText,
+            Content = content, Selection = selection, IconHost = iconOverlay };
         button.PointerEntered += (_, _) => { cell.Hovered = true; RefreshCellFace(cell); };
         button.PointerExited += (_, _) => { cell.Hovered = false; cell.Pressed = false; RefreshCellFace(cell); };
         button.PointerPressed += (_, _) => { cell.Pressed = true; RefreshCellFace(cell); };
@@ -844,6 +852,11 @@ public sealed partial class BoardWindow : Window
             cell.Selected = active();
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(cell.Button, cell.Selected ? "已选中" : "");
             RefreshCellFace(cell);
+            if (cell.ColorBadge is not null)
+            {
+                cell.ColorBadge.Color = CurrentController.CurrentAttributes.Color;
+                cell.ColorBadge.Visibility = cell.Selected ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
     }
 
@@ -1413,7 +1426,11 @@ public sealed partial class BoardWindow : Window
         foreach (var panel in _toolPanels.Values) panel.Fit();
     }
 
-    internal void RefreshToolSettings() => _boardPenPalette?.RefreshSettings();
+    internal void RefreshToolSettings()
+    {
+        _boardPenPalette?.RefreshSettings();
+        UpdateToolHighlight();
+    }
 
     internal void RestoreFromAnnotation()
     {
@@ -1481,13 +1498,12 @@ public sealed partial class BoardWindow : Window
         _selectionPanel.Background = _barBg;
         _selectionPanel.BorderBrush = _barBorder;
         _selectionPanel.Child = BuildSelectionPanelContent();
-        UpdateToolHighlight();
-
         bool savedColor = CurrentController.Tool == InkTool.Highlighter ? _services.Settings.Canvas.HighlighterColor.HasValue : _services.Settings.Canvas.PenColor.HasValue;
         if (!savedColor && dark && IsBlackLike(_board.Current.CurrentAttributes.Color))
             _board.Current.CurrentAttributes.Color = InkColor.Opaque(245, 245, 245);
         else if (!savedColor && !dark && IsWhiteLike(_board.Current.CurrentAttributes.Color))
             _board.Current.CurrentAttributes.Color = InkColor.Opaque(20, 20, 20);
+        UpdateToolHighlight();
         _paper.Invalidate();
     }
 
@@ -2409,5 +2425,7 @@ public sealed partial class BoardWindow : Window
         public FontIcon BadgeIcon { get; init; }
         public TextBlock Label { get; init; }
         public Grid Content { get; init; }
+        public Grid IconHost { get; init; }
+        public InkColorBadge ColorBadge { get; set; }
     }
 }

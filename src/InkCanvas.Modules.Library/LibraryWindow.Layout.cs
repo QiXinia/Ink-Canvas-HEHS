@@ -111,14 +111,6 @@ internal sealed partial class LibraryWindow
         foreach (var list in new[] { _locations, _folders })
         {
             list.ItemTemplate = template;
-            foreach (int theme in new[] { 1, 2 })
-            {
-                var resources = new ResourceDictionary();
-                resources["ListViewItemBackgroundSelected"] = ThemeBrushes.Resolve(theme, "IcAccentSoftBrush");
-                resources["ListViewItemBackgroundSelectedPointerOver"] = ThemeBrushes.Resolve(theme, "IcAccentSoftBrush");
-                resources["ListViewItemForegroundSelected"] = ThemeBrushes.Resolve(theme, "IcTextPrimaryBrush");
-                list.Resources.ThemeDictionaries[theme == 1 ? "Light" : "Dark"] = resources;
-            }
             list.IsItemClickEnabled = true;
             list.SelectionChanged += (_, _) =>
             {

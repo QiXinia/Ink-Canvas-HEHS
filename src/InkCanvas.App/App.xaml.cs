@@ -90,6 +90,8 @@ public partial class App : Application
         if (penContrastCheck is not null) { _ = Diagnostics.PenContrastRegression.Run(penContrastCheck["--pencontrastcheck=".Length..]); return; }
         var selectionStateCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--selectionstatecheck=", StringComparison.OrdinalIgnoreCase));
         if (selectionStateCheck is not null) { _ = Diagnostics.SelectionStateRegression.Run(selectionStateCheck["--selectionstatecheck=".Length..]); return; }
+        var inkColorBadgeCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--inkcolorbadgecheck=", StringComparison.OrdinalIgnoreCase));
+        if (inkColorBadgeCheck is not null) { _ = Diagnostics.InkColorBadgeRegression.Run(inkColorBadgeCheck["--inkcolorbadgecheck=".Length..]); return; }
         var settingsActivationCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--settingsactivationcheck=", StringComparison.OrdinalIgnoreCase));
         if (settingsActivationCheck is not null) { _ = Diagnostics.SettingsActivationRegression.Run(settingsActivationCheck["--settingsactivationcheck=".Length..]); return; }
         var updateUiCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--updateuicheck=", StringComparison.OrdinalIgnoreCase));

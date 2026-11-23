@@ -1,5 +1,6 @@
 ﻿using InkCanvas.Controls.Animation;
 using Microsoft.UI.Xaml;
+using InkCanvas.Core.Ink;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -31,6 +32,8 @@ public sealed class TouchIconButton : Button
 
     private readonly FontIcon _icon;
     private readonly Viewbox _glyphHost;
+    private readonly Grid _iconHost;
+    private InkColorBadge _colorBadge;
     private readonly FontIcon _aiText;
     private readonly Border _contentBorder;
     private SelectionIndicator _selection;
@@ -76,6 +79,8 @@ public sealed class TouchIconButton : Button
             VerticalAlignment = VerticalAlignment.Center,
         };
         _aiText = AiGlyph.CreateLabel(AiGlyph.ButtonLabelSize);
+        _iconHost = new Grid { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+        _iconHost.Children.Add(_glyphHost);
         _icons.Add(_icon);
         _contentBorder = new Border
         {
@@ -205,6 +210,24 @@ public sealed class TouchIconButton : Button
         ApplyVisualState();
     }
 
+    /// <summary>Show the active tool's current ink color at the bottom-right of its icon.</summary>
+    public void SetInkColorBadge(InkColor? color)
+    {
+        if (!color.HasValue)
+        {
+            if (_colorBadge is not null) _iconHost.Children.Remove(_colorBadge);
+            _colorBadge = null;
+            return;
+        }
+        if (_colorBadge is null)
+        {
+            _colorBadge = new InkColorBadge();
+            _iconHost.Children.Add(_colorBadge);
+        }
+        _colorBadge.Color = color.Value;
+        _colorBadge.Visibility = IsSelected ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>Register an extra FontIcon so theme/selection foreground reaches it.</summary>
     public void AddFontIcon(FontIcon icon)
     {
@@ -254,7 +277,9 @@ public sealed class TouchIconButton : Button
 
     private void RebuildContent()
     {
-        UIElement body = _customContent ?? (UIElement)_glyphHost;
+        UIElement icon = _customContent ?? (UIElement)_glyphHost;
+        if (!ReferenceEquals(_iconHost.Children[0], icon)) _iconHost.Children[0] = icon;
+        UIElement body = _iconHost;
         // WinUI does not set FrameworkElement.Parent inside unrooted trees, so Parent-based
         // detaching misses the real owner. Clear the containers we own explicitly instead:
         // the body may sit in _contentBorder, the previous icon area, or the caption stack.
@@ -357,6 +382,7 @@ public sealed class TouchIconButton : Button
         _aiText.Foreground = fg;
         foreach (var icon in _icons) icon.Foreground = fg;
         if (_label is not null) _label.Foreground = fg;
+        if (_colorBadge is not null) _colorBadge.Visibility = IsSelected ? Visibility.Visible : Visibility.Collapsed;
 
         if (_selection is not null)
         {

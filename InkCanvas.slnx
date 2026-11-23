@@ -8,6 +8,7 @@
     <Project Path="src/InkCanvas.McpHost/InkCanvas.McpHost.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.Mcp/InkCanvas.Modules.Mcp.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.Stylus/InkCanvas.Modules.Stylus.csproj"><Platform Project="x64" /></Project>
+    <Project Path="src/InkCanvas.Modules.CloudSync/InkCanvas.Modules.CloudSync.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Plugins.LegacyImport/InkCanvas.Plugins.LegacyImport.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.UpdateHost/InkCanvas.UpdateHost.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Extensibility/InkCanvas.Extensibility.csproj"><Platform Project="x64" /></Project>

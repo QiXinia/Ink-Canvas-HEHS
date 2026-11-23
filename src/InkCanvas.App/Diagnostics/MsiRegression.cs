@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using InkCanvas.Core.Update;
+using InkCanvas.Core.Versioning;
 using InkCanvas.Features.Update;
 using Microsoft.UI.Xaml;
 
@@ -15,16 +16,19 @@ internal static class MsiRegression
         var checks = new List<object>();
         try
         {
-            MsiPackage.Validate(package, "3.10.0"); Check("MSI product upgrade identity and release version match", true);
+            string version = typeof(App).Assembly.GetName().Version.ToString(3);
+            AppVersion.TryParse(version, out var releaseVersion);
+            string assetName = $"InkCanvas-WinUI3-{version}-win-x64.msi";
+            MsiPackage.Validate(package, version); Check("MSI product upgrade identity and release version match", true);
             bool rejected = false;
             try { MsiPackage.Validate(package, "3.9.0"); }
             catch (InvalidDataException) { rejected = true; }
             Check("MSI wrong release version is rejected", rejected);
             string hash;
             await using (var input = File.OpenRead(package)) hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(input));
-            var release = new ReleaseInfo("v3.10.0", new(3, 10, 0, 0), "MSI", "", "",
-                "https://github.com/QiXinia/Ink-Canvas-HEHS/releases/download/v3.10.0/InkCanvas-WinUI3-3.10.0-win-x64.msi", new FileInfo(package).Length)
-                { AssetName = "InkCanvas-WinUI3-3.10.0-win-x64.msi", Sha256 = hash };
+            var release = new ReleaseInfo("v" + version, releaseVersion, "MSI", "", "",
+                $"https://github.com/QiXinia/Ink-Canvas-HEHS/releases/download/v{version}/{assetName}", new FileInfo(package).Length)
+                { AssetName = assetName, Sha256 = hash };
             string target = Path.Combine(directory, "installed-target"); Directory.CreateDirectory(target);
             await File.WriteAllTextAsync(Path.Combine(target, MsiPackage.MarkerName), "diagnostic target");
             using var service = new UpdateService(cache: new UpdateCache(Path.Combine(directory, "cache")), preferMsi: true);
