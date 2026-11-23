@@ -12,6 +12,7 @@ public sealed partial class PdfWindow
     private readonly UISettings _uiSettings = new();
     private readonly AccessibilitySettings _accessibility = new();
     private Color _pageEdgeColor;
+    private Color _documentBackgroundColor;
 
     private void ConfigureAppearance()
     {
@@ -44,8 +45,9 @@ public sealed partial class PdfWindow
             frame.Header.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         }
         _commandHost.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        var surface = material ? dark ? Color.FromArgb(76, 58, 58, 58) : Color.FromArgb(128, 255, 255, 255) : color;
-        _viewport.Background = new SolidColorBrush(surface);
+        _documentBackgroundColor = color;
+        _paper.ClearColor = color;
+        _viewport.Background = new SolidColorBrush(color);
         _sidebar.Background = new SolidColorBrush(_split.DisplayMode == Microsoft.UI.Xaml.Controls.SplitViewDisplayMode.Overlay
             ? color : Microsoft.UI.Colors.Transparent);
         _split.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);

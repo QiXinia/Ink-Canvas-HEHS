@@ -88,8 +88,8 @@ public sealed partial class PdfWindow
         _fileCommands.Children.Add(_sidebarToggle); _fileCommands.Children.Add(Divider());
         _fileCommands.Children.Add(_openButton); _fileCommands.Children.Add(_saveButton);
 
-        _previousPage = Command("上一页", Symbol.Back, () => GoToPage(_pageIndex - 1));
-        _nextPage = Command("下一页", Symbol.Forward, () => GoToPage(_pageIndex + 1));
+        _previousPage = Command("上一页", Symbol.Back, () => NavigatePage(-1));
+        _nextPage = Command("下一页", Symbol.Forward, () => NavigatePage(1));
         _zoomOut = Command("缩小", Symbol.ZoomOut, () => ZoomBy(.8f));
         _zoomIn = Command("放大", Symbol.ZoomIn, () => ZoomBy(1.25f));
         _fitToggle = Command("切换整页或页宽", "\uE9A6", () => Fit(_fitMode == FitMode.Width ? FitMode.Page : FitMode.Width));
@@ -112,8 +112,11 @@ public sealed partial class PdfWindow
             zoomMenu.Items.Add(preset);
         }
         _zoom.Flyout = zoomMenu;
+        var layout = Command("页面布局与旋转", "\uE8A9", () => { });
+        layout.Flyout = CreateLayoutMenu();
         foreach (var control in new UIElement[] { _previousPage, _pageNumber, _pageCount, _nextPage, Divider(), _zoomOut, _zoom, _zoomIn, _fitToggle })
             _readingCommands.Children.Add(control);
+        _readingCommands.Children.Add(layout);
 
         _searchButton = Command("搜索", Symbol.Find, OpenSearch);
         ToolTipService.SetToolTip(_searchButton, "查找文档内容 (Ctrl+F)");
@@ -175,8 +178,8 @@ public sealed partial class PdfWindow
     {
         if (_closed || Controller is null) return;
         UpdateThumbnailSelection();
-        _previousPage.IsEnabled = _pageIndex > 0;
-        _nextPage.IsEnabled = _pageIndex < _file.Pages.Count - 1;
+        _previousPage.IsEnabled = _layout.AdjacentPage(_pageIndex, -1) != _pageIndex && _layout.SpreadBounds(_pageIndex).Top > 0;
+        _nextPage.IsEnabled = _layout.SpreadBounds(_pageIndex).Bottom < _layout.Height;
         bool reading = Controller.Tool == InkTool.Pan;
         if (!reading) _writingTool = Controller.Tool;
         _readButton.IsSelected = _readMenuItem.IsChecked = reading;

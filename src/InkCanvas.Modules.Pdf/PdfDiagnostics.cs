@@ -656,7 +656,7 @@ public static class PdfDiagnostics
         using var memory = new InMemoryRandomAccessStream(); using var writer = new DataWriter(memory); writer.WriteBytes(bytes); await writer.StoreAsync(); writer.DetachStream(); memory.Seek(0);
         return await CanvasBitmap.LoadAsync(device, memory, 96);
     }
-    private static async Task ScreenshotAsync(Window window, string path)
+    internal static async Task ScreenshotAsync(Window window, string path)
     {
         var frame = (Controls.Controls.WindowFrame)window.Content;
         var backdrop = frame.Background;

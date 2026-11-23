@@ -55,9 +55,7 @@ public sealed partial class PdfWindow
         var viewport = new Core.Ink.Rect(first.X, first.Y, last.X, last.Y);
         foreach (var pair in _pageInkBounds)
         {
-            var origin = new Vector2(_layout[pair.Key].Left, _layout[pair.Key].Top);
-            var bounds = pair.Value;
-            if (viewport.Intersects(new(bounds.Left + origin.X, bounds.Top + origin.Y, bounds.Right + origin.X, bounds.Bottom + origin.Y)))
+            if (viewport.Intersects(_layout.ToDocumentBounds(pair.Key, pair.Value)))
                 yield return pair.Key;
         }
     }
@@ -74,7 +72,18 @@ public sealed partial class PdfWindow
     {
         if (Controller is null || Controller.HasActiveInteraction || !Matrix3x2.Invert(DocumentView, out var inverse)) return;
         var point = Vector2.Transform(new(sample.X, sample.Y), inverse);
-        int index = _layout.NearestPage(point.Y);
+        int index = _layout.NearestPage(point);
+        if (Controller.Tool is InkTool.Eraser or InkTool.Select)
+        {
+            foreach (int page in VisibleInkPages())
+            {
+                Matrix3x2.Invert(_layout.PageView(page, Matrix3x2.Identity), out var local);
+                var hit = Vector2.Transform(point, local);
+                if (!PageInk(page).Any(stroke => stroke.Bounds.Inflate(Controller.EraserRadius).Contains(hit)
+                    && stroke.DistanceTo(hit) <= Controller.EraserRadius + stroke.HitRadius)) continue;
+                index = page; break;
+            }
+        }
         ActivatePage(index, preserveView: true);
     }
 
@@ -92,8 +101,9 @@ public sealed partial class PdfWindow
         ClampDocumentView();
         if (Controller.ViewTransform != before) Controller.NotifyElementsChanged();
         if (!Matrix3x2.Invert(DocumentView, out var inverse)) return;
-        float y = Vector2.Transform(new(0, (float)_viewport.ActualHeight / 2), inverse).Y;
-        ActivatePage(_layout.NearestPage(y), preserveView: true);
+        var point = Vector2.Transform(ViewportSize / 2, inverse);
+        int page = _layout.NearestPage(point);
+        if (_layout.SpreadBounds(page) != _layout.SpreadBounds(_pageIndex)) ActivatePage(page, preserveView: true);
     }
 
     public void ScrollBy(float delta)
@@ -272,6 +282,8 @@ public sealed partial class PdfWindow
 
     private void DrawDocument(CanvasDrawingSession draw, Matrix3x2 document, Core.Ink.Rect screen, Matrix3x2 output, bool includeActiveInk)
     {
+        draw.Transform = output;
+        draw.FillRectangle(new Rect(screen.Left, screen.Top, screen.Width, screen.Height), _documentBackgroundColor);
         if (!Matrix3x2.Invert(document, out var inverse)) return;
         float top = Vector2.Transform(new(screen.Left, screen.Top), inverse).Y;
         float bottom = Vector2.Transform(new(screen.Right, screen.Bottom), inverse).Y;

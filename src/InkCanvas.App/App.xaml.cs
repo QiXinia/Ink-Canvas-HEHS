@@ -155,6 +155,8 @@ public partial class App : Application
         var pdfLifetimeCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pdflifetimecheck=", StringComparison.OrdinalIgnoreCase));
         if (pdfLifetimeCheck is not null) { _ = Diagnostics.PdfRegression.Run(pdfLifetimeCheck["--pdflifetimecheck=".Length..], lifetimeOnly: true); return; }
         var pdfCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pdfcheck=", StringComparison.OrdinalIgnoreCase));
+        var pdfPageEditingCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--pdfpageeditingcheck=", StringComparison.OrdinalIgnoreCase));
+        if (pdfPageEditingCheck is not null) { _ = Diagnostics.PdfRegression.Run(pdfPageEditingCheck["--pdfpageeditingcheck=".Length..], pageEditingOnly: true); return; }
         if (pdfCheck is not null) { _ = Diagnostics.PdfRegression.Run(pdfCheck[11..]); return; }
         var extensionsCheck = Environment.GetCommandLineArgs().FirstOrDefault(a => a.StartsWith("--extensionscheck=", StringComparison.OrdinalIgnoreCase));
         if (extensionsCheck is not null)

@@ -121,10 +121,20 @@ public sealed class PdfAnnotationFile : IDisposable
             }
             if (strokes.Count > 0) _stored[index] = strokes.GroupBy(stroke => stroke.Id).Select(group => group.Last()).OrderBy(stroke => stroke.LayerOrder ?? long.MaxValue).ToArray();
         }
+        if (any)
+        {
+            var distributed = PdfInkSplitter.Distribute(_stored, new PdfContinuousLayout(Pages));
+            _stored.Clear();
+            foreach (var pair in distributed) if (pair.Value.Count > 0) _stored[pair.Key] = pair.Value;
+        }
         return any;
     }
 
-    public async Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token = default)
+    public Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token = default)
+        => SaveAsync(target, pages, null, token);
+
+    public async Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages,
+        IReadOnlyDictionary<int, int> rotations, CancellationToken token = default)
     {
         if (ReadOnly) throw new UnauthorizedAccessException("此 PDF 的权限只允许查看，请使用有编辑权限的文件。 ");
         target = Path.GetFullPath(target);
@@ -134,16 +144,20 @@ public sealed class PdfAnnotationFile : IDisposable
             if (page.Key < 0 || page.Key >= Pages.Count) throw new ArgumentOutOfRangeException(nameof(pages));
             if (page.Value.Sum(stroke => (long)stroke.Count) > PdfInkCodec.MaximumPoints) throw new InvalidDataException("单页墨迹点数过多，请拆分页保存。");
         }
+        pages = PdfInkSplitter.Distribute(pages, new PdfContinuousLayout(Pages));
+        var rotationSnapshot = rotations?.ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (rotationSnapshot is not null && rotationSnapshot.Any(pair => pair.Key < 0 || pair.Key >= Pages.Count || pair.Value % 90 != 0))
+            throw new ArgumentException("Invalid page rotation.", nameof(rotations));
         await _gate.WaitAsync(token);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            await Task.Run(() => SaveCore(target, pages, token), token);
+            await Task.Run(() => SaveCore(target, pages, rotationSnapshot, token), token);
         }
         finally { _gate.Release(); }
     }
 
-    private void SaveCore(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token)
+    private void SaveCore(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, IReadOnlyDictionary<int, int> rotations, CancellationToken token)
     {
         if (_savedFiles.TryGetValue(target, out var expected))
         {
@@ -155,11 +169,21 @@ public sealed class PdfAnnotationFile : IDisposable
         string temporary = Path.Combine(Path.GetDirectoryName(target)!, "." + Path.GetFileName(target) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
+            if (rotations is not null)
+                foreach (var rotation in rotations) document.Pages[rotation.Key].Rotate = (Pages[rotation.Key].Rotation + rotation.Value + 360) % 360;
             foreach (var pair in pages.OrderBy(pair => pair.Key))
             {
                 token.ThrowIfCancellationRequested(); if (pair.Value.Count == 0) continue;
                 var page = document.Pages[pair.Key]; var geometry = Pages[pair.Key];
-                var expanded = PdfPageBleed.IncludeInk(geometry, pair.Value);
+                IReadOnlyList<InkStroke> ink = pair.Value;
+                if (rotations?.TryGetValue(pair.Key, out int turn) == true && turn % 360 != 0)
+                {
+                    var rotated = geometry with { Rotation = geometry.Rotation + turn };
+                    var transform = geometry.TransformTo(rotated);
+                    ink = ink.Select(stroke => { var copy = stroke.Clone(); copy.Transform(transform, scaleWidth: false); return copy; }).ToArray();
+                    geometry = rotated;
+                }
+                var expanded = PdfPageBleed.IncludeInk(geometry, ink);
                 if (expanded != geometry)
                 {
                     // Enlarging CropBox must not reveal content hidden by the original crop.
@@ -183,13 +207,13 @@ public sealed class PdfAnnotationFile : IDisposable
                     Contents = "Ink Canvas 可编辑墨迹", Flags = PdfAnnotationFlags.Print };
                 annotation.Elements.SetInteger("/InkCanvasVersion", 1);
                 var offset = PdfPageBleed.InkOffset(geometry, expanded);
-                var savedInk = offset == Vector2.Zero ? pair.Value : pair.Value.Select(stroke =>
+                var savedInk = offset == Vector2.Zero ? ink : ink.Select(stroke =>
                 {
                     var copy = stroke.Clone(); copy.Transform(Matrix3x2.CreateTranslation(offset), scaleWidth: false); return copy;
                 }).ToArray();
                 var state = CompressedStream(PdfInkCodec.Encode(savedInk), alreadyCompressed: true);
                 annotation.Elements["/InkCanvasData"] = state.Reference;
-                var appearance = Appearance(pair.Value, geometry, expanded);
+                var appearance = Appearance(ink, geometry, expanded);
                 var ap = new PdfDictionary(document); ap.Elements["/N"] = appearance.Reference; annotation.Elements["/AP"] = ap;
                 page.Annotations.Add(annotation);
             }

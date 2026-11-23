@@ -46,6 +46,7 @@ public sealed partial class PdfWindow
 
     private sealed class ThumbnailItem(int index, PdfPageGeometry geometry, double scale, Brush frameBrush) : INotifyPropertyChanged
     {
+        private PdfPageGeometry _geometry = geometry;
         public int Index => index;
         public string Title => "第 " + (index + 1) + " 页";
         public string PageNumber => (index + 1).ToString();
@@ -55,8 +56,14 @@ public sealed partial class PdfWindow
             get => _frameBrush;
             set { if (ReferenceEquals(_frameBrush, value)) return; _frameBrush = value; PropertyChanged?.Invoke(this, new(nameof(FrameBrush))); }
         }
-        public double Width => geometry.DipWidth * scale;
-        public double Height => geometry.DipHeight * scale;
+        public double Width => _geometry.DipWidth * scale;
+        public double Height => _geometry.DipHeight * scale;
+        public void SetGeometry(PdfPageGeometry value)
+        {
+            if (_geometry == value) return;
+            _geometry = value;
+            PropertyChanged?.Invoke(this, new(nameof(Width))); PropertyChanged?.Invoke(this, new(nameof(Height)));
+        }
         public CancellationTokenSource Cancellation;
         private ImageSource _preview;
         public ImageSource Preview
@@ -71,7 +78,7 @@ public sealed partial class PdfWindow
     {
         // One document scale preserves both page aspect and relative physical page sizes.
         // Page-local annotation extents do not participate in thumbnail sizing.
-        _thumbnailScale = Math.Min(156 / _layout.Width, 196 / _file.Pages.Max(page => page.DipHeight));
+        _thumbnailScale = 156 / _file.Pages.Max(page => Math.Max(page.DipWidth, page.DipHeight));
         _pages.ItemsSource = Enumerable.Range(0, _file.Pages.Count).Select(index => new ThumbnailItem(index, _file.Pages[index], _thumbnailScale, _thumbnailBorder)).ToArray();
         _pages.ItemTemplate = (DataTemplate)XamlReader.Load("""
             <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
@@ -211,15 +218,20 @@ public sealed partial class PdfWindow
             cancellation.Token.ThrowIfCancellationRequested();
             var strokes = _controllers.TryGetValue(item.Index, out var controller) ? controller.Document.Strokes : _file.GetInk(item.Index);
             using var stream = new InMemoryRandomAccessStream();
-            if (strokes.Count > 0)
+            if (strokes.Count > 0 || _pageRotations[item.Index] != 0)
             {
                 using var bitmap = await LoadBitmapAsync(bytes, cancellation.Token);
-                using var target = new CanvasRenderTarget(bitmap.Device, (float)bitmap.Size.Width, (float)bitmap.Size.Height, 96);
+                var display = geometry with { Rotation = geometry.Rotation + _pageRotations[item.Index] };
+                using var target = new CanvasRenderTarget(bitmap.Device, Math.Max(1, display.DipWidth * (float)scale),
+                    Math.Max(1, display.DipHeight * (float)scale), 96);
                 using var scene = new InkSceneRenderer();
                 using (var draw = target.CreateDrawingSession())
                 {
-                    draw.Clear(Microsoft.UI.Colors.White); draw.DrawImage(bitmap);
-                    var transform = Matrix3x2.CreateScale((float)bitmap.Size.Width / geometry.DipWidth, (float)bitmap.Size.Height / geometry.DipHeight);
+                    draw.Clear(Microsoft.UI.Colors.White);
+                    var transform = geometry.TransformTo(display) * Matrix3x2.CreateScale((float)scale);
+                    draw.Transform = transform;
+                    draw.DrawImage(bitmap, new Windows.Foundation.Rect(0, 0, geometry.DipWidth, geometry.DipHeight), bitmap.Bounds);
+                    draw.Transform = Matrix3x2.Identity;
                     foreach (var stroke in strokes) scene.Strokes.Draw(draw, stroke, transform);
                 }
                 await target.SaveAsync(stream, CanvasBitmapFileFormat.Png).AsTask(cancellation.Token);

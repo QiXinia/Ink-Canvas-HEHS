@@ -57,7 +57,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
     private CanvasBitmap _detail;
     private Rect _detailRect;
     private int _pageIndex, _generation, _version, _savedVersion;
-    private readonly PdfContinuousLayout _layout;
+    private PdfContinuousLayout _layout;
     private Matrix3x2 _lastView;
     private bool _closed, _allowClose, _closing, _saving, _pageChanging, _renderPending, _selectionPending, _viewHasLayout;
     private bool _fittingView;
@@ -84,6 +84,8 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         _host = host; _file = file; _rasterizer = rasterizer; _targetPath = file.SourcePath;
         _paper.CustomDevice = rasterizer.Device;
         _layout = new PdfContinuousLayout(file.Pages);
+        _pageRotations = new int[file.Pages.Count];
+        _inkHistory.Changed += QueueInkRouting;
         foreach (int index in file.InkPages) UpdateInkBounds(index);
         _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -161,6 +163,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         Closed += (_, _) =>
         {
             _closed = true; _lifetime.Cancel(); _renderCancellation?.Cancel(); _detailCancellation?.Cancel(); _searchCancellation?.Cancel(); _detailTimer.Stop();
+            _inkHistory.Changed -= QueueInkRouting;
             StopScrollMotion(); ReleaseNavigationPicture(); ReleaseAppearance();
             _host.Detach(this);
             if (Controller is not null) Unbind(Controller);
@@ -170,6 +173,8 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             _paper.RemoveFromVisualTree();
             foreach (var controller in _controllers.Values) controller.Dispose();
             _controllers.Clear();
+            _routedGeometry.Clear();
+            _inkHistory.Clear();
             Cleanup = ReleaseAsync();
         };
         AutomationProperties.SetName(_pageNumber, "PDF 页码");
@@ -212,7 +217,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         if (_closed || index < 0 || index >= _file.Pages.Count) return;
         if (Controller is not null && index == _pageIndex)
         {
-            if (!preserveView && _viewHasLayout && !Controller.HasActiveInteraction) Fit(_fitMode == FitMode.Free ? FitMode.Page : _fitMode);
+            if (!preserveView && _viewHasLayout && !Controller.HasActiveInteraction) PositionPage(DocumentView);
             return;
         }
         _pageChanging = true;
@@ -228,11 +233,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             _pageIndex = index;
             if (!_controllers.TryGetValue(index, out var next))
             {
-                next = new InkController(); Configure(next);
-                next.Document.AddRange(_file.GetInk(index).Select(stroke => stroke.Clone()));
-                _controllers[index] = next;
-                next.Document.Changed += () => OnInkChanged(index);
-                next.LayersChanged += () => OnInkChanged(index);
+                next = PageController(index);
             }
             if (previous is not null)
             {
@@ -258,7 +259,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             _navigationPictureDirty = true;
             _detail?.Dispose(); _detail = null;
             if (preserveView) { next.ViewTransform = _layout.PageView(index, documentView); OnInvalidated(); }
-            else if (_viewHasLayout) Fit(_fitMode == FitMode.Free ? FitMode.Page : _fitMode);
+            else if (_viewHasLayout) PositionPage(documentView);
             ControllerChanged?.Invoke(); QueueSelection(); _paper.Invalidate();
             UpdateDocumentStatus();
             UpdateScrollbar();
@@ -282,6 +283,7 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
     }
     private void OnInkChanged(int index)
     {
+        if (!_routingInk) { _dirtyInkPages.Add(index); QueueInkRouting(); }
         _version++; _statusMessage = null; UpdateTitle();
         _navigationPictureDirty = true;
         _detailTimer.Stop(); _detailTimer.Start();
@@ -315,15 +317,16 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         StopScrollMotion();
         _fitMode = mode;
         if (!_viewHasLayout || Controller is null) return;
-        var page = _file.Pages[_pageIndex];
+        var page = _layout.SpreadBounds(_pageIndex);
         float availableWidth = (float)Math.Max(20, _viewport.ActualWidth - 32), availableHeight = (float)Math.Max(20, _viewport.ActualHeight - 32 - DocumentBottomPadding);
-        float scale = Math.Clamp(mode == FitMode.Width ? availableWidth / page.DipWidth : Math.Min(availableWidth / page.DipWidth, availableHeight / page.DipHeight), .02f, 8);
+        float scale = Math.Clamp(mode == FitMode.Width ? availableWidth / page.Width : Math.Min(availableWidth / page.Width, availableHeight / page.Height), .02f, 8);
         _fittingView = true;
         try
         {
-            Controller.ViewTransform = Matrix3x2.CreateScale(scale) * Matrix3x2.CreateTranslation(
-                ((float)_viewport.ActualWidth - page.DipWidth * scale) / 2,
-                mode == FitMode.Width ? 16 : ((float)_viewport.ActualHeight - DocumentBottomPadding - page.DipHeight * scale) / 2);
+            var document = Matrix3x2.CreateScale(scale) * Matrix3x2.CreateTranslation(
+                ((float)_viewport.ActualWidth - page.Width * scale) / 2 - page.Left * scale,
+                (mode == FitMode.Width ? 16 : ((float)_viewport.ActualHeight - DocumentBottomPadding - page.Height * scale) / 2) - page.Top * scale);
+            Controller.ViewTransform = _layout.PageView(_pageIndex, document);
             Controller.NotifyElementsChanged();
         }
         finally { _fittingView = false; }
@@ -382,8 +385,8 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         }
         else if (!control && !shift)
         {
-            if (e.Key == Windows.System.VirtualKey.PageDown) { e.Handled = true; GoToPage(_pageIndex + 1); }
-            else if (e.Key == Windows.System.VirtualKey.PageUp) { e.Handled = true; GoToPage(_pageIndex - 1); }
+            if (e.Key == Windows.System.VirtualKey.PageDown) { e.Handled = true; NavigatePage(1); }
+            else if (e.Key == Windows.System.VirtualKey.PageUp) { e.Handled = true; NavigatePage(-1); }
             else if (Controller.Tool != InkTool.Pan && e.Key == Windows.System.VirtualKey.Delete) { e.Handled = true; Controller.DeleteSelection(); }
             else if (Controller.Tool != InkTool.Pan && e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; Controller.ClearSelection(); }
         }
@@ -397,8 +400,11 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
         if (!Matrix3x2.Invert(view, out var inverse)) return;
         int generation = _generation, index = _pageIndex;
         var page = _file.Pages[index];
-        var left = Vector2.Transform(new(-32, -32), inverse);
-        var right = Vector2.Transform(new((float)_viewport.ActualWidth + 32, (float)_viewport.ActualHeight + 32), inverse);
+        var corners = new[] { Vector2.Transform(new(-32, -32), inverse), Vector2.Transform(new((float)_viewport.ActualWidth + 32, -32), inverse),
+            Vector2.Transform(new(-32, (float)_viewport.ActualHeight + 32), inverse),
+            Vector2.Transform(new((float)_viewport.ActualWidth + 32, (float)_viewport.ActualHeight + 32), inverse) };
+        var left = new Vector2(corners.Min(point => point.X), corners.Min(point => point.Y));
+        var right = new Vector2(corners.Max(point => point.X), corners.Max(point => point.Y));
         float x = Math.Clamp(left.X, 0, page.DipWidth), y = Math.Clamp(left.Y, 0, page.DipHeight);
         float width = Math.Clamp(right.X, 0, page.DipWidth) - x, height = Math.Clamp(right.Y, 0, page.DipHeight) - y;
         if (width <= 0 || height <= 0) return;
@@ -516,11 +522,13 @@ public sealed partial class PdfWindow : Window, IDocumentWorkspace
             }
             foreach (var controller in _controllers.Values) controller.FinishDotAnimations();
             var pages = new Dictionary<int, IReadOnlyList<InkStroke>>();
+            NormalizeCrossPageInk();
             for (int page = 0; page < _file.Pages.Count; page++)
                 pages[page] = (_controllers.TryGetValue(page, out var controller) ? controller.Document.Strokes : _file.GetInk(page)).Select(stroke => stroke.Clone()).ToArray();
             int version = _version;
             SetStatus("正在保存 PDF 矢量批注…");
-            await _file.SaveAsync(path, pages, _lifetime.Token);
+            await _file.SaveAsync(path, pages,
+                _pageRotations.Select((turn, index) => (turn, index)).ToDictionary(item => item.index, item => item.turn), _lifetime.Token);
             _targetPath = path; _savedVersion = version; UpdateTitle();
             NotifyDocumentAi(path);
             SetStatus(IsDirty ? "已保存快照，新的批注尚未保存"

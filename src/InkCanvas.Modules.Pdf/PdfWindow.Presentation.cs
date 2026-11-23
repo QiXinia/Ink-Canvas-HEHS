@@ -29,6 +29,19 @@ public sealed partial class PdfWindow
     internal bool UsesCompositionScroll => _pictureMotionActive;
     internal bool NavigationHandoverPending => _navigationHandover;
     internal long NavigationPictureBytes => _pictureSurface is null ? 0 : (long)_pictureSurface.Size.Width * (long)_pictureSurface.Size.Height * 4;
+    internal bool NavigationGapOpaque()
+    {
+        var gap = _layout.SpreadBounds(0);
+        var screen = new Core.Ink.Rect(gap.Center.X - 4, gap.Bottom + 4, gap.Center.X + 4, gap.Bottom + 12);
+        using var target = new Microsoft.Graphics.Canvas.CanvasRenderTarget(_rasterizer.Device, 8, 8, 96);
+        using (var draw = target.CreateDrawingSession())
+        {
+            draw.Clear(Microsoft.UI.Colors.Transparent);
+            DrawDocument(draw, Matrix3x2.Identity, screen, Matrix3x2.CreateTranslation(-screen.Left, -screen.Top), includeActiveInk: true);
+        }
+        var pixels = target.GetPixelColors();
+        return pixels.All(color => color == _documentBackgroundColor && color.A == 255);
+    }
 
     private void QueueViewportUpdate()
     {
@@ -107,16 +120,16 @@ public sealed partial class PdfWindow
         var compositor = ElementCompositionPreview.GetElementVisual(_navigationPicture).Compositor;
         _pictureDevice ??= CanvasComposition.CreateCompositionGraphicsDevice(compositor, _rasterizer.Device);
         _pictureRoot ??= compositor.CreateContainerVisual();
-        if (_pictureSurface is null || _pictureSurface.Size != pixels)
+        bool replaceSurface = _pictureSurface is null || _pictureSurface.Size != pixels;
+        var previousSurface = _pictureSurface;
+        var previousBrush = _pictureBrush;
+        var previousSprite = _pictureSprite;
+        if (replaceSurface)
         {
-            _pictureBrush?.Dispose(); _pictureSprite?.Dispose(); _pictureSurface?.Dispose();
             _pictureSurface = _pictureDevice.CreateDrawingSurface(pixels, DirectXPixelFormat.B8G8R8A8UIntNormalized, DirectXAlphaMode.Premultiplied);
             _pictureBrush = compositor.CreateSurfaceBrush(_pictureSurface);
             _pictureSprite = compositor.CreateSpriteVisual();
             _pictureSprite.Brush = _pictureBrush;
-            _pictureRoot.Children.RemoveAll();
-            _pictureRoot.Children.InsertAtTop(_pictureSprite);
-            ElementCompositionPreview.SetElementChildVisual(_navigationPicture, _pictureRoot);
         }
         StopPictureMotion();
         _pictureView = DocumentView;
@@ -129,6 +142,13 @@ public sealed partial class PdfWindow
         _pictureBounds = bounds;
         _pictureSprite.Size = new(bounds.Width, bounds.Height);
         _pictureSprite.Offset = new(bounds.Left, bounds.Top, 0);
+        if (replaceSurface)
+        {
+            _pictureRoot.Children.RemoveAll();
+            _pictureRoot.Children.InsertAtTop(_pictureSprite);
+            ElementCompositionPreview.SetElementChildVisual(_navigationPicture, _pictureRoot);
+            previousSprite?.Dispose(); previousBrush?.Dispose(); previousSurface?.Dispose();
+        }
         _pictureRoot.TransformMatrix = Matrix4x4.Identity;
         _pictureRoot.IsVisible = _navigationPictureActive;
         _navigationPicture.Clip = new RectangleGeometry { Rect = new(0, 0, size.X, size.Y) };

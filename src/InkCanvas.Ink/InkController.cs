@@ -27,7 +27,12 @@ public enum InkEraserMode { Area, WholeStroke, Lasso }
 /// </summary>
 public sealed partial class InkController : IDisposable
 {
-    public InkController() => Document.Changed += OnPlaybackDocumentChanged;
+    public InkController() : this(new UndoStack(200)) { }
+    public InkController(UndoStack history)
+    {
+        History = history ?? throw new ArgumentNullException(nameof(history));
+        Document.Changed += OnPlaybackDocumentChanged;
+    }
     public InkPlayback Playback { get; private set; }
     public event Action PlaybackChanged;
     public bool BeginPlayback()
@@ -125,7 +130,7 @@ public sealed partial class InkController : IDisposable
 
     public InkDocument Document { get; } = new();
 
-    public UndoStack History { get; } = new(200);
+    public UndoStack History { get; }
 
     public bool HasActiveInteraction => _live.Count > 0 || _touches.Count > 0 || _erasing || IsLassoErasing || IsRegionSelecting
         || _activeHandle != SelectionHandle.None || _selectionGesture || _panPointerId is not null || _shapeStep != 0 || _shapeEditPointer is not null;
@@ -630,6 +635,8 @@ public sealed partial class InkController : IDisposable
     public event Action Invalidated;
 
     public event Action<InkStroke> StrokeCommitted;
+    /// <summary>Committed ink and any shape recognition have finished updating the document and history.</summary>
+    public event Action StrokeCommitCompleted;
     public event Action<IReadOnlyList<InkStroke>> StrokesErased;
     public event Action Cleared;
 
@@ -1273,6 +1280,7 @@ public sealed partial class InkController : IDisposable
             foreach (var stroke in strokes) StrokeCommitted?.Invoke(stroke);
             if (RecognizeShapes && name == "ink") TryRecognize(strokes, lineEndpointHeld, heldShape);
         }
+        StrokeCommitCompleted?.Invoke();
         Invalidated?.Invoke();
     }
 
