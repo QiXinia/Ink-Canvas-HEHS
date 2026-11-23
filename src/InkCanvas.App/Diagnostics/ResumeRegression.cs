@@ -28,6 +28,12 @@ internal static class ResumeRegression
         WindowChrome.ShowWithoutActivation(anchor);
         try
         {
+            var closedWindow = new Window { Content = new Grid() };
+            WindowChrome.MakeBorderless(closedWindow);
+            WindowChrome.ShowWithoutActivation(closedWindow);
+            closedWindow.Close();
+            WindowChrome.EnsureAbove(closedWindow);
+            Check("overlay chrome ignores closed windows", true);
             await BoardCase(ResumeBehavior.Automatic, 1);
             await BoardCase(ResumeBehavior.Reminder, 2);
             await BoardCase(ResumeBehavior.Reminder, 1, accept: true);

@@ -752,7 +752,8 @@ public static class WindowChrome
     /// </summary>
     public static void EnsureAbove(Window window, IntPtr overlay = default)
     {
-        if (window.AppWindow.Presenter is OverlappedPresenter { IsAlwaysOnTop: false }) return;
+        if (window?.AppWindow is not { } appWindow || !appWindow.IsVisible) return;
+        if (appWindow.Presenter is OverlappedPresenter { IsAlwaysOnTop: false }) return;
         var hwnd = GetHwnd(window);
         if (hwnd == IntPtr.Zero || !NativeMethods.IsWindowVisible(hwnd)) return;
         if (overlay != IntPtr.Zero)

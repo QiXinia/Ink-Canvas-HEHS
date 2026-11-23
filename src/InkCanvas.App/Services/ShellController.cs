@@ -316,14 +316,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Overlay.Show();
         // A click on the overlay raises it to the top of the topmost Z-band, above every chrome
         // window. Re-assert the chrome immediately so close buttons and title bars stay clickable.
-        Overlay.Window.InputBegan += () =>
-        {
-            RaiseChromeAboveOverlay();
-            _bar?.DismissPanelsOnInput();
-            // WPF HideSubPanels: laying ink dismisses the pen/shape popups (pin only survives picks).
-            _palette?.DismissOnOverlayInput();
-            _shapePicker?.DismissOnOverlayInput();
-        };
+        Overlay.Window.InputBegan += OnOverlayInputBegan;
         if (Services.Settings.Startup.IsFoldAtStartup) _bar.SetFolded(true);
         Overlay.RegisterHotkeys(
             undo: () => ActiveController.Undo(),
@@ -769,6 +762,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     /// </summary>
     private void RaiseChromeAboveOverlay()
     {
+        if (_disposed || _exiting) return;
         ImageFilePicker.EnsureAbove(_board is not null ? WindowChrome.GetHwnd(_board) : Overlay.Window.Handle);
         if (_bar is not null && _board is null) WindowChrome.EnsureAbove(_bar, Overlay.Window.Handle);
         if (_selectionToolbar?.IsShown == true) WindowChrome.EnsureAbove(_selectionToolbar, Overlay.Window.Handle);
@@ -780,16 +774,25 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_updateWindow is not null) WindowChrome.EnsureAbove(_updateWindow, Overlay.Window.Handle);
         foreach (var notice in _notices) WindowChrome.EnsureAbove(notice, Overlay.Window.Handle);
         foreach (var navigation in _pptNavigations.Values)
-            if (navigation.AppWindow.IsVisible) WindowChrome.EnsureAbove(navigation, Overlay.Window.Handle);
+            if (navigation.AppWindow?.IsVisible == true) WindowChrome.EnsureAbove(navigation, Overlay.Window.Handle);
 
         if (_palette is not null) WindowChrome.EnsureAbove(_palette, Overlay.Window.Handle);
         foreach (var palette in _detachedPalettes) WindowChrome.EnsureAbove(palette, Overlay.Window.Handle);
         if (_shapePicker is not null) WindowChrome.EnsureAbove(_shapePicker, Overlay.Window.Handle);
         if (_board is not null)
             foreach (var panel in _board.ToolPanels) WindowChrome.EnsureAbove(panel, Overlay.Window.Handle);
-        foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window) && window.AppWindow.IsVisible) WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
+        foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window) && window.AppWindow?.IsVisible == true) WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
         UpdateSettingsDrawingOrder();
         RefreshDesktopMedia();
+    }
+
+    private void OnOverlayInputBegan()
+    {
+        if (_disposed || _exiting) return;
+        RaiseChromeAboveOverlay();
+        _bar?.DismissPanelsOnInput();
+        _palette?.DismissOnOverlayInput();
+        _shapePicker?.DismissOnOverlayInput();
     }
 
     private const int RpcCallRejected = unchecked((int)0x80010001);
@@ -2282,6 +2285,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        Overlay.Window.InputBegan -= OnOverlayInputBegan;
         _palette?.FlushSliderChanges();
         foreach (var palette in _detachedPalettes.ToArray()) palette.FlushSliderChanges();
         _bar?.GetOpenPanel(BarPanelKind.Eraser)?.FlushSettingsChanges();
