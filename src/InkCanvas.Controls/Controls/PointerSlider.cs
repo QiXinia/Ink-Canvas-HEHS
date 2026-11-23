@@ -10,6 +10,9 @@ namespace InkCanvas.Controls.Controls;
 public sealed class PointerSlider : Slider
 {
     private uint? _pointer;
+    private Thumb _thumb;
+    public bool IsAdjusting => _pointer.HasValue;
+    public event Action AdjustmentCompleted;
 
     public PointerSlider()
     {
@@ -24,6 +27,7 @@ public sealed class PointerSlider : Slider
     {
         base.OnApplyTemplate();
         if (VisualTreeHelper.GetChildrenCount(this) == 0 || VisualTreeHelper.GetChild(this, 0) is not Grid root) return;
+        _thumb = FindThumb(root);
         // The native Thumb must not start a second drag or request focus after we capture.
         // Handle the press on a transparent surface before it bubbles to Slider's handlers.
         var input = new Border { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
@@ -57,17 +61,20 @@ public sealed class PointerSlider : Slider
         Adjust(args.GetCurrentPoint(this).Position.X);
         _pointer = null;
         ReleasePointerCapture(args.Pointer);
+        AdjustmentCompleted?.Invoke();
         args.Handled = true;
     }
 
     private void Canceled(object sender, PointerRoutedEventArgs args)
     {
-        if (_pointer == args.Pointer.PointerId) _pointer = null;
+        if (_pointer != args.Pointer.PointerId) return;
+        _pointer = null;
+        AdjustmentCompleted?.Invoke();
     }
 
     private void Adjust(double x)
     {
-        double halfThumb = FindThumb(this)?.ActualWidth / 2 ?? 10;
+        double halfThumb = _thumb?.ActualWidth / 2 ?? 10;
         double travel = ActualWidth - 2 * halfThumb;
         if (travel <= 0) return;
         double fraction = Math.Clamp((x - halfThumb) / travel, 0, 1);

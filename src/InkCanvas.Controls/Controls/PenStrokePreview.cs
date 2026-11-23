@@ -1,5 +1,4 @@
 using InkCanvas.Core.Ink;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -23,6 +22,8 @@ public sealed class PenStrokePreview : UserControl
     private PreviewKey? _strokeKey, _geometryKey;
     private InkStroke _stroke;
     private bool _renderPending;
+    private bool _building;
+    public long GeometryBuildCount { get; private set; }
     private double _checkWidth, _checkHeight;
     public double PreviewHeight
     {
@@ -52,6 +53,7 @@ public sealed class PenStrokePreview : UserControl
         AutomationProperties.SetName(this, "笔触预览");
         SizeChanged += (_, _) => RequestRender();
         Loaded += (_, _) => RequestRender();
+        Unloaded += (_, _) => { CompositionTarget.Rendering -= OnRendering; _renderPending = false; };
         ApplyTheme(1);
     }
 
@@ -72,23 +74,26 @@ public sealed class PenStrokePreview : UserControl
 
     private void RequestRender()
     {
-        // Keep the model immediately available to callers; build XAML geometry once after layout.
-        EnsureStroke();
         if (!IsLoaded || _renderPending) return;
         _renderPending = true;
-        if (!DispatcherQueue.TryEnqueue(DispatcherQueuePriority.Low, () =>
-        {
-            _renderPending = false;
-            if (IsLoaded) Render();
-        })) _renderPending = false;
+        CompositionTarget.Rendering += OnRendering;
     }
+
+    private void OnRendering(object sender, object args)
+    {
+        CompositionTarget.Rendering -= OnRendering;
+        _renderPending = false;
+        if (IsLoaded && !_building) _ = RenderAsync();
+    }
+
+    private PreviewKey CurrentKey() => new(ActualWidth > 0 ? ActualWidth : 200, _previewHeight, _attributes.BaseWidth,
+        _attributes.EffectiveTaper, _attributes.Nib, _attributes.NibRotation, _attributes.IsHighlighter, _attributes.InkWash);
 
     private void EnsureStroke()
     {
-        double width = ActualWidth > 0 ? ActualWidth : 200;
-        float height = (float)_previewHeight;
-        var key = new PreviewKey(width, height, _attributes.BaseWidth, _attributes.EffectiveTaper,
-            _attributes.Nib, _attributes.NibRotation, _attributes.IsHighlighter, _attributes.InkWash);
+        var key = CurrentKey();
+        double width = key.Width;
+        float height = (float)key.Height;
         if (_strokeKey == key)
         {
             _stroke.Attributes.Color = _attributes.Color;
@@ -115,11 +120,42 @@ public sealed class PenStrokePreview : UserControl
         _stroke.Complete();
     }
 
-    private void Render()
+    private async Task RenderAsync()
     {
         EnsureStroke();
         var key = _strokeKey.Value;
         bool geometryChanged = _geometryKey != key;
+        System.Numerics.Vector2[][][] contours = null;
+        if (geometryChanged)
+        {
+            _building = true;
+            try
+            {
+                var snapshot = _stroke.Clone();
+                GeometryBuildCount++;
+                contours = await Task.Run(() =>
+                {
+                    if (InkBrush.UsesInkWash(snapshot)) return InkWashPreviewGeometry.Build(snapshot);
+                    var layers = InkBrush.Layers(snapshot);
+                    var result = new System.Numerics.Vector2[layers.Length][][];
+                    for (int layer = 0; layer < layers.Length; layer++)
+                        result[layer] = StrokeGeometry.BuildUnionContours(snapshot, layers[layer].WidthScale);
+                    return result;
+                });
+            }
+            catch (Exception error)
+            {
+                Core.Diagnostics.FileLog.WriteLogToFile("笔触预览生成失败 " + error.Message);
+                return;
+            }
+            finally { _building = false; }
+            if (!IsLoaded || CurrentKey() != key)
+            {
+                RequestRender();
+                return;
+            }
+            EnsureStroke();
+        }
         if (_checkWidth != key.Width || _checkHeight != key.Height)
         {
             _checkWidth = key.Width; _checkHeight = key.Height;
@@ -131,7 +167,6 @@ public sealed class PenStrokePreview : UserControl
             _checks.Data = checks;
         }
         var layers = InkBrush.Layers(_stroke);
-        var washContours = geometryChanged && InkBrush.UsesInkWash(_stroke) ? InkWashPreviewGeometry.Build(_stroke) : null;
         while (_ink.Count < layers.Length)
         {
             var path = new Path();
@@ -142,8 +177,7 @@ public sealed class PenStrokePreview : UserControl
             var path = _ink[layer];
             path.Visibility = layer < layers.Length ? Visibility.Visible : Visibility.Collapsed;
             if (layer >= layers.Length) continue;
-            if (geometryChanged) path.Data = washContours is null ? PenStyleIcon.CreateGeometry(_stroke, layers[layer].WidthScale)
-                : PenStyleIcon.CreateGeometry(washContours[layer]);
+            if (geometryChanged) path.Data = PenStyleIcon.CreateGeometry(contours[layer]);
             var color = layers[layer].Color(_stroke.Attributes.EffectiveColor);
             var fill = Windows.UI.Color.FromArgb(color.A, color.R, color.G, color.B);
             if (path.Fill is SolidColorBrush brush) brush.Color = fill;

@@ -1621,8 +1621,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 if (highlighter) Services.Settings.Canvas.HighlighterWidth = width;
                 else if (controller.CurrentAttributes.TaperKind == Core.Ink.TaperKind.InkWash) Services.Settings.Canvas.InkWashWidth = width;
                 else Services.Settings.Canvas.InkWidth = width;
-                Services.ApplySettings();
-                Services.SaveSettings();
+                controller.ConfigurePenWidths((float)Services.Settings.Canvas.InkWidth,
+                    (float)(Services.Settings.Canvas.HighlighterWidth ?? Services.Settings.Canvas.InkWidth));
             },
             InkStyleChanged = style =>
             {
@@ -1639,8 +1639,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
             InkAlphaChanged = alpha =>
             {
                 Services.Settings.Canvas.InkAlpha = alpha;
-                Services.ApplySettings();
-                Services.SaveSettings();
             },
             AttributesChanged = () => { Services.RememberToolOptions(controller); _bar?.Bar.RefreshSelection(); },
             ColorPaletteChanged = () => { Services.ApplySettings(); Services.SaveSettings(); },
@@ -2284,6 +2282,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        _palette?.FlushSliderChanges();
+        foreach (var palette in _detachedPalettes.ToArray()) palette.FlushSliderChanges();
         _resumeTimer?.Stop();
         foreach (var reminder in _resumeReminders.ToArray()) reminder.Close();
         _pptPreviewSource?.Dispose();

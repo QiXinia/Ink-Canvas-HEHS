@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var brushAdjustmentCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--brushadjustmentcheck=", StringComparison.Ordinal));
+        if (brushAdjustmentCheck is not null) { _ = Diagnostics.BrushAdjustmentRegression.Run(brushAdjustmentCheck["--brushadjustmentcheck=".Length..]); return; }
         var resumeCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--resumecheck=", StringComparison.Ordinal));
         if (resumeCheck is not null) { _ = Diagnostics.ResumeRegression.Run(resumeCheck["--resumecheck=".Length..]); return; }
         var selectionPaletteCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--selectionpalettecheck=", StringComparison.Ordinal));

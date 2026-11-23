@@ -1,4 +1,5 @@
 using InkCanvas.Core.Ink;
+using InkCanvas.Controls.Lifecycle;
 using InkCanvas.Core.Settings;
 using InkCanvas.Ink;
 using Microsoft.UI.Xaml;
@@ -21,7 +22,9 @@ public sealed class BoardPenPalette : UserControl
     private readonly PenStrokePreview _penPreview = new() { PreviewHeight = 60 };
     private readonly PenStrokePreview _highlighterPreview = new() { PreviewHeight = 96 };
     private readonly PenStylePicker _styles = new();
-    private readonly Slider _width = new() { Minimum = 1, StepFrequency = 1, Width = 106, MinHeight = 0, Height = 28 };
+    private readonly PointerSlider _width = new() { Minimum = 1, StepFrequency = 1, Width = 106, MinHeight = 0, Height = 28 };
+    private readonly PointerSlider _highlighterWidth = new() { Minimum = 1, Maximum = OriginalMenuCatalog.HighlighterWidthMaximum, StepFrequency = 1, MinHeight = 28 };
+    private readonly DeferredSettingsChange _sliderChanges;
     private bool _refreshingWidth;
     private readonly PointerSlider _alpha = new()
     {
@@ -37,6 +40,11 @@ public sealed class BoardPenPalette : UserControl
     public BoardPenPalette(InkController controller, AppSettings settings, int theme)
     {
         _controller = controller; _settings = settings;
+        _sliderChanges = new DeferredSettingsChange(this, () => SettingsChanged?.Invoke(),
+            () => _width.IsAdjusting || _highlighterWidth.IsAdjusting || _alpha.IsAdjusting);
+        _width.AdjustmentCompleted += _sliderChanges.Flush;
+        _highlighterWidth.AdjustmentCompleted += _sliderChanges.Flush;
+        _alpha.AdjustmentCompleted += _sliderChanges.Flush;
         _penPreview.ApplyTheme(theme); _highlighterPreview.ApplyTheme(theme);
         _styles.Update(theme);
         _foreground = new(theme == 2 ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Black);
@@ -78,7 +86,7 @@ public sealed class BoardPenPalette : UserControl
                 settings.Canvas.InkWidth = e.NewValue / 2;
                 _controller.CurrentAttributes.BaseWidth = (float)(e.NewValue / 2);
             }
-            NotifySettingsChanged();
+            NotifySliderChanged();
         };
         Add(options, Row("粗细", _width), 1, 0);
         Add(options, Toggle("墨迹识别", settings.InkToShape.IsInkToShapeEnabled, value => settings.InkToShape.IsInkToShapeEnabled = value), 1, 1);
@@ -109,13 +117,13 @@ public sealed class BoardPenPalette : UserControl
         var highlighter = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
         highlighter.Children.Add(Text("荧光笔", 13));
         highlighter.Children.Add(Text("粗细", 10));
-        var highlighterWidth = new Slider { Minimum = 1, Maximum = OriginalMenuCatalog.HighlighterWidthMaximum, StepFrequency = 1,
-            Value = Math.Clamp((settings.Canvas.HighlighterWidth ?? settings.Canvas.InkWidth) * 2, 1, OriginalMenuCatalog.HighlighterWidthMaximum), MinHeight = 28 };
+        var highlighterWidth = _highlighterWidth;
+        highlighterWidth.Value = Math.Clamp((settings.Canvas.HighlighterWidth ?? settings.Canvas.InkWidth) * 2, 1, OriginalMenuCatalog.HighlighterWidthMaximum);
         AutomationProperties.SetName(highlighterWidth, "荧光笔粗细");
         highlighterWidth.ValueChanged += (_, args) =>
         {
             settings.Canvas.HighlighterWidth = args.NewValue / 2;
-            NotifySettingsChanged();
+            NotifySliderChanged();
         };
         highlighter.Children.Add(highlighterWidth);
         var alphaLabel = new Grid();
@@ -135,7 +143,7 @@ public sealed class BoardPenPalette : UserControl
             settings.Canvas.InkAlpha = OriginalMenuCatalog.ToStoredHighlighterAlpha(e.NewValue);
             _controller.CurrentAttributes.HighlighterAlpha = (byte)settings.Canvas.InkAlpha;
             _alphaValue.Text = e.NewValue.ToString("0") + "%";
-            NotifySettingsChanged();
+            NotifySliderChanged();
         };
         highlighter.Children.Add(_alpha);
         highlighter.Children.Add(_highlighterPreview);
@@ -215,6 +223,15 @@ public sealed class BoardPenPalette : UserControl
         SettingsChanged?.Invoke();
         RefreshSwatches();
     }
+    private void NotifySliderChanged()
+    {
+        _controller.ConfigurePenWidths((float)_settings.Canvas.InkWidth,
+            (float)(_settings.Canvas.HighlighterWidth ?? _settings.Canvas.InkWidth));
+        RefreshPreviews();
+        _sliderChanges.Schedule();
+    }
+
+    public void FlushSliderChanges() => _sliderChanges.Flush();
     private void RefreshWidth()
     {
         _refreshingWidth = true;

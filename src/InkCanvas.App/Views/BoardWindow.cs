@@ -1469,7 +1469,7 @@ public sealed partial class BoardWindow : Window
         }
     }
 
-    internal void CloseForShutdown() { _archiveCloseApproved = true; base.Close(); }
+    internal void CloseForShutdown() { _boardPenPalette?.FlushSliderChanges(); _archiveCloseApproved = true; base.Close(); }
 
     private void RefreshBackground()
     {

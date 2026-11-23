@@ -75,6 +75,7 @@ internal static class PenOptionsRegression
                 var width = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith(highlighter ? "荧光笔粗细" : "画笔粗细"));
                 var widthPeer = new SliderAutomationPeer(width);
                 ((IRangeValueProvider)widthPeer.GetPattern(PatternInterface.RangeValue)).SetValue(18);
+                await Task.Delay(260);
                 Check("width updates and saves " + highlighter, services.OverlayInk.CurrentAttributes.BaseWidth == 9
                     && (highlighter ? services.Store.Load().Canvas.HighlighterWidth ?? services.Store.Load().Canvas.InkWidth : services.Store.Load().Canvas.InkWidth) == 9);
                 bool? dragged = await TryPointer(window, width, drag: true);
@@ -86,6 +87,7 @@ internal static class PenOptionsRegression
                 if (highlighter)
                 {
                     width.Value = 120;
+                    await Task.Delay(260);
                     Check("highlighter supports full 60 DIP width", services.OverlayInk.CurrentAttributes.BaseWidth == 60
                         && services.Store.Load().Canvas.HighlighterWidth == 60);
                     services.OverlayInk.Tool = InkTool.Pen;
@@ -95,6 +97,7 @@ internal static class PenOptionsRegression
                     width.Value = 18;
                     var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔不透明度"));
                     ((IRangeValueProvider)new SliderAutomationPeer(alpha).GetPattern(PatternInterface.RangeValue)).SetValue(80);
+                    await Task.Delay(260);
                     Check("alpha updates and saves", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 204 && services.Store.Load().Canvas.InkAlpha == 204);
                 }
                 Check("inline choices fit palette " + highlighter, Descendants(palette).OfType<SegmentedSelector>().All(selector => Fits(selector, palette.CardSurface)));
@@ -275,7 +278,7 @@ internal static class PenOptionsRegression
         }
     }
 
-    private static async Task<bool?> TryPointer(Window window, FrameworkElement control, bool drag)
+    internal static async Task<bool?> TryPointer(Window window, FrameworkElement control, bool drag)
     {
         if (!NativeMethods.GetCursorPos(out var original)) return null;
         var bounds = WindowChrome.GetScreenBounds(window, control);

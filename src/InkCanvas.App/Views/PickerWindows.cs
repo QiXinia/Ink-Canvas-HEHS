@@ -75,6 +75,8 @@ public sealed class PenPaletteWindow : Window
         WindowChrome.EnableDragMove(this, _palette.Header, Detach, onDragCompleted: RefreshDisplayPlacement);
         _palette.RefreshFromController();
         WireDismissal();
+        AppWindow.Closing += (_, _) => _palette.FlushSliderChanges();
+        Closed += (_, _) => _palette.FlushSliderChanges();
         OptionPopupCoordinator.Attach(this, _palette.Header);
         scroll.Loaded += (_, _) => { _live = true; AttachDpiTracking(); };
         _palette.CardSurface.SizeChanged += (_, _) =>
@@ -129,6 +131,8 @@ public sealed class PenPaletteWindow : Window
     }
 
     public void RefreshFromController() => _palette.RefreshFromController();
+    public void FlushSliderChanges() => _palette.FlushSliderChanges();
+    public new void Close() { _palette.FlushSliderChanges(); base.Close(); }
     public void RefreshFromController(Core.Settings.CanvasSettings settings) => _palette.RefreshFromController(settings);
 
     /// <summary>

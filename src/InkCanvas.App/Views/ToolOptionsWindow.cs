@@ -50,6 +50,7 @@ internal sealed class ToolOptionsWindow : Window
         Closed += (_, _) =>
         {
             _closed = true;
+            if (content is BoardPenPalette palette) palette.FlushSliderChanges();
             _detachAnchor?.Invoke(); _detachAnchor = null;
             header.CloseRequested -= Close;
             content.Loaded -= OnLoaded;

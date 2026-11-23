@@ -1,4 +1,5 @@
 using InkCanvas.Controls.Theming;
+using InkCanvas.Controls.Lifecycle;
 using InkCanvas.Core.Ink;
 using InkCanvas.Core.Settings;
 using InkCanvas.Ink;
@@ -57,12 +58,16 @@ public sealed class PenPalette : UserControl
     private bool _suppress;
     private Action<int> _inkAlphaChanged;
     private int _highlighterAlpha = 140;
+    private readonly DeferredSettingsChange _sliderChanges;
 
     public PenPalette(bool highlighter = false) : this(highlighter, null) { }
 
     public PenPalette(bool highlighter, CanvasSettings settings)
     {
         _highlighter = highlighter;
+        _sliderChanges = new DeferredSettingsChange(this, () => AttributesChanged?.Invoke(), () => _width.IsAdjusting || _alpha.IsAdjusting);
+        _width.AdjustmentCompleted += _sliderChanges.Flush;
+        _alpha.AdjustmentCompleted += _sliderChanges.Flush;
         _colors = new InkColorPalette(settings ?? new CanvasSettings(), highlighter, false);
         _colors.PaletteChanged += () => ColorPaletteChanged?.Invoke();
         _colors.ColorPicked += color =>
@@ -122,7 +127,7 @@ public sealed class PenPalette : UserControl
             if (waterInk) Controller.InkWashWidth = (float)stored;
             else Controller.CurrentAttributes.BaseWidth = (float)stored;
             InkWidthChanged?.Invoke(stored);
-            AttributesChanged?.Invoke();
+            _sliderChanges.Schedule();
             UpdatePreview();
         };
 
@@ -139,8 +144,9 @@ public sealed class PenPalette : UserControl
             _highlighterAlpha = OriginalMenuCatalog.ToStoredHighlighterAlpha(snapped);
             Controller.Tool = InkTool.Highlighter;
             _alphaValue.Text = snapped + "%";
+            Controller.CurrentAttributes.HighlighterAlpha = (byte)_highlighterAlpha;
             InkAlphaChanged.Invoke(_highlighterAlpha);
-            AttributesChanged?.Invoke();
+            _sliderChanges.Schedule();
             UpdatePreview();
         };
 
@@ -280,6 +286,7 @@ public sealed class PenPalette : UserControl
     }
 
     public Border CardSurface => _card;
+    public void FlushSliderChanges() => _sliderChanges.Flush();
     public bool IsEditingColor => _colors.IsEditingColor;
     public Action ColorPaletteChanged { get; set; }
     public Func<FrameworkElement, InkColor, Action<InkColor>, Task> EditColorAsync { get => _colors.EditColorAsync; set => _colors.EditColorAsync = value; }
