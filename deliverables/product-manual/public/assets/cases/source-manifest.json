@@ -1,0 +1,130 @@
+{
+  "description": "Native captures and demonstration clips for the advanced classroom cases",
+  "sourceReadme": "product-demo/README.md",
+  "records": [
+    {
+      "source": "product-demo/public/rebuild/advanced-writing-final.png",
+      "asset": "public/assets/cases/advanced-writing-final.png",
+      "bytes": 175589,
+      "sha256": "f82ea4732f21978bf9579b0eb97aa69d97abb9459ab16601d85fba4fa8670d1b"
+    },
+    {
+      "source": "product-demo/public/rebuild/gaokao-question18.png",
+      "asset": "public/assets/cases/gaokao-question18.png",
+      "bytes": 87814,
+      "sha256": "03ce706a4f073e1c2f79bc081cf632eeb3006252401a3d46cd72264ea25b4ac6"
+    },
+    {
+      "source": "product-demo/public/rebuild/gaokao-pdf-final.png",
+      "asset": "public/assets/cases/gaokao-pdf-final.png",
+      "bytes": 262307,
+      "sha256": "8e142fee412017dc917e5ee351df8c1930736d7585db106404ed476493d29126"
+    },
+    {
+      "source": "product-demo/public/rebuild/shape-catalog-final.png",
+      "asset": "public/assets/cases/shape-catalog-final.png",
+      "bytes": 148347,
+      "sha256": "bfd8787aa782e556b890ebf273add3d2ae3a51aa0c2dbb0b8f7c1f73ee5278ee"
+    },
+    {
+      "source": "product-demo/public/rebuild/geometry3d-final.png",
+      "asset": "public/assets/cases/geometry3d-final.png",
+      "bytes": 255884,
+      "sha256": "e971039bdb91d4aa604b31756dd26654d3b7970e25c86b06508033f904ec3984"
+    },
+    {
+      "source": "product-demo/public/rebuild/assistant-real-final.png",
+      "asset": "public/assets/cases/assistant-real-final.png",
+      "bytes": 71892,
+      "sha256": "978e8aea46687b058e6d041fa682ff95cf3ad770f58a94ea26cd440a01e70670"
+    },
+    {
+      "source": "product-demo/public/rebuild/classroom-final.png",
+      "asset": "public/assets/cases/classroom-final.png",
+      "bytes": 22738,
+      "sha256": "43538be727c6d59e013526571a3ed8953bd465c558af892a65379f62de966e70"
+    },
+    {
+      "source": "product-demo/public/rebuild/高考18题-解析几何板书.icink",
+      "asset": "public/assets/cases/高考18题-解析几何板书.icink",
+      "bytes": 173438,
+      "sha256": "b105813291490c8bbcfa68a9736f509bb6ca510391cd02fa5acebbe831bb02e2"
+    },
+    {
+      "source": "product-demo/public/rebuild/高考数学全国一卷.pdf",
+      "asset": "public/assets/cases/高考数学全国一卷.pdf",
+      "bytes": 175464,
+      "sha256": "482a22e97683145b88c1d3ba62d1f7d8bedf03b398e7dbc145a4f6a77755c4f0"
+    },
+    {
+      "source": "product-demo/public/rebuild/advanced-writing.mp4",
+      "asset": "public/assets/media/advanced-writing.mp4",
+      "bytes": 398075,
+      "sha256": "8b001f5cc99cbca73b4e70f60b2369db328aa0ebfdda96a4bcd6111cfc798cd9",
+      "durationSeconds": 17.0
+    },
+    {
+      "source": "product-demo/public/rebuild/gaokao-pdf.mp4",
+      "asset": "public/assets/media/gaokao-pdf.mp4",
+      "bytes": 945674,
+      "sha256": "182ee26e2e96e97ec06993b025b633e40679cfe6b1394319bd812cbe92fb8090",
+      "durationSeconds": 5.533
+    },
+    {
+      "source": "product-demo/public/rebuild/shape-catalog.mp4",
+      "asset": "public/assets/media/shape-catalog.mp4",
+      "bytes": 110595,
+      "sha256": "5c6c795859c133bbe5fe8b4c05440b92e54ad67051c5d32b2710db1b7308d90f",
+      "durationSeconds": 3.2
+    },
+    {
+      "source": "product-demo/public/rebuild/geometry3d.mp4",
+      "asset": "public/assets/media/geometry3d.mp4",
+      "bytes": 2048213,
+      "sha256": "81c7a08eebbe2e55b59ee44194c561f477f35443fbf92553ad42f7d0bc1243b1",
+      "durationSeconds": 8.533
+    },
+    {
+      "source": "product-demo/public/rebuild/assistant-real.mp4",
+      "asset": "public/assets/media/assistant-real.mp4",
+      "bytes": 230354,
+      "sha256": "3b2aa7bca30923ef0868ab981935cc961387907a0b96477f944eafa97979c653",
+      "durationSeconds": 5.633
+    },
+    {
+      "source": "product-demo/public/rebuild/classroom.mp4",
+      "asset": "public/assets/media/classroom.mp4",
+      "bytes": 112850,
+      "sha256": "341c100dc34033302dc7dbd2e2eef45d67b800eb51c33c147d999e077f3dc8f3",
+      "durationSeconds": 8.4
+    }
+  ],
+  "derivedImages": {
+    "ellipse-board-detail.png": {
+      "source": "advanced-writing-final.png",
+      "cropPixels": [
+        24,
+        30,
+        1850,
+        955
+      ]
+    },
+    "geometry3d-15.jpg": {
+      "source": "geometry3d.mp4",
+      "progressPercent": 15
+    },
+    "geometry3d-65.jpg": {
+      "source": "geometry3d.mp4",
+      "progressPercent": 65
+    },
+    "assistant-response-detail.png": {
+      "source": "assistant-real-final.png",
+      "cropPixels": [
+        0,
+        0,
+        982,
+        620
+      ]
+    }
+  }
+}

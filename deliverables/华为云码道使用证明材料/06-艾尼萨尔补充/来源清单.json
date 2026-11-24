@@ -1,0 +1,73 @@
+{
+  "archive": "码道使用证明-艾尼萨尔-20261124.zip",
+  "sha256": "90056c64ecb2c18c813c551b0c8b97212fa2ebef125885e559a066aac5af2272",
+  "entries": [
+    {
+      "name": "截图/07-项目全景.png",
+      "bytes": 125386,
+      "sha256": "8acb14e916431a549861e3ebc63df59f5505c5306874c7815260a5f951e7286f"
+    },
+    {
+      "name": "截图/02-回答-解释函数.png",
+      "bytes": 139187,
+      "sha256": "6ef30c00b61ba227cf434bf558bea68a6204bf4654423e595a86f29d2039dcb3"
+    },
+    {
+      "name": "截图/03-提问-生成校验函数.png",
+      "bytes": 162850,
+      "sha256": "3d15ed2f9d1eb8caf37cb81083c01c9bcec99fd856e2c6447785920ee63f2c07"
+    },
+    {
+      "name": "截图/05-提问-报错排查.png",
+      "bytes": 206136,
+      "sha256": "1b9e3fb2b09a3d5b55af6eee58ed4ff74ba129b1f6922300698addfbba66638d"
+    },
+    {
+      "name": "截图/06-提问-bat乱码.png",
+      "bytes": 212805,
+      "sha256": "822151ce85de22bf211ea500d234963ad027a625cf575fb682d289425885b468"
+    },
+    {
+      "name": "开发过程记录.md",
+      "bytes": 6666,
+      "sha256": "e0b178d5d14386066bb87ddfa95ddc69da1d6f9165341899bbe014ae30d6333b"
+    },
+    {
+      "name": "README-材料清单.md",
+      "bytes": 3770,
+      "sha256": "202e3911cc9c44c2ad3f82435fd4d08101e037fa3b419f74e075673a8e4c867b"
+    }
+  ],
+  "screenshots": [
+    {
+      "id": "CA-S01",
+      "title": "流式网关函数解释",
+      "file": "06-艾尼萨尔补充/截图/02-回答-解释函数.png",
+      "sha256": "6ef30c00b61ba227cf434bf558bea68a6204bf4654423e595a86f29d2039dcb3"
+    },
+    {
+      "id": "CA-S02",
+      "title": "pageIndex连续性校验代码生成",
+      "file": "06-艾尼萨尔补充/截图/03-提问-生成校验函数.png",
+      "sha256": "3d15ed2f9d1eb8caf37cb81083c01c9bcec99fd856e2c6447785920ee63f2c07"
+    },
+    {
+      "id": "CA-S03",
+      "title": "poly宽度参数排错",
+      "file": "06-艾尼萨尔补充/截图/05-提问-报错排查.png",
+      "sha256": "1b9e3fb2b09a3d5b55af6eee58ed4ff74ba129b1f6922300698addfbba66638d"
+    },
+    {
+      "id": "CA-S04",
+      "title": "bat编码与执行排错",
+      "file": "06-艾尼萨尔补充/截图/06-提问-bat乱码.png",
+      "sha256": "822151ce85de22bf211ea500d234963ad027a625cf575fb682d289425885b468"
+    },
+    {
+      "id": "CA-S05",
+      "title": "契约与网关项目全景",
+      "file": "06-艾尼萨尔补充/截图/07-项目全景.png",
+      "sha256": "8acb14e916431a549861e3ebc63df59f5505c5306874c7815260a5f951e7286f"
+    }
+  ]
+}

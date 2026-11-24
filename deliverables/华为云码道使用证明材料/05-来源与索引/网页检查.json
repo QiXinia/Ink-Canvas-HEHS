@@ -1,0 +1,25 @@
+{
+  "screenshots": 8,
+  "caseDetails": 6,
+  "detailsWork": true,
+  "linksChecked": 15,
+  "mobileFits": true,
+  "videos": [
+    {
+      "time": 0.276072,
+      "duration": 21.034,
+      "width": 1096
+    },
+    {
+      "time": 0.286062,
+      "duration": 83.945,
+      "width": 1096
+    },
+    {
+      "time": 0.272162,
+      "duration": 57.812,
+      "width": 1096
+    }
+  ],
+  "errors": []
+}

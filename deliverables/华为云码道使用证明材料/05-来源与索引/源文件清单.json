@@ -1,0 +1,659 @@
+{
+  "sourceArchive": "码道记录-全量.zip",
+  "sha256": "339f7128efb4f5793a33d050eb69550208d4e650f23e2cc98211c614c8908c6b",
+  "compressedBytes": 78839503,
+  "uncompressedBytes": 919405536,
+  "files": [
+    {
+      "name": "agent-kernel-sdk-2026-11-14T221531-0.log",
+      "bytes": 41652,
+      "crc32": "87286b2b"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-18T210408-0.log",
+      "bytes": 15765,
+      "crc32": "efb2bf77"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-18T211711-0.log",
+      "bytes": 83356,
+      "crc32": "80b14e69"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T113944-0.log",
+      "bytes": 11337,
+      "crc32": "17e2e4fe"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T114601-0.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T114646-0.log",
+      "bytes": 33588,
+      "crc32": "d471b123"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T121330-0.log",
+      "bytes": 87651,
+      "crc32": "5ffdb593"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T121915-0.log",
+      "bytes": 503777,
+      "crc32": "588deab0"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-19T140135-0.log",
+      "bytes": 4400,
+      "crc32": "28fd594d"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-20T090815-0.log",
+      "bytes": 546154,
+      "crc32": "c703e8ad"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-20T124347-0.log",
+      "bytes": 150911,
+      "crc32": "d5d31eda"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-20T130614-0.log",
+      "bytes": 59789,
+      "crc32": "8eaf7fe4"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-20T214141-0.log",
+      "bytes": 3938,
+      "crc32": "222fc91e"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-20T214202-0.log",
+      "bytes": 43955,
+      "crc32": "b34aef28"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-21T130904-0.log",
+      "bytes": 7257,
+      "crc32": "0317bf48"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-21T131015-0.log",
+      "bytes": 204281,
+      "crc32": "8479715f"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-23T164729-0.log",
+      "bytes": 310076,
+      "crc32": "675ca823"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-23T165757-0.log",
+      "bytes": 4053,
+      "crc32": "8913315e"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-23T165828-0.log",
+      "bytes": 300277,
+      "crc32": "2825d4c5"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-24T074057-0.log",
+      "bytes": 13365,
+      "crc32": "34d71bfd"
+    },
+    {
+      "name": "agent-kernel-sdk-2026-11-24T074259-0.log",
+      "bytes": 180966,
+      "crc32": "02ef6599"
+    },
+    {
+      "name": "experience-2026-11-14.0.log",
+      "bytes": 4384,
+      "crc32": "92f56411"
+    },
+    {
+      "name": "experience-2026-11-18.0.log",
+      "bytes": 90066,
+      "crc32": "064e0935"
+    },
+    {
+      "name": "experience-2026-11-19.0.log",
+      "bytes": 932765,
+      "crc32": "87272a68"
+    },
+    {
+      "name": "experience-2026-11-20.0.log",
+      "bytes": 366187,
+      "crc32": "d324e09d"
+    },
+    {
+      "name": "experience-2026-11-21.0.log",
+      "bytes": 126970,
+      "crc32": "2c94bc16"
+    },
+    {
+      "name": "experience-2026-11-23.0.log",
+      "bytes": 438944,
+      "crc32": "35aba2c7"
+    },
+    {
+      "name": "experience-2026-11-24.0.log",
+      "bytes": 871825,
+      "crc32": "45d50f97"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-20T154204-29740-0.log",
+      "bytes": 6745478,
+      "crc32": "02f630b2"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-20T191141-46052-0.log",
+      "bytes": 17303185,
+      "crc32": "10f0e913"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-21T130905-35824-0.log",
+      "bytes": 543942,
+      "crc32": "512dded9"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-21T131017-12636-0.log",
+      "bytes": 16963759,
+      "crc32": "9743f46c"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-23T164730-16136-0.log",
+      "bytes": 21319433,
+      "crc32": "6f1c361d"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-23T172232-16136-1.log",
+      "bytes": 21188908,
+      "crc32": "0cec1c9f"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-23T194804-16136-2.log",
+      "bytes": 20989324,
+      "crc32": "585658ab"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-23T202834-16136-3.log",
+      "bytes": 21251727,
+      "crc32": "9e5f3f5b"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-23T235904-16136-4.log",
+      "bytes": 104372,
+      "crc32": "29b2ffb3"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T074058-31536-0.log",
+      "bytes": 841544,
+      "crc32": "ef0546d4"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T074301-44376-0.log",
+      "bytes": 21346002,
+      "crc32": "68850605"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T080453-44376-1.log",
+      "bytes": 20723205,
+      "crc32": "bc1c7254"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T081059-44376-2.log",
+      "bytes": 20341332,
+      "crc32": "025ef130"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T081637-44376-3.log",
+      "bytes": 20681663,
+      "crc32": "4020ff43"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T082057-44376-4.log",
+      "bytes": 20643947,
+      "crc32": "890c58e6"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T082448-44376-5.log",
+      "bytes": 20766275,
+      "crc32": "93b17437"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T082822-44376-6.log",
+      "bytes": 20573329,
+      "crc32": "86129def"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T085413-44376-7.log",
+      "bytes": 19738879,
+      "crc32": "b4a4c60f"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T090104-44376-8.log",
+      "bytes": 19719226,
+      "crc32": "ea7f6f97"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T090347-44376-9.log",
+      "bytes": 19725790,
+      "crc32": "2b8a864b"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T090759-44376-10.log",
+      "bytes": 20899831,
+      "crc32": "89d03264"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T091149-44376-11.log",
+      "bytes": 19976764,
+      "crc32": "5965c793"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T091600-44376-12.log",
+      "bytes": 20033124,
+      "crc32": "cde59d6d"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T091919-44376-13.log",
+      "bytes": 20717134,
+      "crc32": "74b9218a"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T092206-44376-14.log",
+      "bytes": 20872251,
+      "crc32": "90df8ec2"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T092512-44376-15.log",
+      "bytes": 11663763,
+      "crc32": "52b7a6ea"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T094627-24264-0.log",
+      "bytes": 19971807,
+      "crc32": "3accbf66"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T095147-24264-1.log",
+      "bytes": 19656375,
+      "crc32": "ca405354"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T095547-24264-2.log",
+      "bytes": 20925434,
+      "crc32": "b2c451f9"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T095851-24264-3.log",
+      "bytes": 20885577,
+      "crc32": "7d0fb8e5"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T100337-24264-4.log",
+      "bytes": 20940475,
+      "crc32": "7048da93"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T101019-24264-5.log",
+      "bytes": 20171072,
+      "crc32": "52ecadfd"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T102206-24264-6.log",
+      "bytes": 20069412,
+      "crc32": "84042106"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T102521-24264-7.log",
+      "bytes": 19988650,
+      "crc32": "dcd329f3"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T102853-24264-8.log",
+      "bytes": 20403087,
+      "crc32": "b11c0cde"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T103323-24264-9.log",
+      "bytes": 20696199,
+      "crc32": "283ef118"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T103731-24264-10.log",
+      "bytes": 20126843,
+      "crc32": "15e4c3ff"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T104303-24264-11.log",
+      "bytes": 19770438,
+      "crc32": "59c6eb90"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T104713-24264-12.log",
+      "bytes": 20266457,
+      "crc32": "6f7beb16"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T104957-24264-13.log",
+      "bytes": 19926475,
+      "crc32": "bef525de"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T105244-24264-14.log",
+      "bytes": 20962816,
+      "crc32": "c7526781"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T105741-24264-15.log",
+      "bytes": 20963759,
+      "crc32": "b151020e"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T110128-24264-16.log",
+      "bytes": 20127080,
+      "crc32": "3d634cb2"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T110353-24264-17.log",
+      "bytes": 19757290,
+      "crc32": "368b962d"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T110628-24264-18.log",
+      "bytes": 19403312,
+      "crc32": "2e1e33fd"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T110852-24264-19.log",
+      "bytes": 20937491,
+      "crc32": "cc973219"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T115056-24264-20.log",
+      "bytes": 19418492,
+      "crc32": "370419fd"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T115610-24264-21.log",
+      "bytes": 19437517,
+      "crc32": "e45e21f2"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T115940-24264-22.log",
+      "bytes": 19588629,
+      "crc32": "6d8e646b"
+    },
+    {
+      "name": "kernel-codeartsdoer-incognito-2026-11-24T120432-24264-23.log",
+      "bytes": 3883351,
+      "crc32": "8f8a630a"
+    },
+    {
+      "name": "kernel_error_20261114091754.log",
+      "bytes": 184,
+      "crc32": "c3c3f8a0"
+    },
+    {
+      "name": "kernel_error_20261114141532.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261118130408.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261118131727.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119033944.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119034646.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119041916.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119055933.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119055950.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119095635.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261119145746.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261120010815.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261120063816.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261120074203.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261120111141.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261121050904.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261121051016.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261123084729.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261123234057.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261123234300.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_error_20261124014626.log",
+      "bytes": 0,
+      "crc32": "00000000"
+    },
+    {
+      "name": "kernel_exit_code_20261119041916.log",
+      "bytes": 53,
+      "crc32": "1f8b94fd"
+    },
+    {
+      "name": "kernel_exit_code_20261119055933.log",
+      "bytes": 53,
+      "crc32": "00c7f067"
+    },
+    {
+      "name": "kernel_exit_code_20261119055950.log",
+      "bytes": 53,
+      "crc32": "8415a793"
+    },
+    {
+      "name": "kernel_exit_code_20261119095635.log",
+      "bytes": 53,
+      "crc32": "fb5b6385"
+    },
+    {
+      "name": "kernel_exit_code_20261119145746.log",
+      "bytes": 62,
+      "crc32": "3d4a46f1"
+    },
+    {
+      "name": "kernel_exit_code_20261120010815.log",
+      "bytes": 53,
+      "crc32": "4c482e00"
+    },
+    {
+      "name": "kernel_exit_code_20261120063816.log",
+      "bytes": 53,
+      "crc32": "aedb1401"
+    },
+    {
+      "name": "kernel_exit_code_20261120074203.log",
+      "bytes": 53,
+      "crc32": "3df22fc7"
+    },
+    {
+      "name": "kernel_exit_code_20261123234300.log",
+      "bytes": 53,
+      "crc32": "70489e75"
+    },
+    {
+      "name": "kernel_output_20261114091754.log",
+      "bytes": 128,
+      "crc32": "5015e07e"
+    },
+    {
+      "name": "kernel_output_20261114141532.log",
+      "bytes": 328,
+      "crc32": "f777f689"
+    },
+    {
+      "name": "kernel_output_20261118130408.log",
+      "bytes": 503,
+      "crc32": "77377543"
+    },
+    {
+      "name": "kernel_output_20261118131727.log",
+      "bytes": 353,
+      "crc32": "97330a56"
+    },
+    {
+      "name": "kernel_output_20261119033944.log",
+      "bytes": 378,
+      "crc32": "87a461ce"
+    },
+    {
+      "name": "kernel_output_20261119034646.log",
+      "bytes": 553,
+      "crc32": "2f138db7"
+    },
+    {
+      "name": "kernel_output_20261119041916.log",
+      "bytes": 528,
+      "crc32": "165e22fb"
+    },
+    {
+      "name": "kernel_output_20261119055933.log",
+      "bytes": 103,
+      "crc32": "83d9e609"
+    },
+    {
+      "name": "kernel_output_20261119055950.log",
+      "bytes": 253,
+      "crc32": "ef8084d2"
+    },
+    {
+      "name": "kernel_output_20261119095635.log",
+      "bytes": 103,
+      "crc32": "969bde76"
+    },
+    {
+      "name": "kernel_output_20261119145746.log",
+      "bytes": 103,
+      "crc32": "969bde76"
+    },
+    {
+      "name": "kernel_output_20261120010815.log",
+      "bytes": 2328,
+      "crc32": "6a345d5e"
+    },
+    {
+      "name": "kernel_output_20261120063816.log",
+      "bytes": 103,
+      "crc32": "fa0928b3"
+    },
+    {
+      "name": "kernel_output_20261120074203.log",
+      "bytes": 103,
+      "crc32": "fa0928b3"
+    },
+    {
+      "name": "kernel_output_20261120111141.log",
+      "bytes": 553,
+      "crc32": "010298e1"
+    },
+    {
+      "name": "kernel_output_20261121050904.log",
+      "bytes": 328,
+      "crc32": "16d0c956"
+    },
+    {
+      "name": "kernel_output_20261121051016.log",
+      "bytes": 1128,
+      "crc32": "8361315d"
+    },
+    {
+      "name": "kernel_output_20261123084729.log",
+      "bytes": 3903,
+      "crc32": "9355c09d"
+    },
+    {
+      "name": "kernel_output_20261123234057.log",
+      "bytes": 503,
+      "crc32": "610d5f95"
+    },
+    {
+      "name": "kernel_output_20261123234300.log",
+      "bytes": 503,
+      "crc32": "85a268ff"
+    },
+    {
+      "name": "kernel_output_20261124014626.log",
+      "bytes": 628,
+      "crc32": "90811d14"
+    },
+    {
+      "name": "README.md",
+      "bytes": 1539,
+      "crc32": "cc8bd609"
+    }
+  ],
+  "note": "日志时间按原日志保留，未推断时区。解码使用UTF-8，压缩包目录显示名省略。"
+}

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./Images/Ink Canvas Artistry.png" style="width:96px;"/>
+<picture><source media="(prefers-color-scheme: dark)" srcset="./Images/Brand/InkCanvas.Dark.svg"><img src="./Images/Brand/InkCanvas.Light.svg" width="96" alt="Ink Canvas"/></picture>
 
 # Ink Canvas · WinUI 3
 

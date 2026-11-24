@@ -1,0 +1,341 @@
+{
+  "title": "华为云码道使用证明材料",
+  "date": "2026-11-24",
+  "screenshots": [
+    {
+      "id": "CA-01",
+      "title": "平台能力分析与方案选择",
+      "file": "01-AI交互与Prompt截图/CA-01-平台能力分析与方案选择.jpg"
+    },
+    {
+      "id": "CA-02",
+      "title": "Windows到鸿蒙的工具栏设计重构",
+      "file": "01-AI交互与Prompt截图/CA-02-Windows到鸿蒙的工具栏设计重构.jpg"
+    },
+    {
+      "id": "CA-03",
+      "title": "面板跟随折叠与滚动的Prompt及结果",
+      "file": "01-AI交互与Prompt截图/CA-03-面板跟随折叠与滚动的Prompt及结果.jpg"
+    },
+    {
+      "id": "CA-04",
+      "title": "拖动与图标排错的Prompt及工具调用",
+      "file": "01-AI交互与Prompt截图/CA-04-拖动与图标排错的Prompt及工具调用.jpg"
+    },
+    {
+      "id": "CA-05",
+      "title": "玻璃材质与多形态布局实现记录",
+      "file": "01-AI交互与Prompt截图/CA-05-玻璃材质与多形态布局实现记录.jpg"
+    },
+    {
+      "id": "CA-06",
+      "title": "OCR真实性与空结果边界修复",
+      "file": "01-AI交互与Prompt截图/CA-06-OCR真实性与空结果边界修复.jpg"
+    },
+    {
+      "id": "CA-07",
+      "title": "拖动工具栏误写的根因与验证",
+      "file": "01-AI交互与Prompt截图/CA-07-拖动工具栏误写的根因与验证.jpg"
+    },
+    {
+      "id": "CA-08",
+      "title": "AI与响应式能力的验收状态",
+      "file": "01-AI交互与Prompt截图/CA-08-AI与响应式能力的验收状态.jpg"
+    }
+  ],
+  "cases": [
+    {
+      "id": "R-01",
+      "folder": "02-代码生成与重构记录",
+      "title": "公式识别与搜题结果结构改造",
+      "prompt": "我要求你优化你的AI公式识别以及智能搜题功能",
+      "promptSource": "日志中的用户输入，2026-11-24T07:47:04.237",
+      "process": "读取公式与结果卡实现，调整公式候选加权、题型排序和质量提示，修改 AiAssistant.ts、AiStudio.ets 与 Index.ets。",
+      "result": "可见助手回复报告新增已知／所求、候选公式、易错提醒和自适应卡片。工具输出保留“25 passed, 0 failed”，编译验证另有成功记录。",
+      "boundary": "设备手写 OCR 返回空的情形仍存在。逻辑断言与结果卡显示的验证范围分别记录，不能据此声称任意手写公式都能准确识别。",
+      "events": [
+        775,
+        781,
+        794,
+        845,
+        1113
+      ],
+      "shots": [
+        "CA-06",
+        "CA-08"
+      ],
+      "file": "02-代码生成与重构记录/R-01-公式识别与搜题结果结构改造.md"
+    },
+    {
+      "id": "R-02",
+      "folder": "02-代码生成与重构记录",
+      "title": "工具栏折叠与设置面板跟随重构",
+      "prompt": "我需要你在鸿蒙端实现这个功能，即我的工具栏可以始终悬停在任何界面/应用上，进行批注 同时点击设置后，出现的弹窗与工具栏不跟随，我要求你将其修改为跟随工具栏移动，并且折叠，利用滚轮操作 我希望你的折叠效果如图一所示，折叠之后仍可选择功能，只是可选功能减少",
+      "promptSource": "CA-03 用户输入区逐字转录，截图中的附件标题省略",
+      "process": "以同一拖动位移驱动面板，增加 settingsPanelOffsetX/Y 边界钳制，使用 CompactCard 呈现折叠后的常用工具，设置分组改为手风琴。",
+      "result": "日志保留 CompactCard 分支和面板偏移函数的具体 edit 记录。可见回复报告面板跟随、滚动、折叠和安装验证；HM-01 可观察展开／折叠及书写。",
+      "boundary": "跨应用悬浮涉及系统权限。记录提供系统多任务悬浮窗路径，普通应用自动置顶与穿透能力仍受平台限制。",
+      "events": [
+        867,
+        869,
+        916,
+        918,
+        924
+      ],
+      "shots": [
+        "CA-01",
+        "CA-02",
+        "CA-03",
+        "CA-05"
+      ],
+      "file": "02-代码生成与重构记录/R-02-工具栏折叠与设置面板跟随重构.md"
+    },
+    {
+      "id": "R-03",
+      "folder": "02-代码生成与重构记录",
+      "title": "化学结构绘制与墨迹共存",
+      "prompt": "现在有一个问题，我在使用这个功能时，你禁用了我的批注功能，请你将两者兼容，同时请你继续对齐chemdraw的功能，使之更加美观",
+      "promptSource": "日志用户输入，2026-11-24T10:59:47.425",
+      "process": "由独立面板演进为内嵌化学层，整理原子、键、芳香环与撤销状态。切换笔、荧光笔、橡皮和选择时，使化学层让出触摸输入。",
+      "result": "Index.ets 的 edit 记录增加 chemInputActive=false 的工具门控。HM-02 中可见化学键线与原浮动工具栏、白板切换。",
+      "boundary": "录屏展示化学结构基础交互。完整 ChemDraw 功能兼容、结构持久化与全部导出能力未由这些材料证明。",
+      "events": [
+        1301,
+        1428,
+        1433,
+        1454,
+        1482
+      ],
+      "shots": [
+        "CA-04"
+      ],
+      "file": "02-代码生成与重构记录/R-03-化学结构绘制与墨迹共存.md"
+    },
+    {
+      "id": "D-01",
+      "folder": "03-排错与验证记录",
+      "title": "ArkTS编译失败到重新构建成功",
+      "prompt": "现在请你解决第3个bug 1.在拖动工具栏时，第二次拖动工具栏的移动与触控位置有便宜2，请你解决2.工具栏的图形请放大一些，严格按照windows端的样式修改，同时严禁出现两个一模一样的图案3.请你制作这个功能：适配鸿蒙平板横竖屏、折叠屏与自由多窗（分屏一边看教材、一边用 InkCanvas 记板书）：打造可折叠悬浮胶囊工具条 要求，在切屏到另一个页面时，能够保留工具栏在其他应用之上，除非关闭应用程序",
+      "promptSource": "CA-04 用户输入区转录，保留原输入用词与编号",
+      "process": "读取 FloatingBarCatalog.ts 与 IconGlyph.ets，生成 glyph-dump.js 输出图标码点，检查图标重复，继续编译和视觉微调。",
+      "result": "同一批日志保留 ArkTSCompilerError／BUILD FAILED 与随后“BUILD SUCCESSFUL in 9 s 22 ms”“73 tasks”的工具输出。",
+      "boundary": "该记录证明编译迭代与成功构建，不将编译成功等同于全部 UI 或硬件行为验收。部分原始日志自身含有 ****，摘录保持原状。",
+      "events": [
+        374,
+        383,
+        388
+      ],
+      "shots": [
+        "CA-04",
+        "CA-02"
+      ],
+      "file": "03-排错与验证记录/D-01-ArkTS编译失败到重新构建成功.md"
+    },
+    {
+      "id": "D-02",
+      "folder": "03-排错与验证记录",
+      "title": "浮层命中与工具栏拖动误写排查",
+      "prompt": "截图记录了对浮动工具栏拖动与画布输入冲突的排查，原始提问未在该截图中完整呈现。",
+      "promptSource": "CA-07 的根因、修复方式与验证表；相关工具面板排查见日志",
+      "process": "CA-07 指出透明命中容器使同一触摸落到下层画布。修复按实际工具栏屏幕区域拦截 Down，并保持同一指针 Move／Up 的一致处理。另一日志定位 Scroll 与无显式宽度 Column 的循环依赖。",
+      "result": "截图给出 onAreaChange、handleTouch、6 vp 容差及拖动后继续书写、清空等复测说明。日志中的设置钳制代码提供另一组可核对的输入／布局修复证据。",
+      "boundary": "本材料使用截图中的排错报告与日志字段，未在本机重放这些鸿蒙触摸测试。多设备和不同缩放的手势仍需扩展验证。",
+      "events": [
+        918,
+        1045
+      ],
+      "shots": [
+        "CA-07",
+        "CA-03"
+      ],
+      "file": "03-排错与验证记录/D-02-浮层命中与工具栏拖动误写排查.md"
+    },
+    {
+      "id": "D-03",
+      "folder": "03-排错与验证记录",
+      "title": "OCR不可用与手写空结果的明确反馈",
+      "prompt": "我要求你优化你的AI公式识别以及智能搜题功能",
+      "promptSource": "日志中的用户输入，2026-11-24T07:47:04.237",
+      "process": "移除按选区大小产生固定结果的演示路径，改为画布快照裁剪与 textRecognition；对识别文本的公式行和题型进行处理，空结果反馈引擎状态或墨迹统计。",
+      "result": "CA-06 明确模拟器缺少 OCR 能力。后续日志报告设备上手写笔画返回空时显示墨迹统计与提示，逻辑测试有 25 项通过记录。",
+      "boundary": "端侧印刷体 OCR、手写公式识别与远程模型推理是不同环节。材料未证明真机手写公式识别的完整成功链路。",
+      "events": [
+        843,
+        845,
+        1113
+      ],
+      "shots": [
+        "CA-06",
+        "CA-08"
+      ],
+      "file": "03-排错与验证记录/D-03-OCR不可用与手写空结果的明确反馈.md"
+    }
+  ],
+  "harmonyClips": [
+    {
+      "id": "HM-01",
+      "title": "书写、笔选项与工具栏折叠",
+      "file": "04-鸿蒙运行素材/HM-01-书写、笔选项与工具栏折叠.mp4",
+      "poster": "04-鸿蒙运行素材/HM-01-画面.jpg",
+      "duration": 21
+    },
+    {
+      "id": "HM-02",
+      "title": "化学结构与白板切换",
+      "file": "04-鸿蒙运行素材/HM-02-化学结构与白板切换.mp4",
+      "poster": "04-鸿蒙运行素材/HM-02-画面.jpg",
+      "duration": 84
+    },
+    {
+      "id": "HM-03",
+      "title": "生物传感器讲义阅读与批注",
+      "file": "04-鸿蒙运行素材/HM-03-生物传感器讲义阅读与批注.mp4",
+      "poster": "04-鸿蒙运行素材/HM-03-画面.jpg",
+      "duration": 58
+    }
+  ],
+  "sources": [
+    {
+      "id": "CA-01",
+      "source": "2437aa9e7699a1b2d551bc34dcccd123.jpg",
+      "sourceSha256": "23d0c5d3f17ac1fe0d346eeb89c82be8726573aab242d74edf411267fccdfc07",
+      "file": "01-AI交互与Prompt截图/CA-01-平台能力分析与方案选择.jpg",
+      "sha256": "73559379eef93cccf83c3b50df5f9582dc98fb6fcd77f523cec4ce392465b6b0",
+      "redactedRectangles": []
+    },
+    {
+      "id": "CA-02",
+      "source": "34def3c00aa4ccdb5301bd11a1ecc14a.jpg",
+      "sourceSha256": "f3672b8c6d5b495e7b52175aa485336b30c4a2cca17cfd8fb6e4e19d340e8856",
+      "file": "01-AI交互与Prompt截图/CA-02-Windows到鸿蒙的工具栏设计重构.jpg",
+      "sha256": "9068d82e285a9069d5f466b0d8b74d443e0de94c4ac4da4a81ac7f48f2f76872",
+      "redactedRectangles": [
+        [
+          100,
+          921,
+          287,
+          953
+        ]
+      ]
+    },
+    {
+      "id": "CA-03",
+      "source": "4a9ad629da21d5fdc043b0dba500967d.jpg",
+      "sourceSha256": "9dc557041be6af606ac48a54d18bf9c10944a3bf5ce094099505705fc31a77e2",
+      "file": "01-AI交互与Prompt截图/CA-03-面板跟随折叠与滚动的Prompt及结果.jpg",
+      "sha256": "15b5278ecee865b30ddd4d9fe7c6398dc4e767c8540709338b82ba2c9a0612ed",
+      "redactedRectangles": [
+        [
+          195,
+          728,
+          448,
+          766
+        ]
+      ]
+    },
+    {
+      "id": "CA-04",
+      "source": "4f4041be283ae838868a487bb274baf7.jpg",
+      "sourceSha256": "83964122335b2f256abc07f25b4f92b253d6b2fba1e4a05b6f4b3a2ac6a50795",
+      "file": "01-AI交互与Prompt截图/CA-04-拖动与图标排错的Prompt及工具调用.jpg",
+      "sha256": "9766aa6bf275ccb8e35b86a57b8d4a7b6709b170d671eb8a851b739946fc5df4",
+      "redactedRectangles": []
+    },
+    {
+      "id": "CA-05",
+      "source": "660a8dab9c97bc1a7144dd4fd0b42698.jpg",
+      "sourceSha256": "376393f4a273b3622bbae94ca4d8c5152261e259a6676f8f3b44aeeb649fd7a6",
+      "file": "01-AI交互与Prompt截图/CA-05-玻璃材质与多形态布局实现记录.jpg",
+      "sha256": "1ea2efbc88fb59c886e9074350d1dcd62858063d48a3467436ef10c3129282d5",
+      "redactedRectangles": []
+    },
+    {
+      "id": "CA-06",
+      "source": "72a694133b72bb9e60bc8ee60255dcab.png",
+      "sourceSha256": "51871fe23050809bda4bed89f669f1ca3b6b8956c9951ade967bedbbe854038f",
+      "file": "01-AI交互与Prompt截图/CA-06-OCR真实性与空结果边界修复.jpg",
+      "sha256": "fddec80761feabfe7c0c8b55ed547af036354c9b5c84ca657f9d6e5e1061a97a",
+      "redactedRectangles": []
+    },
+    {
+      "id": "CA-07",
+      "source": "799629912dc92b9e98441915a44d2fda.png",
+      "sourceSha256": "ede99ee6afbf2b230fb41c7ce2a1b203208216b40a689bf67cd71d4b183160ab",
+      "file": "01-AI交互与Prompt截图/CA-07-拖动工具栏误写的根因与验证.jpg",
+      "sha256": "a2fa931aceca4e625e26463a1fd145887ed8f1c2d9e26ff07c8847b83da55363",
+      "redactedRectangles": []
+    },
+    {
+      "id": "CA-08",
+      "source": "cd2832474af14763084ed61d356e61b0.jpg",
+      "sourceSha256": "4ce7e06fb2d98f624b5db910e0fe62995375b92fac2590f0d901748dd9d39ad5",
+      "file": "01-AI交互与Prompt截图/CA-08-AI与响应式能力的验收状态.jpg",
+      "sha256": "32ccf42a4a04f7b3cb6e79ec7a26289f24ffe806a7609938e191e6fdfb59ef19",
+      "redactedRectangles": []
+    },
+    {
+      "id": "HM-01",
+      "source": "0984ebd789dfd138701d7b727f0078c5.mp4",
+      "sourceSha256": "50f8a1d962bc6a47018c759d00512c4be073dbcc15e6f375a81504497bd746e9",
+      "file": "04-鸿蒙运行素材/HM-01-书写、笔选项与工具栏折叠.mp4",
+      "sha256": "50f8a1d962bc6a47018c759d00512c4be073dbcc15e6f375a81504497bd746e9",
+      "posterSeconds": 9.5
+    },
+    {
+      "id": "HM-02",
+      "source": "416ed5b81957803f99e8407805c0b4b6.mp4",
+      "sourceSha256": "9528af4c8917002296b70a42aee0296210bb26391b009418d2ee923b081f6404",
+      "file": "04-鸿蒙运行素材/HM-02-化学结构与白板切换.mp4",
+      "sha256": "9528af4c8917002296b70a42aee0296210bb26391b009418d2ee923b081f6404",
+      "posterSeconds": 37
+    },
+    {
+      "id": "HM-03",
+      "source": "789c667888e8482b02de98df401d6f60.mp4",
+      "sourceSha256": "1f0610f26b8e0b858bb6f67ed141062ef42bf6c4109bf09dad2cb5f2f3907794",
+      "file": "04-鸿蒙运行素材/HM-03-生物传感器讲义阅读与批注.mp4",
+      "sha256": "1f0610f26b8e0b858bb6f67ed141062ef42bf6c4109bf09dad2cb5f2f3907794",
+      "posterSeconds": 41
+    }
+  ],
+  "memberSupplement": {
+    "author": "艾尼萨尔",
+    "screenshots": [
+      {
+        "id": "CA-S01",
+        "title": "流式网关函数解释",
+        "file": "06-艾尼萨尔补充/截图/02-回答-解释函数.png",
+        "sha256": "6ef30c00b61ba227cf434bf558bea68a6204bf4654423e595a86f29d2039dcb3"
+      },
+      {
+        "id": "CA-S02",
+        "title": "pageIndex连续性校验代码生成",
+        "file": "06-艾尼萨尔补充/截图/03-提问-生成校验函数.png",
+        "sha256": "3d15ed2f9d1eb8caf37cb81083c01c9bcec99fd856e2c6447785920ee63f2c07"
+      },
+      {
+        "id": "CA-S03",
+        "title": "poly宽度参数排错",
+        "file": "06-艾尼萨尔补充/截图/05-提问-报错排查.png",
+        "sha256": "1b9e3fb2b09a3d5b55af6eee58ed4ff74ba129b1f6922300698addfbba66638d"
+      },
+      {
+        "id": "CA-S04",
+        "title": "bat编码与执行排错",
+        "file": "06-艾尼萨尔补充/截图/06-提问-bat乱码.png",
+        "sha256": "822151ce85de22bf211ea500d234963ad027a625cf575fb682d289425885b468"
+      },
+      {
+        "id": "CA-S05",
+        "title": "契约与网关项目全景",
+        "file": "06-艾尼萨尔补充/截图/07-项目全景.png",
+        "sha256": "8acb14e916431a549861e3ebc63df59f5505c5306874c7815260a5f951e7286f"
+      }
+    ],
+    "documents": [
+      "06-艾尼萨尔补充/开发过程记录.md",
+      "06-艾尼萨尔补充/README-材料清单.md"
+    ],
+    "note": "06-艾尼萨尔补充/整理说明.md"
+  }
+}

@@ -1,5 +1,7 @@
 # HarmonyOS 移植说明（进行中）
 
+2026-11-24 补充说明见 [鸿蒙新增运行与开发材料](HARMONY-EVIDENCE-20261124.md)，包含用户提供的设备操作录屏与码道记录。本文保留早期移植阶段的原始状态与历史验证范围。
+
 更新时间：2026-11-18（Phase A 执行中）
 设计规格：`docs/superpowers/specs/2026-11-18-harmonyos-port-design.md`
 实施计划：`docs/superpowers/plans/2026-11-18-harmonyos-phase-a-foundation.md`

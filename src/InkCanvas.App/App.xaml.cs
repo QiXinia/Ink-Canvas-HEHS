@@ -22,6 +22,8 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        var brandingCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--brandingcheck=", StringComparison.Ordinal));
+        if (brandingCheck is not null) { _ = Diagnostics.BrandingRegression.Run(brandingCheck["--brandingcheck=".Length..]); return; }
         var eraserOptionsCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--eraseroptionscheck=", StringComparison.Ordinal));
         if (eraserOptionsCheck is not null) { _ = Diagnostics.EraserOptionsRegression.Run(eraserOptionsCheck["--eraseroptionscheck=".Length..]); return; }
         var brushAdjustmentCheck = Environment.GetCommandLineArgs().FirstOrDefault(arg => arg.StartsWith("--brushadjustmentcheck=", StringComparison.Ordinal));
