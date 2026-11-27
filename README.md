@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> **本仓库已归档。Ink Canvas WinUI HEHS 已迁移至独立仓库。**
+>
+> 后续开发、问题反馈和新版本发布请前往 [QiXinia/Ink-Canvas-WinUI-HEHS](https://github.com/QiXinia/Ink-Canvas-WinUI-HEHS)。
+>
+> [新仓库 Releases](https://github.com/QiXinia/Ink-Canvas-WinUI-HEHS/releases) · [旧仓库历史版本](https://github.com/QiXinia/Ink-Canvas-HEHS/releases)
+
+
 <div align="center">
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="./Images/Brand/InkCanvas.Dark.svg"><img src="./Images/Brand/InkCanvas.Light.svg" width="96" alt="Ink Canvas"/></picture>
