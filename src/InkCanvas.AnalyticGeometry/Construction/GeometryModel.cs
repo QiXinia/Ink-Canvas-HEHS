@@ -26,6 +26,7 @@ public sealed record GeometryValue
     public string Variable { get; init; } = "x";
     public double Number { get; init; }
     public GeoVector Origin { get; init; }
+    public GeoVector? TextAnchor { get; init; }
     public GeoVector Direction { get; init; }
     public GeoVector Normal { get; init; } = new(0, 0, 1);
     public double Radius { get; init; }
@@ -38,6 +39,11 @@ public sealed record GeometryValue
     public string ControlKind { get; init; } = "";
     public string ControlTarget { get; init; } = "";
     public IReadOnlyList<string> Options { get; init; } = Array.Empty<string>();
+    internal PlanarConic? ConicEquation { get; init; }
+    internal (string[] Coordinates, double Minimum, double Maximum)? ParametricCurve { get; init; }
+    internal double? PathParameter { get; init; }
+    internal (int Face, double U, double V)? RegionPosition { get; init; }
+    [JsonIgnore] public GeometryValue AttachmentTarget { get; init; }
     [JsonIgnore] public bool Defined => Error is null;
     public static GeometryValue Scalar(double value) => new() { Kind = GeometryKind.Scalar, Number = value, Display = value.ToString("G8") };
     public static GeometryValue Point(GeoVector point) => point.Finite
@@ -51,6 +57,7 @@ public sealed record ConstructionObject
     public string Label { get; init; }
     public string Definition { get; init; }
     public bool Visible { get; init; } = true;
+    public string VisibilityCondition { get; init; } = "";
     public bool Fixed { get; init; }
     public bool Trace { get; init; }
     public bool ShowLabel { get; init; } = true;
@@ -61,8 +68,19 @@ public sealed record ConstructionObject
     public double SliderMax { get; init; } = 10;
     public double SliderStep { get; init; } = .1;
     public bool Animate { get; init; }
+    public bool ShowSlider { get; init; }
     public string OnUpdate { get; init; } = "";
     public string OnClick { get; init; } = "";
+    public string OnChange { get; init; } = "";
+    public string OnMouseOver { get; init; } = "";
+    public string OnMouseOut { get; init; } = "";
+    public string OnSelect { get; init; } = "";
+    public string OnDeselect { get; init; } = "";
+    public string OnDragStart { get; init; } = "";
+    public string OnDragEnd { get; init; } = "";
+    public bool ControlPositionSet { get; init; }
+    public double ControlX { get; init; } = 16;
+    public double ControlY { get; init; } = 12;
 }
 
 public sealed record ConstructionSnapshot
@@ -78,12 +96,24 @@ public sealed record ConstructionSnapshot
     public bool ThreeDimensional { get; init; }
     public bool Perspective { get; init; }
     public bool Oblique { get; init; }
+    public bool Anaglyph { get; init; }
+    public bool AnaglyphBlue { get; init; }
     public bool PolarGrid { get; init; }
     public bool Axes { get; init; } = true;
     public bool Grid { get; init; } = true;
     public List<ConstructionTool> Tools { get; init; } = new();
+    public Dictionary<string, string> EventScripts { get; init; } = new(StringComparer.Ordinal);
+    public string AppletScript { get; init; } = "";
+    public List<ConstructionListener> AppletListeners { get; init; } = new();
 }
 
 public sealed record ConstructionTool(string Name, string[] Inputs, string Definition);
 
-public sealed record ConstructionEvaluation(IReadOnlyDictionary<string, GeometryValue> Values, int EvaluatedObjects, TimeSpan Elapsed);
+public sealed record ConstructionListener(string EventName, Guid? ObjectId, string Callback);
+
+public sealed record ConstructionEvaluation(IReadOnlyDictionary<string, GeometryValue> Values, int EvaluatedObjects, TimeSpan Elapsed)
+{
+    internal IReadOnlySet<string> ConditionallyHidden { get; init; }
+    public bool IsVisible(ConstructionObject item)
+        => item.Visible && ConditionallyHidden?.Contains(item.Label) != true;
+}

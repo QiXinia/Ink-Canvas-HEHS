@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using InkCanvas.App.Services;
 using InkCanvas.Ink;
@@ -36,6 +36,8 @@ internal static class PenOptionsRegression
             {
                 shell.OpenPenPalette(highlighter);
                 var window = shell.OpenWindows.OfType<PenPaletteWindow>().Single();
+                // Keep external desktop focus changes from dismissing the automated test panel.
+                window.Detach();
                 await Task.Delay(250);
                 var palette = Descendants(window.Content).OfType<PenPalette>().Single();
                 Check("pen options stay nonactivating " + highlighter,
@@ -75,6 +77,8 @@ internal static class PenOptionsRegression
                 var width = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith(highlighter ? "荧光笔粗细" : "画笔粗细"));
                 var widthPeer = new SliderAutomationPeer(width);
                 ((IRangeValueProvider)widthPeer.GetPattern(PatternInterface.RangeValue)).SetValue(18);
+                await WaitForSettings(() => (highlighter ? services.Store.Load().Canvas.HighlighterWidth
+                    : services.Store.Load().Canvas.InkWidth) == 9);
                 Check("width updates and saves " + highlighter, services.OverlayInk.CurrentAttributes.BaseWidth == 9
                     && (highlighter ? services.Store.Load().Canvas.HighlighterWidth ?? services.Store.Load().Canvas.InkWidth : services.Store.Load().Canvas.InkWidth) == 9);
                 bool? dragged = await TryPointer(window, width, drag: true);
@@ -86,6 +90,7 @@ internal static class PenOptionsRegression
                 if (highlighter)
                 {
                     width.Value = 120;
+                    await WaitForSettings(() => services.Store.Load().Canvas.HighlighterWidth == 60);
                     Check("highlighter supports full 60 DIP width", services.OverlayInk.CurrentAttributes.BaseWidth == 60
                         && services.Store.Load().Canvas.HighlighterWidth == 60);
                     services.OverlayInk.Tool = InkTool.Pen;
@@ -93,9 +98,10 @@ internal static class PenOptionsRegression
                     services.OverlayInk.Tool = InkTool.Highlighter;
                     Check("highlighter restores its independent width", services.OverlayInk.CurrentAttributes.BaseWidth == 60);
                     width.Value = 18;
-                    var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔透明度"));
-                    ((IRangeValueProvider)new SliderAutomationPeer(alpha).GetPattern(PatternInterface.RangeValue)).SetValue(220);
-                    Check("alpha updates and saves", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 220 && services.Store.Load().Canvas.InkAlpha == 220);
+                    var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔不透明度"));
+                    ((IRangeValueProvider)new SliderAutomationPeer(alpha).GetPattern(PatternInterface.RangeValue)).SetValue(80);
+                    await WaitForSettings(() => services.Store.Load().Canvas.InkAlpha == 204);
+                    Check("alpha updates and saves", services.OverlayInk.CurrentAttributes.HighlighterAlpha == 204 && services.Store.Load().Canvas.InkAlpha == 204);
                 }
                 Check("inline choices fit palette " + highlighter, Descendants(palette).OfType<SegmentedSelector>().All(selector => Fits(selector, palette.CardSurface)));
                 await BoardWindowRegression.SaveVisual(palette, Path.Combine(directory, highlighter ? "highlighter.png" : "pen.png"));
@@ -103,6 +109,7 @@ internal static class PenOptionsRegression
                 shell.OpenPenPalette(highlighter);
                 await Task.Delay(100);
                 window = shell.OpenWindows.OfType<PenPaletteWindow>().Single();
+                window.Detach();
                 Check("reopening keeps pen width " + highlighter, Descendants(window.Content).OfType<Slider>()
                     .Single(slider => AutomationProperties.GetName(slider).StartsWith(highlighter ? "荧光笔粗细" : "画笔粗细")).Value == 18);
                 window.Close();
@@ -198,6 +205,11 @@ internal static class PenOptionsRegression
 
     private static void Toggle(ToggleButton button) => ((IToggleProvider)new ToggleButtonAutomationPeer(button).GetPattern(PatternInterface.Toggle)).Toggle();
 
+    private static async Task WaitForSettings(Func<bool> saved)
+    {
+        for (int attempt = 0; attempt < 40 && !saved(); attempt++) await Task.Delay(50);
+    }
+
     private static async Task CheckTapRendering(ShellController shell, List<object> checks, string directory)
     {
         var controller = shell.Services.OverlayInk;
@@ -275,7 +287,7 @@ internal static class PenOptionsRegression
         }
     }
 
-    private static async Task<bool?> TryPointer(Window window, FrameworkElement control, bool drag)
+    internal static async Task<bool?> TryPointer(Window window, FrameworkElement control, bool drag, int pressMilliseconds = 40)
     {
         if (!NativeMethods.GetCursorPos(out var original)) return null;
         var bounds = WindowChrome.GetScreenBounds(window, control);
@@ -289,7 +301,7 @@ internal static class PenOptionsRegression
             if (GetAncestor(WindowFromPoint(point), 2) != WindowChrome.GetHwnd(window)) return null;
             MouseEvent(2, 0, 0, 0, UIntPtr.Zero);
             down = true;
-            await Task.Delay(40);
+            await Task.Delay(pressMilliseconds);
             if (drag)
             {
                 for (int step = 1; step <= 10; step++)

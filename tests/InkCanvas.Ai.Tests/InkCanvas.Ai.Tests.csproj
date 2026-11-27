@@ -11,8 +11,11 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="ModelContextProtocol.Core" Version="2.4.0" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\InkCanvas.Modules.AiAssistant\InkCanvas.Modules.AiAssistant.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Modules.Mcp\InkCanvas.Modules.Mcp.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Core\InkCanvas.Core.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Platform\InkCanvas.Platform.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Ink\InkCanvas.Ink.csproj" />

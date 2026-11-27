@@ -7,6 +7,10 @@ using Xunit;
 
 namespace InkCanvas.Core.Tests;
 
+[CollectionDefinition("Archive memory accounting", DisableParallelization = true)]
+public sealed class ArchiveMemoryAccountingCollection { }
+
+[Collection("Archive memory accounting")]
 public sealed class BoardStorageTests : IDisposable
 {
     private readonly string _directory = Directory.CreateTempSubdirectory("inkcanvas-board-storage-").FullName;
@@ -15,6 +19,35 @@ public sealed class BoardStorageTests : IDisposable
     private BoardService Board()
     {
         var board = new BoardService(); _boards.Add(board); return board;
+    }
+
+    [Fact]
+    public async Task SideBoardSurvivesRecoveryWithSharedMediaAndClearsOnVersionThreeOpen()
+    {
+        var board = Board();
+        var image = new BoardImageAsset { Data = new byte[] { 1, 2, 3 }, Width = 120, Height = 90 };
+        board.AddImage(image);
+        var side = board.EnableSideBoard();
+        side.InsertPageAfterCurrent();
+        side.AddImage(image.Copy(preserveId: false, copyData: false));
+
+        string package = FilePath();
+        await board.SaveRecoveryAsync(package);
+        using (var zip = ZipFile.OpenRead(package))
+            Assert.Single(zip.Entries.Where(entry => entry.FullName.StartsWith("media/")));
+
+        var restored = Board();
+        await restored.LoadBoardAsync(package);
+        var restoredSide = restored.SideBoard;
+        Assert.Equal(1, restoredSide.CurrentIndex);
+        Assert.Same(restored.CurrentImages.Single().Data, restoredSide.CurrentImages.Single().Data);
+
+        string oldPackage = FilePath("board-v3.icink");
+        await Board().SaveRecoveryAsync(oldPackage);
+        await restored.LoadBoardAsync(oldPackage);
+        Assert.Same(restoredSide, restored.SideBoard);
+        Assert.False(restoredSide.HasContent);
+        Assert.Equal(1, restoredSide.PageCount);
     }
 
     [Fact]
@@ -38,7 +71,7 @@ public sealed class BoardStorageTests : IDisposable
             using var reader = new StreamReader(archive.GetEntry("board.json")!.Open());
             string manifest = await reader.ReadToEndAsync();
             Assert.DoesNotContain("\"Data\"", manifest); Assert.DoesNotContain("\"PosterData\"", manifest);
-            Assert.Contains("\"Version\":4", manifest);
+            Assert.Contains("\"Version\":3", manifest);
         }
         var loaded = Board(); await loaded.LoadBoardAsync(path);
         Assert.Equal(2, loaded.PageCount); Assert.Equal(BoardBackground.Grid, loaded.Background); Assert.Equal(56, loaded.GridSpacing);
@@ -205,7 +238,7 @@ public sealed class BoardStorageTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var board in _boards) foreach (var page in board.Pages) page.Dispose();
+        foreach (var board in _boards) foreach (var page in board.DocumentPages) page.Dispose();
         Directory.Delete(_directory, true);
     }
 }

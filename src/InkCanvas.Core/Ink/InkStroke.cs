@@ -32,6 +32,13 @@ public sealed class InkStroke
     }
 
     public Guid Id { get; init; } = Guid.NewGuid();
+    public const int MaximumInkLayers = 64;
+    private int _inkLayerIndex;
+    public int InkLayerIndex
+    {
+        get => _inkLayerIndex;
+        set => _inkLayerIndex = value >= 0 && value < MaximumInkLayers ? value : 0;
+    }
     public long? LayerOrder { get; set; }
     public ShapeSource ShapeSource { get; set; }
 
@@ -83,6 +90,7 @@ public sealed class InkStroke
 
     /// <summary>Set when the stroke was produced by shape recognition rather than freehand.</summary>
     public bool IsRecognizedShape { get; set; }
+
 
     public TaperKind TaperKind
     {
@@ -256,7 +264,7 @@ public sealed class InkStroke
     /// <summary>Shortest distance from a point to this stroke's centreline.</summary>
     public float DistanceTo(Vector2 p)
     {
-        if (ShapeSource?.Geometry?.IsFill == true && ContainsPolygon(p)) return 0;
+        if (ShapeSource?.Geometry?.IsFill == true) return DistanceToFill(p);
         if (_points.Count == 0) return float.MaxValue;
         if (_points.Count == 1) return Vector2.Distance(p, _points[0].Position);
         float best = float.MaxValue;
@@ -279,13 +287,17 @@ public sealed class InkStroke
 
     public InkStroke Clone(bool preserveId = true)
     {
-        var copy = new InkStroke(Attributes.Clone()) { Id = preserveId ? Id : Guid.NewGuid(), IsRecognizedShape = IsRecognizedShape, LayerOrder = LayerOrder, ShapeSource = ShapeSource };
+        var copy = new InkStroke(Attributes.Clone()) { Id = preserveId ? Id : Guid.NewGuid(), IsRecognizedShape = IsRecognizedShape,
+            InkLayerIndex = InkLayerIndex, LayerOrder = LayerOrder, ShapeSource = ShapeSource };
         copy._points.AddRange(_points);
         copy.IsCompleted = IsCompleted;
         copy._boundsDirty = true;
         copy._objectFrame = _objectFrame;
         return copy;
     }
+
+    public static IOrderedEnumerable<InkStroke> InDrawingOrder(IEnumerable<InkStroke> strokes)
+        => strokes.OrderBy(stroke => stroke.InkLayerIndex).ThenBy(stroke => stroke.LayerOrder ?? long.MaxValue);
 
     public static List<InkStroke> CloneObjects(IEnumerable<InkStroke> strokes)
     {
@@ -310,15 +322,35 @@ public sealed class InkStroke
         }).ToList();
     }
 
-    private bool ContainsPolygon(Vector2 point)
+    /// <summary>Point ranges for the closed rings of a fill. Older fills store one ring.</summary>
+    public IEnumerable<(int Start, int Count)> FillContours()
+    {
+        var lengths = ShapeSource?.Geometry?.FillContourLengths;
+        if (lengths is null || lengths.Length == 0 || lengths.Any(length => length < 3) || lengths.Sum(length => (long)length) != Count)
+        {
+            if (Count >= 3) yield return (0, Count);
+            yield break;
+        }
+        int start = 0;
+        foreach (int length in lengths)
+        {
+            yield return (start, length);
+            start += length;
+        }
+    }
+
+    private float DistanceToFill(Vector2 point)
     {
         bool inside = false;
-        for (int i = 0, j = _points.Count - 1; i < _points.Count; j = i++)
+        float distance = float.MaxValue;
+        foreach (var (start, count) in FillContours())
+        for (int i = start, j = start + count - 1; i < start + count; j = i++)
         {
             var a = _points[i]; var b = _points[j];
             if ((a.Y > point.Y) != (b.Y > point.Y) && point.X < (b.X - a.X) * (point.Y - a.Y) / (b.Y - a.Y) + a.X) inside = !inside;
+            distance = MathF.Min(distance, DistanceToSegment(point, a.Position, b.Position));
         }
-        return inside;
+        return inside ? 0 : distance;
     }
 
     /// <summary>Replace all points, preserving already-computed widths (used by persistence).</summary>
@@ -332,6 +364,7 @@ public sealed class InkStroke
         _objectFrame = null;
     }
 }
+
 
 /// <summary>UI-independent rectangle.</summary>
 public readonly record struct Rect(float Left, float Top, float Right, float Bottom)

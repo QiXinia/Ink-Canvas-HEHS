@@ -16,6 +16,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\InkCanvas.Core\InkCanvas.Core.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Modules.Stylus\InkCanvas.Modules.Stylus.csproj" />
+    <ProjectReference Include="..\..\src\InkCanvas.Modules.ShapeExpansion\InkCanvas.Modules.ShapeExpansion.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Platform\InkCanvas.Platform.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Ink\InkCanvas.Ink.csproj" />
     <ProjectReference Include="..\..\src\InkCanvas.Features\InkCanvas.Features.csproj" />

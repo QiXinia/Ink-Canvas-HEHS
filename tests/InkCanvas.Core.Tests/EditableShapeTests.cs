@@ -42,6 +42,32 @@ public sealed class EditableShapeTests
     }
 
     [Fact]
+    public void ShapePreviewAndCommitUseScreenAxesWhenTheCanvasIsRotated()
+    {
+        using var controller = new InkController { Tool = InkTool.Shape, ShapeKind = ShapeKind.Rectangle };
+        var view = Matrix3x2.CreateScale(1.5f) * Matrix3x2.CreateRotation(.63f) * Matrix3x2.CreateTranslation(70, 35);
+        controller.ViewTransform = view;
+        Vector2 start = new(100, 125), end = new(250, 205);
+        var expected = ShapeGenerator.Generate(ShapeKind.Rectangle, start, end, Attributes()).Single();
+
+        controller.OnPointerDown(Pointer(start));
+        controller.OnPointerMove(Pointer(end));
+        CheckScreenCorners(Assert.Single(controller.ShapePreview));
+        controller.OnPointerUp(Pointer(end));
+
+        var stroke = Assert.Single(controller.Document.Strokes);
+        CheckScreenCorners(stroke);
+        CheckScreenCorners(Assert.Single(stroke.ShapeSource.Geometry.Generate(Attributes(), stroke.ShapeSource.GroupId)));
+
+        void CheckScreenCorners(InkStroke actual)
+        {
+            Assert.Equal(expected.Count, actual.Count);
+            for (int index = 0; index < actual.Count; index++)
+                Close(expected.Points[index].Position, Vector2.Transform(actual.Points[index].Position, view));
+        }
+    }
+
+    [Fact]
     public void ControlDragRespectsRotationZoomAndOneUndoPerGesture()
     {
         using var c = new InkController { Tool = InkTool.Select };
@@ -151,7 +177,7 @@ public sealed class EditableShapeTests
         c.Document.AddRange(ShapeGenerator.Generate(ShapeKind.Rectangle, new(100, 100), new(300, 240), Attributes()));
         c.SelectAll(); c.SetShapeFill(InkColor.Opaque(200, 40, 40)); c.ClearSelection();
         c.OnPointerDown(Pointer(new(180, 160))); c.OnPointerUp(Pointer(new(180, 160))); Assert.Equal(2, c.Selection.Count);
-        c.Tool = InkTool.Eraser; c.EraserMode = InkEraserMode.Area;
+        c.Tool = InkTool.Eraser; c.EraserMode = InkEraserMode.WholeStroke;
         c.OnPointerDown(Pointer(new(180, 160))); c.OnPointerUp(Pointer(new(180, 160))); Assert.Empty(c.Document.Strokes);
         c.Undo(); Assert.Equal(2, c.Document.Count); Assert.All(c.Document.Strokes, s => Assert.NotNull(s.ShapeSource.Geometry));
     }

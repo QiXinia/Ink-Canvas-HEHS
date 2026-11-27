@@ -23,6 +23,7 @@ internal static class PopupRegression
         var checks = new List<object>();
         using var services = new AppServices(Path.Combine(directory, "settings"));
         services.Settings.Startup.IsAutoUpdate = false;
+        services.Settings.Appearance.AutoDismissAnnotationToolPanels = true;
         using var shell = new ShellController(services);
         var outside = new Window { Title = "Popup input acceptance", Content = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.White) } };
         WindowChrome.MakeStandard(outside, topmost: false);

@@ -1,33 +1,32 @@
 using InkCanvas.App.Views;
 using InkCanvas.Controls.Controls;
-using InkCanvas.Core.AiAssistant;
-using InkCanvas.Core.Classroom;
-using InkCanvas.Core.Ink;
-using InkCanvas.Features.AiAssistant;
-using InkCanvas.Features.Board;
-using InkCanvas.Features.Classroom;
 using InkCanvas.Features.Ppt;
 using InkCanvas.Features.Persistence;
 using InkCanvas.Features.Tools;
+using InkCanvas.Features.Board;
 using InkCanvas.Ink;
-using InkCanvas.Platform.Ai;
-using InkCanvas.Platform.Input;
 using InkCanvas.Platform.System;
-using InkCanvas.Platform.Windows;
 using InkCanvas.Platform.Interop;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using InkCanvas.Host.Contracts;
 using InkCanvas.Extensibility;
+
+using InkCanvas.Core.AiAssistant;
+using InkCanvas.Core.Ink;
+using InkCanvas.Features.AiAssistant;
+using InkCanvas.Features.Classroom;
+using InkCanvas.Platform.Input;
+using InkCanvas.Platform.Windows;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using WinRT.Interop;
+
 
 namespace InkCanvas.App.Services;
 
@@ -41,10 +40,38 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private readonly DispatcherQueueTimer _pollTimer;
     private readonly PptInkFileStore _pptStore;
     private readonly PptInkSession _pptSession;
+    private SpotlightWindow _spotlight;
+    private MagnifierWindow _magnifier;
+    private readonly NavigationGuard _pptGuard = new();
+    private DispatcherQueueTimer _pptNavigationRetry;
+    private Action _pendingPptNavigation;
+    private readonly SlideSwitchGate _pptGate = new();
+    private readonly Dictionary<PptNavigationPlacement, PptNavigationWindow> _pptNavigations = new();
+    private SlideNavigatorWindow _slideNav;
+    private SlideContentIndex _slideIndex;
+    private DateTime _lastSlideIndexRefreshUtc = DateTime.MinValue;
+    private bool _pptNavCollapsed;
+    private bool _manualPptNav;
+    private PptSnapshot _pptShowSnapshot;
+    private int _pptCaptureSession;
+    private int _pptCaptureGeneration;
+    private string _pptScreenshotPath;
+    private int _pptScreenshotSlideIndex;
+    private int _pptScreenshotSlideId;
+    private readonly PresentationSourceSelector _pptSources = new();
+    private readonly ComPresentationSource _pptComSource;
+    private readonly WindowPresentationSource _pptWindowSource = new();
+    private readonly KeyPresentationSource _pptKeySource = new();
+    private BlackScreenWindow _blackScreen;
+    private DateTime _lastPptRpcBusyLogUtc = DateTime.MinValue;
+    private FocusRegionStore _focusRegions;
+
     private FloatingBarWindow _bar;
     private SelectionToolbarWindow _selectionToolbar;
     private bool _selectionToolbarCollapsed;
     private BoardWindow _board;
+    private BoardWindow _cachedBoard;
+    private bool _boardSwitching;
     private SettingsWindow _settings;
     private bool _settingsOpening;
     private IntPtr _settingsDrawingSurface;
@@ -56,111 +83,45 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private CancellationTokenSource _imageImportCancellation;
     private CountdownWindow _countdown;
     private LotteryWindow _lottery;
-    private RosterWindow _roster;
-    private SpotlightWindow _spotlight;
-    private MagnifierWindow _magnifier;
-    private ToolkitWindow _toolkit;
     private ReplayWindow _replay;
-    private TimeMachineWindow _timeMachine;
-    private InkRecorder _recorder;
-
-    private InfoWindow _guide;
     private readonly List<NoticeWindow> _notices = new();
     private PenPaletteWindow _palette;
+    private ColorEditorWindow _colorEditor;
     private readonly List<PenPaletteWindow> _detachedPalettes = new();
     private ShapePickerWindow _shapePicker;
-    private readonly NavigationGuard _pptGuard = new();
-    private readonly SlideSwitchGate _pptGate = new();
-    private DispatcherQueueTimer _pptRetryTimer;
-    private bool _pptRetryQueued;
-    private bool _pptRetryNext;
-    private PptNavigationWindow _pptNav;
-    private SlideNavigatorWindow _slideNav;
-    private SlideContentIndex _slideIndex;
-    private DateTime _lastSlideIndexRefreshUtc = DateTime.MinValue;
-    private NavigationCorner _pptCorner = NavigationCorner.BottomLeft;
-    private bool _pptNavCollapsed;
-    private bool _manualPptNav;
-    private PptSnapshot _pptShowSnapshot;
-    private bool _pptAlignedToShow;
-    private int _pptCaptureSession;
-    private int _pptCaptureGeneration;
-    private string _pptScreenshotPath;
-    private int _pptScreenshotSlideIndex;
-    private int _pptScreenshotSlideId;
     private bool _lastSlideShowState;
-    private readonly PresentationSourceSelector _pptSources = new();
-    private readonly ComPresentationSource _pptComSource;
-    private readonly WindowPresentationSource _pptWindowSource = new();
-    private readonly KeyPresentationSource _pptKeySource = new();
-    private BlackScreenWindow _blackScreen;
-    private bool _blackScreenEscapeHotkey;
-    private bool _blackScreenEscapeFailureLogged;
-    private bool _hotkeysReady;
-    private bool _presentationKeyFailureLogged;
-    private DateTime _lastPptRpcBusyLogUtc = DateTime.MinValue;
-    private bool _exiting;
-    private AssistantWindow _aiAssistant;
-    private AiStreamHandle _aiStream;
-    private AiStreamHandle _aiRegionStream;
-    private AssistantSession _aiSession;
-    private AssistantTarget _aiTarget;
-    private bool _aiHiddenWithSideBoard;
-    private bool _aiAssistantFromSideBoard;
-    private AssistantRect _aiAnchor;
-    private AiClient _aiClient;
-    private string _aiThumb = "";
-    private ProblemContext _aiProblem;
-    private List<AssistantStroke> _aiStrokes = new();
-    private double _aiScale = 1.0;
-    private int _aiSlideId;
-    private int _aiSlideIndex;
-    private bool _aiTwoStage;
-    private string _aiStageFirstToken;
-    private bool _aiStageReset;
-    private string _aiPreStageText = "";
-    private List<AssistantStep> _aiPreStageSteps = new();
-    private string _aiPreStageFormula = "";
-    private bool _aiSecondStageStarted;
-    private readonly AiResponseGate _aiGate = new();
-    private TeachingSession _teachingSession;
-    private PracticePlan _activePractice;
-    private ExerciseDifficulty _variantDifficulty;
-    private bool _variantPending;
-    private string _reRecognizeRegionId;
-    private GroupScoreService _groupScore;
-    private GroupScoreWindow _groupScoreWindow;
-    private ExampleLibraryWindow _exampleLibrary;
-    private ResourceBundleWindow _resourceBundle;
-    private ClassroomPreset _preset;
-    private FocusRegionStore _focusRegions;
-    private PresetWindow _presetWindow;
-
     private bool _lastAutoFoldRequested;
     private bool? _manualFoldOverride;
+    private bool _exiting;
     private bool _exitPromptOpen;
     private bool _paletteHighlighter;
     private bool _disposed;
     private InkController _boundBoardController;
     private IReadOnlyList<ScreenInfo> _screens = Array.Empty<ScreenInfo>();
     private bool _displayRefreshPending;
+    private bool _forceDisplayRefresh;
     private long _lastDisplayCheck;
+
 
     public ShellController(AppServices services)
     {
         Services = services;
         services.SettingsApplied += ApplyDocumentSettings;
+        services.SettingsApplied += RefreshIconFonts;
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         Overlay = new OverlayHost(services.OverlayInk);
-        _pptStore = new PptInkFileStore(services.Settings.Automation.AutoSavedStrokesLocation);
         Overlay.InteractionChanged += RefreshShortcutRegistration;
         Overlay.ConfigureDisplays(services.Settings.Display);
         services.SettingsApplied += ApplyDisplaySettings;
-        services.SettingsApplied += ApplySideBoardDisplaySettings;
         services.SettingsApplied += RefreshPaletteNibModes;
         Overlay.Window.DisplaySettingsChanged += QueueDisplayRefresh;
+        Overlay.Window.PowerStateChanged += CancelWindowDrags;
         _screens = ScreenService.All();
-        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || DocumentActive), new DocumentHost(this), new CanvasToolsHost(this));
+        _documentAi = new DocumentAiHost(this);
+        RegisterAssistantTools();
+        services.StartModules(new ScreenTrackingHost(services, Overlay, () => _board is not null || DocumentActive), new DocumentHost(this), new CanvasToolsHost(this), new AssistantHost(this), new LibraryHost(this), _documentAi, new StylusInputHost(this));
+        _pptStore = new PptInkFileStore(services.Settings.Automation.AutoSavedStrokesLocation);
+        services.SettingsApplied += ApplyArchivePaths;
         _pptSession = new PptInkSession(services.Ppt, _pptStore)
         {
             InkManagedExternally = () => Services.Modules.HasExport<IScreenTrackingService>() && Services.Settings.Experimental.ScreenContentTracking && Services.Settings.Experimental.PowerPoint,
@@ -172,10 +133,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 try
                 {
                     Overlay.Window.CancelInput();
+                    controller.NotifyInputContextChanging();
                     controller.EndPlayback();
                     controller.FinishDotAnimations();
                     controller.ClearSelection();
-                    controller.Document.ReplaceAll(strokes);
+                    controller.ReplacePageInk(strokes);
                     controller.History.Clear();
                     _bar?.Bar.RefreshSelection();
                 }
@@ -196,11 +158,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _pptSession.InkTransition += OnPptInkTransition;
         _pptSession.Failed += LogPptFailure;
         _pptComSource = new ComPresentationSource(
-            () => _pptSession.Snapshot.IsAttached,
-            () => _pptSession.Next(),
-            () => _pptSession.Previous());
-
-        if (services.Settings.PowerPoint.PowerPointSupport) _pptSession.Poll();
+            () => _pptSession.Snapshot.IsAttached, () => _pptSession.Next(), () => _pptSession.Previous());
+        _focusRegions = FocusRegionStore.Deserialize(Services.Settings.Classroom.SpotlightRegions);
         Updater = new UpdateCoordinator(services)
         {
             Confirm = ConfirmAsync,
@@ -215,22 +174,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _pollTimer = _dispatcher.CreateTimer();
         _pollTimer.Interval = TimeSpan.FromMilliseconds(900);
         _pollTimer.Tick += (_, _) => Poll();
-
-        // A flip that lands inside the navigation debounce is delivered once here instead of
-        // being dropped; the latest requested direction wins and the timer never repeats.
-        _pptRetryTimer = _dispatcher.CreateTimer();
-        _pptRetryTimer.IsRepeating = false;
-        _pptRetryTimer.Tick += (_, _) =>
-        {
-            _pptRetryTimer.Stop();
-            _pptRetryQueued = false;
-            NavigatePpt(_pptRetryNext);
-        };
-
-        _teachingSession = TeachingSession.Create("课堂", Environment.TickCount64);
-        _preset = ClassroomPresetLibrary.ForId(Services.Settings.Classroom.PresetId)
-            ?? ClassroomPresetLibrary.ForScene(ClassroomSceneKind.Teach);
-        _focusRegions = FocusRegionStore.Deserialize(Services.Settings.Classroom.SpotlightRegions);
         services.Ppt.RefreshRequested += QueuePresentationRefresh;
     }
 
@@ -250,41 +193,62 @@ public sealed partial class ShellController : IShellActions, IDisposable
         WindowOpened?.Invoke(w);
     }
 
+    private void RefreshIconFonts()
+    {
+        foreach (var window in OpenWindows)
+        {
+            IconFontStyle.Refresh(window.Content);
+            if (window.Content is FrameworkElement { XamlRoot: { } root })
+                foreach (var popup in Microsoft.UI.Xaml.Media.VisualTreeHelper.GetOpenPopupsForXamlRoot(root))
+                    IconFontStyle.Refresh(popup.Child);
+        }
+    }
+
     private void QueueDisplayRefresh()
     {
+        _forceDisplayRefresh = true;
         if (_displayRefreshPending || _disposed) return;
         _displayRefreshPending = true;
         _dispatcher.TryEnqueue(DispatcherQueuePriority.Low, () =>
         {
             _displayRefreshPending = false;
-            if (!_disposed) RefreshDisplays();
+            if (!_disposed) RefreshDisplays(ScreenService.All(), force: true);
         });
+    }
+
+    private void CancelWindowDrags()
+    {
+        WindowChrome.CancelAllDragMoves();
+        _bar?.CancelTap();
     }
 
     private void RefreshDisplays() => RefreshDisplays(ScreenService.All());
 
-    internal void RefreshDisplays(IReadOnlyList<ScreenInfo> screens)
+    internal void RefreshDisplays(IReadOnlyList<ScreenInfo> screens, bool force = false)
     {
         _lastDisplayCheck = Environment.TickCount64;
+        force |= _forceDisplayRefresh;
         if (screens.Count == 0) return;
-        if (_screens.SequenceEqual(screens)) return;
+        if (!force && _screens.SequenceEqual(screens)) return;
         try
         {
+            CancelWindowDrags();
             Overlay.RefreshDisplayBounds(screens);
             _bar?.RefreshDisplayPlacement();
             _palette?.RefreshDisplayPlacement();
             foreach (var palette in _detachedPalettes) palette.RefreshDisplayPlacement();
             _shapePicker?.RefreshDisplayPlacement();
             if (_board is not null) foreach (var panel in _board.ToolPanels) panel.Fit();
+            if (_sideBoard is not null) foreach (var panel in _sideBoard.ToolPanels) panel.Fit();
             _replay?.RefreshDisplayPlacement();
-            EnsureSideBoardOnScreen();
             foreach (var window in OpenWindows)
                 if (window is SettingsWindow or CountdownWindow or LotteryWindow or InfoWindow or ReplayWindow or NoticeWindow or UpdateWindow
-                    || _documentWindows.Contains(window))
+                    || ReferenceEquals(window, _sideBoard) || _documentWindows.Contains(window))
                     WindowChrome.KeepVisible(window);
             QueueDesktopSelection();
             Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
             _screens = screens.ToArray();
+            _forceDisplayRefresh = false;
         }
         catch (Exception ex)
         {
@@ -298,20 +262,22 @@ public sealed partial class ShellController : IShellActions, IDisposable
         get
         {
             if (_bar is not null) yield return _bar;
+            foreach (var navigation in _pptNavigations.Values) yield return navigation;
             if (_selectionToolbar is not null) yield return _selectionToolbar;
             if (_board is not null) yield return _board;
+            if (_sideBoard is not null) yield return _sideBoard;
             if (_documentWorkspace is not null) yield return _documentWorkspace.Window;
             foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window)) yield return window;
             if (_settings is not null) yield return _settings;
+            if (_colorEditor is not null) yield return _colorEditor;
+            foreach (var reminder in _resumeReminders) yield return reminder;
             if (_countdown is not null) yield return _countdown;
             if (_lottery is not null) yield return _lottery;
             if (_replay is not null) yield return _replay;
-            if (_guide is not null) yield return _guide;
             if (_updateWindow is not null) yield return _updateWindow;
             foreach (var notice in _notices) yield return notice;
             if (_palette is not null) yield return _palette;
             foreach (var palette in _detachedPalettes) yield return palette;
-            if (_aiAssistant is not null) yield return _aiAssistant;
             if (_shapePicker is not null) yield return _shapePicker;
         }
     }
@@ -343,6 +309,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _bar = new FloatingBarWindow();
         NotifyWindowOpened(_bar);
         _bar.Bar.Settings = Services.Settings;
+        _bar.Bar.SelectionExtension = (controller, theme) =>
+            Services.Modules.GetExport<ISelectionPaletteExtension>()?.CreateControls(controller, theme);
         _bar.Configure(Services.OverlayInk, this);
         _displayedExtensionCommands = ExtensionCommands.ToArray();
         Services.Plugins.Changed += OnExtensionCommandsChanged;
@@ -352,7 +320,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _bar.Bar.SettingsEdited += () => { Services.ApplySettings(); Services.SaveSettings(); };
         _bar.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
                         Services.Settings.Appearance.FloatingBarScale);
-        _bar.ApplyTheme(Services.Settings.Appearance.Theme);
+        WindowChrome.ApplyTheme(_bar, Services.Settings.Appearance.Theme);
         WindowChrome.ShowWithoutActivation(_bar);
 
         Services.OverlayInk.Invalidated += QueueDesktopSelection;
@@ -366,24 +334,40 @@ public sealed partial class ShellController : IShellActions, IDisposable
         Overlay.Show();
         // A click on the overlay raises it to the top of the topmost Z-band, above every chrome
         // window. Re-assert the chrome immediately so close buttons and title bars stay clickable.
-        Overlay.Window.InputBegan += () =>
-        {
-            RaiseChromeAboveOverlay();
-            _bar?.DismissPanelsOnInput();
-            // WPF HideSubPanels: laying ink dismisses the pen/shape popups (pin only survives picks).
-            _palette?.DismissOnOverlayInput();
-            _shapePicker?.DismissOnOverlayInput();
-        };
+        Overlay.Window.InputBegan += OnOverlayInputBegan;
         if (Services.Settings.Startup.IsFoldAtStartup) _bar.SetFolded(true);
+        Overlay.RegisterHotkeys(
+            undo: () => ActiveController.Undo(),
+            redo: () => ActiveController.Redo(),
+            toggleEraser: () => { ActiveController.Tool = InkTool.Eraser; _bar.Bar.RefreshSelection(); },
+            clear: () => ClearCanvas(),
+            togglePassThrough: ToggleClickThrough,
+            toggleBoard: ToggleBoard,
+            pptNext: () => HandlePresentationKey(PresentationKeyMap.VkPageDown),
+            pptPrevious: () => HandlePresentationKey(PresentationKeyMap.VkPageUp),
+            pptExit: () => { if (_lastSlideShowState) PptExit(); },
+            screenshot: () => _ = ScreenshotAsync(),
+            fold: ToggleFold,
+            select: () => { if (_board is not null) _board.SelectOrSelectAll(); else ActiveController.Tool = InkTool.Select; _bar.Bar.RefreshSelection(); },
+            line: () =>
+            {
+                ActiveController.SelectShape(Core.Shapes.ShapeKind.Line);
+                _bar?.Bar.RefreshSelection();
+            },
+            draw: () =>
+            {
+                bool active = ActiveController.Tool == InkTool.Pen && (DocumentActive || _board is not null || !Overlay.ClickThrough);
+                if (!DocumentActive && _board is null && Overlay.ClickThrough) ToggleClickThrough();
+                ActiveController.Tool = InkTool.Pen;
+                if (active) OpenPenPalette(false);
+            },
+            editingEnabled: () => CanvasShortcutsEnabled,
+            overlayEditingEnabled: () => OverlayShortcutsEnabled,
+            presentationEnabled: () => PresentationShortcutsEnabled);
 
-        RegisterOverlayHotkeys();
-
-        // A show may already be running when the bar is created; page keys are only
-        // registered during a show so they are not stolen from other apps.
-        _hotkeysReady = true;
-        if (_lastSlideShowState && !Overlay.SetPresentationKeysEnabled(true))
-            Core.Diagnostics.FileLog.WriteLogToFile("PPT 翻页热键注册失败（可能被其他程序占用）", Core.Diagnostics.LogType.Info);
-
+        Overlay.Hotkeys.Register(HotkeyModifiers.None, 0x78 /* F9 */, ToggleBlackScreen);
+        Overlay.Hotkeys.Register(HotkeyModifiers.None, 0x42 /* B */, ToggleBlackScreen, () => PresentationShortcutsEnabled);
+        Overlay.Hotkeys.Register(HotkeyModifiers.None, 0x1B /* Escape */, CloseBlackScreen, () => _blackScreen is not null);
         StartShortcutTracking();
         _pollTimer.Start();
 
@@ -397,72 +381,12 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
         if (Services.Settings.Startup.IsAutoUpdate)
             _ = Updater.CheckAsync(interactive: false);
-
-        // 上次异常退出留下的未完成录制：LoadAll / LoadWithJournal 已能恢复，这里只提示。
-        if (ClassroomSessionStore.PendingJournalIds().Count > 0)
-            _ = NotifyPendingJournalAsync();
-    }
-
-    private async Task NotifyPendingJournalAsync()
-    {
-        try
-        {
-            await NotifyAsync("板书时光机", "检测到未完成的课堂录制，已恢复为最近会话。");
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"板书时光机恢复提示失败：{ex.Message}", Core.Diagnostics.LogType.Info);
-        }
     }
 
     /// <summary>
     /// The default hotkey set. Extracted so it can be replayed after the Win32 hotkey service
     /// drops a temporary key (the service only supports unregistering everything).
     /// </summary>
-    private void RegisterOverlayHotkeys()
-    {
-        Overlay.RegisterHotkeys(
-            undo: () => Services.OverlayInk.Undo(),
-            redo: () => Services.OverlayInk.Redo(),
-            togglePen: () => { Services.OverlayInk.Tool = InkTool.Pen; _bar.Bar.RefreshSelection(); },
-            toggleEraser: () => { Services.OverlayInk.Tool = InkTool.Eraser; _bar.Bar.RefreshSelection(); },
-            clear: () => Services.OverlayInk.Clear(),
-            togglePassThrough: ToggleClickThrough,
-            toggleBoard: ToggleBoard,
-            pptNext: () => HandlePresentationKey(PresentationKeyMap.VkPageDown),
-            pptPrevious: () => HandlePresentationKey(PresentationKeyMap.VkPageUp),
-            pptExit: () => { if (_lastSlideShowState) PptExit(); },
-            toggleBlackScreen: ToggleBlackScreen,
-            screenshot: () => _ = ScreenshotAsync(),
-            fold: ToggleFold,
-            select: () =>
-            {
-                if (_board is not null) _board.SelectOrSelectAll();
-                else Services.OverlayInk.Tool = InkTool.Select;
-                _bar.Bar.RefreshSelection();
-            },
-            line: () =>
-            {
-                Services.OverlayInk.SelectShape(Core.Shapes.ShapeKind.Line);
-                _bar?.Bar.RefreshSelection();
-            },
-            draw: () =>
-            {
-                bool active = Services.OverlayInk.Tool == InkTool.Pen && (DocumentActive || _board is not null || !Overlay.ClickThrough);
-                if (!DocumentActive && _board is null && Overlay.ClickThrough) ToggleClickThrough();
-                Services.OverlayInk.Tool = InkTool.Pen;
-                if (active) OpenPenPalette(false);
-            },
-            editingEnabled: () => CanvasShortcutsEnabled,
-            overlayEditingEnabled: () => OverlayShortcutsEnabled,
-            presentationEnabled: () => PresentationShortcutsEnabled,
-            ai: OpenAiAssistant,
-            sideBoard: ToggleSideBoard,
-            sideBoardModifiers: Services.Settings.Hotkey.SideBoard.Modifiers,
-            sideBoardKey: Services.Settings.Hotkey.SideBoard.Key);
-    }
-
     private void OnBarLayoutChanged()
     {
         _bar?.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
@@ -480,7 +404,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_disposed || _exiting) return;
         var ink = Services.OverlayInk;
         if (_selectionToolbar is null && DesktopSelectionAvailable && ink.HasSelection && ink.Playback is null
-            && !ink.IsMarqueeSelecting && !ink.IsRotatingSelection)
+            && !ink.IsRegionSelecting && !ink.IsRotatingSelection)
         {
             var toolbar = new SelectionToolbarWindow(this);
             _selectionToolbar = toolbar;
@@ -509,8 +433,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    private InkController ActiveController => _board is not null
-        ? (_sideBoard is { IsShown: true } ? _sideBoard.CurrentController : Services.Board.Current)
+    private InkController ActiveController => ActiveBoardWindow is { } board
+        ? board.CurrentController
         : DocumentActive ? _documentWorkspace.Controller : Services.OverlayInk;
 
     /// <summary>
@@ -521,6 +445,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void OnControllerToolChanged()
     {
         RefreshShortcutRegistration();
+        if (DocumentActive && ActiveController.Tool == InkTool.Pan) OptionPopupCoordinator.DismissUnpinned();
         if (_bar is not null) _bar.Bar.ClickThroughActive = DocumentActive ? ActiveController.Tool == InkTool.Pan : Overlay.ClickThrough;
         _bar?.Bar.RefreshSelection();
         QueueDesktopSelection();
@@ -543,11 +468,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private int EffectiveTheme => _board is not null
         ? (Services.Settings.Canvas.UsingWhiteboard ? 1 : 2)
         : Services.Settings.Appearance.Theme;
-
-    private void CloseDetachedPalettes()
-    {
-        foreach (var palette in _detachedPalettes.ToArray()) palette.Close();
-    }
 
     private void ApplyEdgeGestureSetting()
         => Platform.System.EdgeGestureService.SetEdgeGesturesDisabled(
@@ -576,50 +496,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
         return notice.Completion;
     }
 
-    private async Task<bool> AskAsync(string title, string message, string primary)
-    {
-        if (_bar?.Content is not FrameworkElement root || root.XamlRoot is null) return false;
-        var dialog = new ContentDialog
-        {
-            Title = title,
-            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-            PrimaryButtonText = primary,
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Close,
-            XamlRoot = root.XamlRoot,
-        };
-        return await dialog.ShowAsync() == ContentDialogResult.Primary;
-    }
-
     private void OnPptPresentationNotice(PptPresentationNotice notice)
     {
-        if (notice is not null && _pptSession.Snapshot is { IsSlideShowRunning: true, Slide.Index: > 0 } snapshot)
-        {
-            // 与 InkTransition 的 Begin 事件共用同一载荷格式；有截图时带上截图路径，
-            // 避免后续重复事件把已记录的截图清空。
-            int slideIndex = snapshot.Slide.Index;
-            int slideId = snapshot.Slide.SlideId;
-            bool hasScreenshot = _pptScreenshotSlideIndex == slideIndex
-                && (_pptScreenshotSlideId == slideId || _pptScreenshotSlideId == 0);
-            string screenshot = hasScreenshot && File.Exists(_pptScreenshotPath) ? _pptScreenshotPath : "";
-            RecordClassroomEvent(TimelineEventKind.PptSlideChanged,
-                InkTimeline.EncodePptSlideChanged(slideId, slideIndex, screenshot));
-            RecordClassroomEvent(TimelineEventKind.PptInkChanged,
-                Services.OverlayInk.Document.Strokes.Count.ToString());
-        }
         _dispatcher.TryEnqueue(async () => await ShowPptPresentationNoticeAsync(notice));
     }
 
     private async Task ShowPptPresentationNoticeAsync(PptPresentationNotice notice)
     {
+        // WPF YesOrNoNotificationWindow parity: exact strings, topmost 450x160 window that also
+        // works while the floating bar is folded (the old ContentDialog hung on a hidden XamlRoot).
         var owner = (Window)_board ?? _bar;
-        if (notice.PreviousSlideIndex is > 0)
-        {
-            string resumeMessage = $"检测到上次播放到第 {notice.PreviousSlideIndex} 页，是否跳转？";
-            if (notice.ResumeIndexDegraded) resumeMessage += "（按旧页码降级恢复，页序可能已变化）";
-            if (await AskAsync("继续上次放映？", resumeMessage, "跳转"))
-                _pptSession.GoToSlide(notice.PreviousSlideIndex.Value);
-        }
+        string resumeHint = notice.ResumeIndexDegraded ? "（按旧页码恢复，页序可能已变化）" : "";
+        if (notice.PreviousSlideIndex is > 0
+            && await YesOrNoWindow.AskAsync(owner, $"上次播放到了第 {notice.PreviousSlideIndex} 页，是否立即跳转？{resumeHint}"))
+            _pptSession.GoToSlide(notice.PreviousSlideIndex.Value);
 
         if (notice.OfferRestoreHiddenSlides
             && await YesOrNoWindow.AskAsync(owner, "检测到此演示文档中包含隐藏的幻灯片，是否取消隐藏？"))
@@ -629,20 +519,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
             && await YesOrNoWindow.AskAsync(owner, "检测到此演示文档中自动播放或排练计时已经启用，可能导致幻灯片自动翻页，是否取消？"))
             _pptSession.DisableSlideTimings();
 
-        if (notice.LegacyInkFilesDetected)
-            await NotifyAsync("发现旧版墨迹存档", "发现 .icstk/.icart 存档。该 WPF ISF 格式无法在 WinUI 3 直接读取；当前仅保留文件，不会覆盖或删除。");
-
-        if (notice.OfferInkMappingReview)
+        if (notice.LegacyInkFilesDetected || notice.ResumeIndexDegraded)
             await ShowInkRecoveryWizardAsync(notice);
-        else if (!string.IsNullOrWhiteSpace(notice.BackupDirectory))
-            await NotifyAsync("已升级墨迹存档",
-                $"旧版按页码保存的批注已按当前页序迁移到 SlideId，原文件保留。备份：{notice.BackupDirectory}");
     }
 
-    /// <summary>
-    /// Recovery wizard for archives whose slides no longer line up. Deletion is only ever
-    /// offered after an explicit confirmation, and always backed up first.
-    /// </summary>
     private async Task ShowInkRecoveryWizardAsync(PptPresentationNotice notice)
     {
         try
@@ -708,24 +588,31 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
+    private async Task<bool> AskAsync(string title, string message, string primary)
+    {
+        if (_bar?.Content is not FrameworkElement root || root.XamlRoot is null) return false;
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = primary,
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = root.XamlRoot,
+        };
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
+    }
+
     private void OnPptScreenshotRequested(PptScreenshotRequest request)
     {
-        // ScreenshotRequested is raised synchronously from inside PptInkSession (navigation or
-        // poll), so there is no in-flight async work to cancel here. The session/generation
-        // check is still enforced: once the slide generation advanced, a late or replayed
-        // request must not overwrite a screenshot for the slide that is now current.
-        if (!_pptGate.IsCurrent(_pptCaptureSession, _pptCaptureGeneration))
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                "PPT screenshot skipped: stale slide generation", Core.Diagnostics.LogType.Info);
-            return;
-        }
-
+        if (!_pptGate.IsCurrent(_pptCaptureSession, _pptCaptureGeneration)) return;
         // Capture screen pixels synchronously before the COM navigation mutates the slideshow.
         try
         {
-            var area = request.Snapshot.WindowHandle != IntPtr.Zero
-                ? ScreenService.FromWindow(request.Snapshot.WindowHandle).Bounds : GetScreenshotBounds();
+            var area = ShowWindowTracker.TryGet(request.Snapshot.WindowHandle, out var measured)
+                ? new ScreenRect(measured.X, measured.Y, measured.Width, measured.Height)
+                : request.Snapshot.WindowHandle != IntPtr.Zero
+                    ? ScreenService.FromWindow(request.Snapshot.WindowHandle).Bounds : GetScreenshotBounds();
             var (pixels, width, height) = ScreenshotService.Capture(area.X, area.Y, area.Width, area.Height);
             if (width <= 0 || height <= 0) return;
             string path = request.SuggestedPath;
@@ -736,13 +623,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
                     $"{request.Snapshot.ShowPosition}_{DateTime.Now:HH-mm-ss}.png");
             }
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            // 记住最近一次成功请求的截图，后续 PptSlideChanged 事件会把它的路径写入时间轴。
-            _pptScreenshotPath = path;
-            _pptScreenshotSlideIndex = request.Snapshot.Slide?.Index ?? request.InkSlide?.Index ?? 0;
-            _pptScreenshotSlideId = request.Snapshot.Slide?.SlideId ?? request.InkSlide?.SlideId ?? 0;
+            RememberPptScreenshot(path, request.Snapshot.Slide?.Index ?? request.InkSlide?.Index ?? 0,
+                request.Snapshot.Slide?.SlideId ?? request.InkSlide?.SlideId ?? 0);
             _ = ScreenshotService.SavePngAsync(path, pixels, width, height);
-            SaveSlideNavigatorThumbnail(
-                request.Snapshot.Presentation, _pptScreenshotSlideId, pixels, width, height);
+            SaveSlideNavigatorThumbnail(request.Snapshot.Presentation, _pptScreenshotSlideId, pixels, width, height);
             if (request.SaveInkAlongside)
             {
                 string ink = Path.ChangeExtension(path, ".icink");
@@ -794,89 +678,54 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _refreshingPresentation = true;
         try
         {
-            try
+            if (Services.Settings.PowerPoint.PowerPointSupport && _documentWorkspace is null)
             {
-                if (Services.Settings.PowerPoint.PowerPointSupport && _documentWorkspace is null)
+                _pptCaptureGeneration = _pptGate.NextGeneration();
+                _pptCaptureSession = _pptGate.Session;
+                var current = _pptSession.Poll();
+
+                // COM unavailable and no show visible through automation: WPS/PowerPoint may still
+                // be running a full-screen viewer. Treat its window as a degraded slideshow so the
+                // pager stays usable (page numbers stay 0/0, the snapshot has no slide data).
+                bool windowAvailable = false;
+                if (!current.IsAttached && !current.IsSlideShowRunning)
                 {
-                    // Each poll opens a new slide generation. Screenshot requests raised synchronously
-                    // from inside PptInkSession.Poll() are validated against it on the handler side.
-                    int generation = _pptGate.NextGeneration();
-                    _pptCaptureSession = _pptGate.Session;
-                    _pptCaptureGeneration = generation;
-
-                    var current = _pptSession.Poll();
-
-                    // COM unavailable and no show visible through automation: WPS/PowerPoint may still
-                    // be running a full-screen viewer. Treat its window as a degraded slideshow so the
-                    // pager stays usable (page numbers stay 0/0, the snapshot has no slide data).
-                    bool windowAvailable = false;
-                    if (!current.IsAttached && !current.IsSlideShowRunning)
+                    FallbackShowWindow fallback = PresentationFallbackDetector.Detect();
+                    if (fallback is not null)
                     {
-                        FallbackShowWindow fallback = PresentationFallbackDetector.Detect();
-                        if (fallback is not null)
+                        windowAvailable = true;
+                        current = new PptSnapshot
                         {
-                            windowAvailable = true;
-                            current = new PptSnapshot
-                            {
-                                State = PptConnectionState.SlideShow,
-                                WindowHandle = fallback.Handle,
-                            };
-                        }
+                            State = PptConnectionState.SlideShow,
+                            WindowHandle = fallback.Handle,
+                        };
                     }
-                    _pptSources.Select(current.IsAttached, windowAvailable);
-
-                    bool isShow = current.IsSlideShowRunning;
-                    if (isShow != _lastSlideShowState)
+                }
+                _pptSources.Select(current.IsAttached, windowAvailable);
+                bool isShow = current.IsSlideShowRunning;
+                if (isShow != _lastSlideShowState)
+                {
+                    if (isShow) _bar?.SetPresentationMode(true, current.WindowHandle, current.IsWindowedShow);
+                    _lastSlideShowState = isShow;
+                    Services.PresentationActive = isShow;
+                    Services.ApplySettings();
+                    _bar?.Bar.SetPptModeVisible(isShow);
+                    if (isShow)
                     {
-                        _lastSlideShowState = isShow;
-                        Services.PresentationActive = isShow;
-                        Services.ApplySettings();
-                        if (isShow)
-                        {
-                            // Capture the pre-show desktop spot before SetPptModeVisible/Reposition
-                            // reflow the bar; otherwise the restore target becomes the reflowed
-                            // spot and the toolbar never returns where the user left it.
-                            _bar?.SetPresentationMode(true, current.WindowHandle, current.IsWindowedShow);
-                            _pptGate.BeginSession();
-                            // Re-anchor the capture generation: BeginSession bumped the session, so the
-                            // values captured at the top of the poll are no longer current.
-                            _pptCaptureSession = _pptGate.Session;
-                            _pptCaptureGeneration = _pptGate.Generation;
-                            // MW_PPT.cs:283-286: slideshow begin leaves board mode.
-                            if (_board is not null) ToggleBoard();
-                        }
-                        else
-                        {
-                            // A new show starts from the top of the matrix; the black screen is a
-                            // presentation aid and must not survive into editing mode.
-                            _pptSources.Reset();
-                            CloseBlackScreen();
-                            // MW_PPT.cs:505-508: slideshow end leaves board mode.
-                            if (_board is not null) ToggleBoard();
-                        }
-                        if (_hotkeysReady)
-                        {
-                            bool keysReady = Overlay.SetPresentationKeysEnabled(isShow);
-                            if (isShow && !keysReady && !_presentationKeyFailureLogged)
-                            {
-                                _presentationKeyFailureLogged = true;
-                                Core.Diagnostics.FileLog.WriteLogToFile(
-                                    "PPT 翻页热键注册失败（可能被其他程序占用）", Core.Diagnostics.LogType.Info);
-                            }
-                            if (!isShow) _presentationKeyFailureLogged = false;
-
-                            // Toggling presentation keys rebuilds the whole group, which drops the
-                            // temporary black-screen Esc; put it back while the window is still up.
-                            if (_blackScreen is not null)
-                            {
-                                _blackScreenEscapeHotkey = false;
-                                TryRegisterBlackScreenEscape();
-                            }
-                        }
-                        _bar?.Bar.SetPptModeVisible(isShow);
-                        _bar?.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
-                                         Services.Settings.Appearance.FloatingBarScale);
-                        if (isShow && Services.Settings.PowerPoint.IsShowCanvasAtNewSlideShow)
+                        _pptGate.BeginSession();
+                        _pptCaptureSession = _pptGate.Session;
+                        _pptCaptureGeneration = _pptGate.Generation;
+                    }
+                    else
+                    {
+                        _pptSources.Reset();
+                        CloseBlackScreen();
+                    }
+                    if (isShow)
+                    {
+                        // MW_PPT.cs:283-286: slideshow begin leaves board mode.
+                        if (_board is not null) ToggleBoard();
+                        if (Services.Settings.PowerPoint.IsShowCanvasAtNewSlideShow)
                         {
                             Overlay.Show();
                             // MW_PPT.cs:302,397-400: lastDesktopInkColor=1 -> red pen on show begin.
@@ -884,45 +733,41 @@ public sealed partial class ShellController : IShellActions, IDisposable
                             _bar?.Bar.RefreshSelection();
                         }
                     }
-                    // The show-start path already applied presentation mode above (before the
-                    // reflow), so only the exit path is handled here, after Reposition.
-                    if (!isShow) _bar?.SetPresentationMode(false, current.WindowHandle, current.IsWindowedShow);
-                    if (isShow && _board is null) Overlay.Window.EnsureAbove(current.WindowHandle);
-                    UpdatePptNavigation(current);
-                }
-                else
-                {
-                    if (_lastSlideShowState)
+                    else
                     {
-                        _lastSlideShowState = false;
-                        Services.PresentationActive = false;
-                        Services.ApplySettings();
-                        _bar?.Bar.SetPptModeVisible(false);
+                        // MW_PPT.cs:505-508: slideshow end leaves board mode; canvas hide state
+                        // only re-applies when a non-transparent board cover was active (exited above).
+                        if (_board is not null) ToggleBoard();
                     }
-                    _pptSources.Reset();
-                    if (_hotkeysReady) Overlay.SetPresentationKeysEnabled(false);
-                    CloseBlackScreen();
-                    _bar?.SetPresentationMode(false);
-                    UpdatePptNavigation(PptSnapshot.Detached);
                 }
-
-                // 原条件：放映中 + 尚无墨迹 + 允许手指手势控制放映。未验证。
-                Services.OverlayInk.Palm.PptGestureEligible =
-                    _lastSlideShowState
-                    && Services.OverlayInk.Document.Count == 0
-                    && Services.Settings.PowerPoint.IsEnableFingerGestureSlideShowControl;
+                _bar?.SetPresentationMode(isShow, current.WindowHandle, current.IsWindowedShow);
+                if (isShow && _board is null) Overlay.Window.EnsureAbove(current.WindowHandle);
+                UpdatePptNavigation(current);
             }
-            catch (Exception ex)
+            else
             {
-                // The poll must never take the app down: COM can fail while PowerPoint is busy.
-                LogPptFailure(new PptFailure("Poll", ex.Message, Marshal.GetHRForException(ex)));
+                if (_lastSlideShowState)
+                {
+                    _lastSlideShowState = false;
+                    Services.PresentationActive = false;
+                    Services.ApplySettings();
+                    _bar?.Bar.SetPptModeVisible(false);
+                    _pptSources.Reset();
+                    CloseBlackScreen();
+                }
+                _bar?.SetPresentationMode(false);
+                UpdatePptNavigation(PptSnapshot.Detached);
             }
 
-            // Slideshow polling must be responsive; idle polling only watches for a show starting.
-            _pollTimer.Interval = _lastSlideShowState
-                ? TimeSpan.FromMilliseconds(250)
-                : Services.Ppt.LastFailure is null ? _pptSession.RecommendedPollInterval : TimeSpan.FromMilliseconds(80);
+            // 原条件：放映中 + 尚无墨迹 + 允许手指手势控制放映。未验证。
+            Services.OverlayInk.Palm.PptGestureEligible =
+                _lastSlideShowState
+                && Services.OverlayInk.Document.Count == 0
+                && Services.Settings.PowerPoint.IsEnableFingerGestureSlideShowControl;
+
+            _pollTimer.Interval = Services.Ppt.LastFailure is null ? _pptSession.RecommendedPollInterval : TimeSpan.FromMilliseconds(80);
         }
+        catch (Exception ex) { LogPptFailure(new PptFailure("Poll", ex.Message, Marshal.GetHRForException(ex))); }
         finally { _refreshingPresentation = false; }
     }
 
@@ -931,6 +776,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     /// </summary>
     private void RaiseChromeAboveOverlay()
     {
+        if (_disposed || _exiting) return;
         ImageFilePicker.EnsureAbove(_board is not null ? WindowChrome.GetHwnd(_board) : Overlay.Window.Handle);
         if (_bar is not null && _board is null) WindowChrome.EnsureAbove(_bar, Overlay.Window.Handle);
         if (_selectionToolbar?.IsShown == true) WindowChrome.EnsureAbove(_selectionToolbar, Overlay.Window.Handle);
@@ -939,27 +785,28 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_countdown is not null) WindowChrome.EnsureAbove(_countdown, Overlay.Window.Handle);
         if (_lottery is not null) WindowChrome.EnsureAbove(_lottery, Overlay.Window.Handle);
         if (_replay is not null) WindowChrome.EnsureAbove(_replay, Overlay.Window.Handle);
-        if (_guide is not null) WindowChrome.EnsureAbove(_guide, Overlay.Window.Handle);
         if (_updateWindow is not null) WindowChrome.EnsureAbove(_updateWindow, Overlay.Window.Handle);
         foreach (var notice in _notices) WindowChrome.EnsureAbove(notice, Overlay.Window.Handle);
-        if (_pptNav is not null) WindowChrome.EnsureAbove(_pptNav, Overlay.Window.Handle);
-        if (_slideNav is not null) WindowChrome.EnsureAbove(_slideNav, Overlay.Window.Handle);
+        foreach (var navigation in _pptNavigations.Values)
+            if (navigation.AppWindow?.IsVisible == true) WindowChrome.EnsureAbove(navigation, Overlay.Window.Handle);
+
         if (_palette is not null) WindowChrome.EnsureAbove(_palette, Overlay.Window.Handle);
         foreach (var palette in _detachedPalettes) WindowChrome.EnsureAbove(palette, Overlay.Window.Handle);
         if (_shapePicker is not null) WindowChrome.EnsureAbove(_shapePicker, Overlay.Window.Handle);
         if (_board is not null)
             foreach (var panel in _board.ToolPanels) WindowChrome.EnsureAbove(panel, Overlay.Window.Handle);
-        foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window) && window.AppWindow.IsVisible) WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
+        foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window) && window.AppWindow?.IsVisible == true) WindowChrome.EnsureAbove(window, Overlay.Window.Handle);
         UpdateSettingsDrawingOrder();
         RefreshDesktopMedia();
-        if (_aiAssistant is not null)
-        {
-            if (_aiHiddenWithSideBoard) return;
-            IntPtr anchor = _board is not null ? WindowChrome.GetHwnd(_board) : Overlay.Window.Handle;
-            if (AssistantBelongsToSideBoard && _sideBoard is not null)
-                anchor = WindowChrome.GetHwnd(_sideBoard);
-            WindowChrome.EnsureAbove(_aiAssistant, anchor);
-        }
+    }
+
+    private void OnOverlayInputBegan()
+    {
+        if (_disposed || _exiting) return;
+        RaiseChromeAboveOverlay();
+        _bar?.DismissPanelsOnInput();
+        _palette?.DismissOnOverlayInput();
+        _shapePicker?.DismissOnOverlayInput();
     }
 
     private const int RpcCallRejected = unchecked((int)0x80010001);
@@ -1001,75 +848,28 @@ public sealed partial class ShellController : IShellActions, IDisposable
         NotifyAiSlideChange(snapshot);
 
         bool inShow = snapshot?.IsSlideShowRunning == true;
-        var s = Services.Settings.PowerPoint;
-        // WPF hides all four panels on fold and on board entry; per-poll re-evaluation
-        // re-shows them on unfold/board-exit during a show.
-        if (!inShow || (_bar is not null && _bar.IsFolded) || _board is not null)
+        _pptShowSnapshot = inShow ? snapshot : null;
+        if (inShow) RefreshSlideIndex(snapshot);
+        if (!inShow && !_manualPptNav)
         {
-            _pptShowSnapshot = null;
-            if (_manualPptNav)
-            {
-                // Manual mode: keep the window on the primary display, without touching the
-                // collapsed/corner state the user picked while a show was running.
-                if (_pptAlignedToShow)
-                {
-                    Overlay.ResetToPrimary();
-                    _pptAlignedToShow = false;
-                }
-
-                List<NavigationCorner> manualAllowed = AllowedCorners();
-                NavigationCorner corner = manualAllowed.Count == 0
-                    ? NavigationCorner.BottomLeft
-                    : manualAllowed.Contains(_pptCorner) ? _pptCorner : manualAllowed[0];
-
-                _pptNav ??= CreatePptNavigation(MapPlacement(corner));
-                _pptNav.Placement = MapPlacement(corner);
-                // No slide counter outside a show: 0/0 would read as real page numbers.
-                _pptNav.Update(PptSnapshot.Detached, !_pptNavCollapsed, false, default);
-                return;
-            }
-
             ClosePptNavigationWindows();
             _pptNavCollapsed = false;
-            _pptCorner = NavigationCorner.BottomLeft;
-            // Only undo the full-screen alignment if a show had moved the ink surface.
-            if (_pptAlignedToShow)
+            return;
+        }
+        bool visible = _board is null && _bar?.IsFolded != true && !_pptNavCollapsed;
+        var settings = Services.Settings.PowerPoint;
+        foreach (var placement in Enum.GetValues<PptNavigationPlacement>())
+        {
+            bool side = placement is PptNavigationPlacement.SideLeft or PptNavigationPlacement.SideRight;
+            bool enabled = side ? settings.IsShowSidePPTNavigationPanel : settings.IsShowBottomPPTNavigationPanel;
+            if (!_pptNavigations.TryGetValue(placement, out var window) && enabled && visible)
             {
-                Overlay.ResetToPrimary();
-                _pptAlignedToShow = false;
+                window = CreatePptNavigation(placement);
+                _pptNavigations.Add(placement, window);
             }
-            return;
+            window?.Update(snapshot, visible && enabled,
+                inShow && (side ? settings.IsShowPPTNavigationSides : settings.IsShowPPTNavigationBottom));
         }
-
-        _pptShowSnapshot = snapshot;
-
-        RefreshSlideIndex(snapshot);
-
-        ShowWindowInfo bounds = default;
-        if (ShowWindowTracker.TryGet(snapshot.WindowHandle, out var measured))
-        {
-            bounds = measured;
-            Overlay.AlignTo(bounds);
-            _pptAlignedToShow = true;
-        }
-
-        List<NavigationCorner> allowed = AllowedCorners();
-        if (allowed.Count == 0)
-        {
-            // Both navigation groups are switched off: keep the window hidden.
-            _pptNav?.Update(snapshot, false, false, bounds);
-            return;
-        }
-
-        if (!allowed.Contains(_pptCorner)) _pptCorner = allowed[0];
-
-        bool counterVisible = _pptCorner is NavigationCorner.SideLeft or NavigationCorner.SideRight
-            ? s.IsShowPPTNavigationSides
-            : s.IsShowPPTNavigationBottom;
-
-        _pptNav ??= CreatePptNavigation(MapPlacement(_pptCorner));
-        _pptNav.Placement = MapPlacement(_pptCorner);
-        _pptNav.Update(snapshot, !_pptNavCollapsed, counterVisible, bounds);
     }
 
     /// <summary>
@@ -1077,72 +877,23 @@ public sealed partial class ShellController : IShellActions, IDisposable
     /// </summary>
     private void NotifyAiSlideChange(PptSnapshot snapshot)
     {
-        int slideId = snapshot?.Slide?.SlideId ?? 0;
-        int slideIndex = snapshot?.Slide?.Index ?? 0;
-        int animationStep = snapshot?.IsSlideShowRunning == true
-            ? Services.Ppt.GetAnimationStep()
-            : 0;
-        if (slideId == _aiSlideId && slideIndex == _aiSlideIndex
-            && animationStep == (_aiProblem?.AnimationStep ?? 0)) return;
-
-        string notice = ProblemContextPolicy.DescribeSlideChange(
-            _aiProblem, slideId, slideIndex, animationStep);
-        _aiSlideId = slideId;
-        _aiSlideIndex = slideIndex;
-        if (_aiProblem is not null) _aiProblem.AnimationStep = animationStep;
-
-        if (snapshot?.IsSlideShowRunning == true)
-        {
-            try { Services.Ppt.PauseMedia(); }
-            catch (Exception ex)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    $"课件媒体暂停失败（已降级）：{ex.Message}", Core.Diagnostics.LogType.Info);
-            }
-        }
-
-        if (notice is null || _aiAssistant is null) return;
-
-        if (_aiProblem is not null) _aiProblem.SlideIndex = slideIndex;
-        _aiAssistant.ShowNotice(notice);
+        if (Assistant is null) return;
+        Assistant.NotifySlideChanged(snapshot?.Slide?.SlideId ?? 0, snapshot?.Slide?.Index ?? 0,
+            snapshot?.IsSlideShowRunning == true ? Services.Ppt.GetAnimationStep() : 0);
     }
-
-    /// <summary>Corners enabled by the current navigation-panel settings.</summary>
-    private List<NavigationCorner> AllowedCorners()
-    {
-        var s = Services.Settings.PowerPoint;
-        var allowed = new List<NavigationCorner>(4);
-        if (s.IsShowBottomPPTNavigationPanel)
-        {
-            allowed.Add(NavigationCorner.BottomLeft);
-            allowed.Add(NavigationCorner.BottomRight);
-        }
-        if (s.IsShowSidePPTNavigationPanel)
-        {
-            allowed.Add(NavigationCorner.SideLeft);
-            allowed.Add(NavigationCorner.SideRight);
-        }
-        return allowed;
-    }
-
-    private static PptNavigationPlacement MapPlacement(NavigationCorner corner) => corner switch
-    {
-        NavigationCorner.BottomRight => PptNavigationPlacement.BottomRight,
-        NavigationCorner.SideLeft => PptNavigationPlacement.SideLeft,
-        NavigationCorner.SideRight => PptNavigationPlacement.SideRight,
-        _ => PptNavigationPlacement.BottomLeft,
-    };
 
     private PptNavigationWindow CreatePptNavigation(PptNavigationPlacement placement)
     {
-        var window = new PptNavigationWindow(placement, this, Services.Settings.Appearance.Theme);
+        var window = new PptNavigationWindow(placement, this, Services.Settings.Appearance.Theme, _bar, CreatePptPreviewContext());
         return window;
     }
 
     private void ClosePptNavigationWindows()
     {
-        _pptNav?.Close();
-        _pptNav = null;
+        foreach (var window in _pptNavigations.Values) window.Close();
+        _pptNavigations.Clear();
+        _pptPreviewSource?.Dispose();
+        _pptPreviewSource = null;
     }
 
     private void ApplyAutoFold()
@@ -1180,6 +931,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public void ToggleBoard()
     {
+        if (_boardSwitching) return;
         CloseDetachedPalettes();
         _imageImportCancellation?.Cancel();
         _videoImportCancellation?.Cancel();
@@ -1188,27 +940,27 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_board is null)
         {
             Services.BoardModeActive = true;
-            Services.ApplySettings();
+            Services.ConfigureController(Services.Board.Current);
             _documentWorkspace?.Window.AppWindow.Hide();
             _palette?.Close(); _shapePicker?.Close();
-            _board = new BoardWindow(Services, this, _bar);
-            NotifyWindowOpened(_board);
+            bool restoring = _cachedBoard is not null;
+            _board = _cachedBoard ?? new BoardWindow(Services, this, _bar);
+            _cachedBoard = null;
+            if (!restoring)
+            {
+                NotifyWindowOpened(_board);
+                var boardWindow = _board;
+                _board.Closed += (_, _) => OnBoardClosed(boardWindow);
+                _board.Activated += (_, args) =>
+                {
+                    if (args.WindowActivationState != WindowActivationState.Deactivated) SetSideBoardTarget(false);
+                };
+            }
             _board.CanvasInputBegan += OnBoardInputBegan;
             _board.CurrentPageChanged += OnBoardPageChanged;
-            _recorder = new InkRecorder(Services.Board);
-            _recorder.Start();
-            if (_bar is not null) _bar.Bar.Controller = _board.CurrentController;
-            WindowChrome.ApplyTheme(_board, Services.Settings.Appearance.Theme);
-
             BindBoardController(_board.CurrentController);
             BindToolbar(_board.CurrentController);
-            var boardWindow = _board;
-            _board.Closed += (_, _) => OnBoardClosed(boardWindow);
-            boardWindow.Activated += (_, _) => RaiseAssistantAboveBoard(boardWindow);
-            boardWindow.AppWindow.Changed += (_, args) =>
-            {
-                if (args.DidSizeChange || args.DidPositionChange) RaiseAssistantAboveBoard(boardWindow);
-            };
+            _board.RestoreFromAnnotation();
             _board.Activate();
             // The board is opaque and full-screen; the screen overlay would draw over it.
             Overlay.Hide();
@@ -1217,8 +969,20 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
         else
         {
-            _board.Close();
+            _ = ReturnToAnnotationAsync(_board);
         }
+    }
+
+    private async Task ReturnToAnnotationAsync(BoardWindow board)
+    {
+        _boardSwitching = true;
+        try
+        {
+            if (!await board.HideForAnnotationAsync() || !ReferenceEquals(_board, board)) return;
+            _cachedBoard = board;
+            OnBoardClosed(board);
+        }
+        finally { _boardSwitching = false; }
     }
 
     private void OnBoardPageChanged()
@@ -1227,19 +991,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_board is null || _bar is null) return;
         BindToolbar(_board.CurrentController);
         BindBoardController(_board.CurrentController);
+        CanvasToolTargetChanged?.Invoke();
         _palette?.Close();
         _palette = null;
-
-        if (_aiProblem is { Count: > 0 } && _aiAssistant is not null)
-        {
-            _aiAssistant.ShowNotice("画板已换页，当前拼题仍来自旧页；可继续讲题，或重新框选并替换选区。");
-        }
-
-        _teachingSession?.SetCurrentSlide(
-            _aiSlideId, _aiSlideIndex, 0, Environment.TickCount64);
-        if (_teachingSession is not null)
-            _teachingSession.CurrentBoardPageIndex = Services.Board.CurrentIndex;
         _shapePicker?.Close(); _shapePicker = null;
+        Assistant?.NotifyBoardChanged();
     }
 
     private void OnBoardInputBegan()
@@ -1251,85 +1007,29 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     private void OnBoardClosed(BoardWindow board)
     {
+        if (board.IsClosed && ReferenceEquals(_cachedBoard, board)) _cachedBoard = null;
         if (!ReferenceEquals(_board, board)) return;
-        _board.CurrentPageChanged -= OnBoardPageChanged;
-        StopRecording();
-        CloseSideBoardWithBoard();
+        CloseSideBoard();
         _board = null;
         Services.BoardModeActive = false;
-        Services.ApplySettings();
+        Services.ConfigureController(Services.OverlayInk);
         board.CurrentPageChanged -= OnBoardPageChanged;
         board.CanvasInputBegan -= OnBoardInputBegan;
         if (_disposed || _exiting) return;
         _replay?.Close();
         _palette?.Close(); _shapePicker?.Close();
-        // BindToolbar 会写 FloatingBar.Controller，其 setter 立即抛出 LayoutChanged。
-        // 关闭板时先解绑重排，避免「板已关 / 浮条仍在收尾」时在 Closed 回调链里重排；
-        // 绑定完成后在下面浮条重新显示时再做一次显式重排。
-        var bar = _bar;
-        if (bar is not null) bar.Bar.LayoutChanged -= OnBarLayoutChanged;
-        try
-        {
-            BindBoardController(null);
-            BindToolbar(ActiveController);
-        }
-        finally
-        {
-            if (bar is not null) bar.Bar.LayoutChanged += OnBarLayoutChanged;
-        }
+        BindBoardController(null);
+        BindToolbar(ActiveController);
         Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
         if (_documentWorkspace is not null) { _documentWorkspace.Window.Activate(); OnDocumentPageChanged(); }
         else Overlay.Show();
-        if (bar is not null && !bar.IsFolded)
+        if (_bar is not null && !_bar.IsFolded)
         {
-            WindowChrome.ShowWithoutActivation(bar);
-            bar.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
-                           Services.Settings.Appearance.FloatingBarScale, recenter: false);
+            WindowChrome.ShowWithoutActivation(_bar);
+            _bar.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
+                            Services.Settings.Appearance.FloatingBarScale, recenter: false);
         }
         QueueDesktopSelection();
-    }
-
-    /// <summary>板窗口激活或尺寸变化后重新把 AI 浮窗提到板上方，避免被全屏置顶板压住。</summary>
-    private void RaiseAssistantAboveBoard(BoardWindow board)
-    {
-        if (_aiAssistant is null || AssistantBelongsToSideBoard) return;
-        WindowChrome.EnsureAbove(_aiAssistant, WindowChrome.GetHwnd(board));
-    }
-
-    private void StopRecording()
-    {
-        if (_recorder is null) return;
-        _recorder.Stop();
-
-        try { _recorder.Save(); }
-        catch { /* 磁盘问题不应影响关闭流程 */ }
-        _recorder.Dispose();
-        _recorder = null;
-    }
-
-    /// <summary>暂停录制（仅录制中有效）；暂停期间事件不入时间轴，计时扣除暂停时长。</summary>
-    public void PauseRecording()
-    {
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording || recorder.IsPaused) return;
-        recorder.Pause();
-    }
-
-    /// <summary>继续录制（仅录制中有效）。</summary>
-    public void ResumeRecording()
-    {
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording || !recorder.IsPaused) return;
-        recorder.Resume();
-    }
-
-    /// <summary>浮条入口：在暂停 / 继续之间切换；未在录制时静默忽略。</summary>
-    public void ToggleRecordingPause()
-    {
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording) return;
-        if (recorder.IsPaused) recorder.Resume();
-        else recorder.Pause();
     }
 
     public void OpenSettings() => OpenSettingsPage(null);
@@ -1350,8 +1050,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
             {
                 if (_exiting) return;
                 _bar?.ClosePanels();
-                _palette?.DismissOnOverlayInput();
-                _shapePicker?.DismissOnOverlayInput();
+                _palette?.DismissIfUnpinned();
+                _shapePicker?.DismissIfUnpinned();
                 var window = new SettingsWindow(Services, Updater, this, RosterDirectory);
                 _settings = window;
                 ShowRequestedSettingsPage(window);
@@ -1433,9 +1133,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         QueueDesktopSelection();
         _bar?.Reposition(Services.Settings.Appearance.FloatingBarBottomMargin,
                          Services.Settings.Appearance.FloatingBarScale);
-        _bar?.ApplyTheme(Services.Settings.Appearance.Theme);
-        if (_board is not null) WindowChrome.ApplyTheme(_board, Services.Settings.Appearance.Theme);
-
+        if (_bar is not null) WindowChrome.ApplyTheme(_bar, Services.Settings.Appearance.Theme);
         // WPF ApplyScaling: menus live inside the scaled bar/board Viewbox, so scale them live.
         double menuScale = _board is not null
             ? Services.Settings.Appearance.BlackboardScale
@@ -1444,20 +1142,21 @@ public sealed partial class ShellController : IShellActions, IDisposable
         foreach (var palette in _detachedPalettes) palette.ApplyScale(menuScale);
         _shapePicker?.ApplyScale(menuScale);
         _board?.RefreshUiScale();
+        _sideBoard?.RefreshUiScale();
         _bar?.Bar.RefreshSettingsVisuals();
-        if (_lastSlideShowState) UpdatePptNavigation(_pptShowSnapshot ?? _pptSession.Snapshot);
+        if (_lastSlideShowState) UpdatePptNavigation(_pptSession.Snapshot);
         ApplyEdgeGestureSetting();
     }
 
     private void ApplyDisplaySettings() => Overlay.ConfigureDisplays(Services.Settings.Display);
 
-    private void ApplySideBoardDisplaySettings() => EnsureSideBoardOnScreen();
-
     private void RefreshPaletteNibModes()
     {
         _board?.RefreshToolSettings();
-        if (_palette is not null) ConfigurePaletteNibMode(_palette);
-        foreach (var palette in _detachedPalettes) ConfigurePaletteNibMode(palette);
+        _sideBoard?.RefreshToolSettings();
+        _bar?.Bar.RefreshSelection();
+        if (_palette is not null) { ConfigurePaletteNibMode(_palette); _palette.RefreshFromController(Services.Settings.Canvas); }
+        foreach (var palette in _detachedPalettes) { ConfigurePaletteNibMode(palette); palette.RefreshFromController(Services.Settings.Canvas); }
     }
 
     private void ConfigurePaletteNibMode(PenPaletteWindow palette) => palette.ConfigureNibMode(
@@ -1467,106 +1166,22 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void OpenTimer()
     {
         if (_countdown is not null) { _countdown.Activate(); return; }
-        var window = new CountdownWindow(EffectiveTheme);
-        int minutes = Services.Settings.Classroom.CountdownMinutes;
-        if (minutes > 0) window.SetDuration(Math.Clamp(minutes * 60, 1, 359999));
-        window.TimerStarted += OnTimerStarted;
-        window.TimerStopped += OnTimerStopped;
-        window.TimerEnded += OnTimerEnded;
-        _countdown = window;
+        var window = new CountdownWindow(EffectiveTheme, Services.Settings.Classroom.CountdownMinutes);
         NotifyWindowOpened(window);
-        WindowChrome.ApplyTheme(window, EffectiveTheme);
+        _countdown = window;
+        WindowChrome.ApplyTheme(window, Services.Settings.Appearance.Theme);
         window.Closed += (_, _) =>
         {
-            window.TimerStarted -= OnTimerStarted;
-            window.TimerStopped -= OnTimerStopped;
-            window.TimerEnded -= OnTimerEnded;
             if (ReferenceEquals(_countdown, window)) _countdown = null;
         };
         window.Activate();
-        WindowChrome.EnsureAbove(window);
-    }
-
-    private void OnTimerStarted(TimeSpan remaining)
-        => RecordClassroomEvent(TimelineEventKind.TimerStarted,
-            ((int)Math.Max(0, remaining.TotalMilliseconds)).ToString());
-
-    private void OnTimerStopped(TimeSpan remaining)
-        => RecordClassroomEvent(TimelineEventKind.TimerStopped,
-            ((int)Math.Max(0, remaining.TotalMilliseconds)).ToString());
-
-    private void OnTimerEnded() => _ = CaptureTimerEndedAsync();
-
-    /// <summary>
-    /// 倒计时归零：练习会话先生成板书快照（未录制也保存），录制中再写 TimerEnded
-    /// 并追加「练习结束」章节书签；非练习的普通计时只影响原有录制语义。
-    /// </summary>
-    private async Task CaptureTimerEndedAsync()
-    {
-        int pageIndex = Services.Board.CurrentIndex;
-
-        string screenshot = null;
-        try
-        {
-            screenshot = await CaptureScreenshotToFileAsync();
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"倒计时结束快照失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-
-        PracticePlan practice = _activePractice;
-        if (practice is not null)
-        {
-            PracticeFinishRecord record = PracticeFinishPolicy.Plan(
-                practice, _recorder?.IsRecording == true, !string.IsNullOrEmpty(screenshot));
-            record.FinishedAtMs = Environment.TickCount64;
-            record.SnapshotPath = screenshot ?? "";
-            _teachingSession?.Link(
-                "practice", practice.Id, _aiSlideId, _aiSlideIndex, pageIndex,
-                record.BookmarkName, record.FinishedAtMs);
-            _activePractice = null;
-            _ = NotifyAsync("随堂练习",
-                string.IsNullOrEmpty(record.SnapshotPath)
-                    ? "练习结束，板书快照保存失败。"
-                    : "练习结束，已保存板书快照。");
-        }
-
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording || recorder.Session is null) return;
-
-        long timeMs = recorder.ElapsedMs;
-        string payload = string.IsNullOrEmpty(screenshot)
-            ? "倒计时结束"
-            : JsonSerializer.Serialize(new { screenshot });
-
-        try
-        {
-            recorder.Append(new TimelineEvent
-            {
-                TimeMs = timeMs,
-                PageIndex = pageIndex,
-                Kind = TimelineEventKind.TimerEnded,
-                Payload = payload,
-            });
-
-            if (practice is not null)
-                recorder.Timeline.AddBookmark(timeMs, practice.BookmarkName, "practice");
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"Timeline/TimerEnded: {ex.Message}", Core.Diagnostics.LogType.Error);
-        }
     }
 
     public void OpenLottery()
     {
         if (_lottery is not null) { _lottery.Activate(); return; }
-        var window = new LotteryWindow(Services.Lottery, autoClose: false, EffectiveTheme, RosterDirectory, OpenRosterSettings);
-        window.Picked += OnLotteryPicked;
-        window.OptionsChanged += () =>
+        _lottery = new LotteryWindow(Services.Lottery, autoClose: false, EffectiveTheme, RosterDirectory, OpenRosterSettings);
+        _lottery.OptionsChanged += () =>
         {
             Services.Settings.Rand.PeopleCount = Services.Lottery.PeopleCount;
             Services.Settings.Rand.SamplingMode = Services.Lottery.SamplingMode;
@@ -1574,14 +1189,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
             Services.Settings.Rand.CooldownPenaltyStrength = Services.Lottery.CooldownPenaltyStrength;
             Services.SaveSettings();
         };
-        _lottery = window;
         NotifyWindowOpened(_lottery);
         WindowChrome.ApplyTheme(_lottery, EffectiveTheme);
-        _lottery.Closed += (_, _) =>
-        {
-            window.Picked -= OnLotteryPicked;
-            if (ReferenceEquals(_lottery, window)) _lottery = null;
-        };
+        _lottery.Closed += (_, _) => _lottery = null;
         _lottery.Activate();
         WindowChrome.EnsureAbove(_lottery);
     }
@@ -1593,6 +1203,224 @@ public sealed partial class ShellController : IShellActions, IDisposable
         WindowChrome.ApplyTheme(quick, EffectiveTheme);
         quick.Activate();
         WindowChrome.EnsureAbove(quick);
+    }
+
+    public void OpenSpotlight()
+    {
+        if (_spotlight is not null) { _spotlight.Activate(); return; }
+        var window = new SpotlightWindow(AiAssistantAvailable);
+        window.CaptureRequested += askAi => _ = CaptureFocusAsync(askAi);
+        window.SaveRegionRequested += OnSaveFocusRegion;
+        window.CycleRegionRequested += OnCycleFocusRegion;
+        _spotlight = window;
+        _spotlight.Closed += (_, _) => _spotlight = null;
+        _spotlight.Activate();
+    }
+
+    public void OpenMagnifier()
+    {
+        if (_magnifier is not null) { _magnifier.Activate(); return; }
+        var window = new MagnifierWindow(AiAssistantAvailable);
+        window.CaptureRequested += askAi => _ = CaptureFocusAsync(askAi);
+        RestoreWindowPosition(
+            window.MoveTo, Services.Settings.Classroom.MagnifierX, Services.Settings.Classroom.MagnifierY);
+        _magnifier = window;
+        _magnifier.Closed += (_, _) =>
+        {
+            try
+            {
+                Services.Settings.Classroom.MagnifierX = window.PositionX;
+                Services.Settings.Classroom.MagnifierY = window.PositionY;
+                Services.SaveSettings();
+            }
+            catch (Exception) { }
+
+            if (ReferenceEquals(_magnifier, window)) _magnifier = null;
+        };
+        _magnifier.Activate();
+    }
+
+    private static void RestoreWindowPosition(Action<int, int> move, int x, int y)
+    {
+        if (move is null || x == int.MinValue || y == int.MinValue) return;
+        var work = ScreenService.WorkArea;
+        int clampedX = Math.Clamp(x, work.X, work.X + Math.Max(0, work.Width - 120));
+        int clampedY = Math.Clamp(y, work.Y, work.Y + Math.Max(0, work.Height - 80));
+        move(clampedX, clampedY);
+    }
+
+    public void PasteSpotlightToBoard() => _ = CaptureFocusAsync(askAi: false);
+
+    public void AskAiFromSpotlight() => _ = CaptureFocusAsync(askAi: true);
+
+    private async Task CaptureFocusAsync(bool askAi)
+    {
+        ScreenRect rect;
+        bool fromSpotlight = _spotlight is not null;
+
+        if (_spotlight is not null)
+        {
+            rect = _spotlight.CurrentScreenRect;
+            _spotlight.SetMaskVisible(false);
+        }
+        else if (_magnifier is not null)
+        {
+            rect = _magnifier.CurrentScreenRect;
+            _magnifier.HideForCapture();
+        }
+        else
+        {
+            await NotifyAsync("聚焦贴图", "请先打开聚光灯或放大镜，调整好聚焦区域后再贴图。");
+            return;
+        }
+
+        if (rect.Width <= 0 || rect.Height <= 0)
+        {
+            RestoreFocusWindow(fromSpotlight);
+            await NotifyAsync("聚焦贴图", "聚焦区域尚未确定，请先拖动聚光灯或移动放大镜取景。");
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(90);
+
+            if (askAi)
+            {
+                await StartAssistantFromRegionAsync(rect);
+                return;
+            }
+
+            string base64 = await AssistantCapture.CapturePngBase64Async(
+                rect.X, rect.Y, rect.Width, rect.Height);
+            byte[] png = string.IsNullOrEmpty(base64)
+                ? Array.Empty<byte>()
+                : Convert.FromBase64String(base64);
+            if (png.Length == 0)
+            {
+                await NotifyAsync("聚焦贴图", "截图失败，请重试。");
+                return;
+            }
+
+            await PasteImageCardAsync("聚焦区域", png, 320, 220, "聚光灯/放大镜截图");
+        }
+        catch (Exception ex)
+        {
+            Core.Diagnostics.FileLog.WriteLogToFile(
+                $"聚焦贴图失败：{ex.Message}", Core.Diagnostics.LogType.Error);
+        }
+        finally
+        {
+            RestoreFocusWindow(fromSpotlight);
+        }
+    }
+
+    private void RestoreFocusWindow(bool fromSpotlight)
+    {
+        if (fromSpotlight) _spotlight?.SetMaskVisible(true);
+        else _magnifier?.ShowAfterCapture();
+    }
+
+    private void OnSaveFocusRegion(ScreenRect rect)
+    {
+        if (rect.Width <= 0 || rect.Height <= 0)
+        {
+            _ = NotifyAsync("聚焦区域", "当前聚焦区无效，请先拖动聚光灯。");
+            return;
+        }
+
+        FocusRegionItem saved = _focusRegions.Add(new FocusRegionItem
+        {
+            X = rect.X,
+            Y = rect.Y,
+            Width = rect.Width,
+            Height = rect.Height,
+            SlideId = _pptSession.Snapshot?.Slide?.SlideId ?? 0,
+            SlideIndex = _pptSession.Snapshot?.Slide?.Index ?? 0,
+            AnimationStep = _pptSession.Snapshot?.IsSlideShowRunning == true
+                ? Services.Ppt.GetAnimationStep()
+                : 0,
+            BoardPageIndex = _board is null ? -1 : Services.Board.CurrentIndex,
+        }, Environment.TickCount64);
+
+        if (saved is null)
+        {
+            _ = NotifyAsync("聚焦区域", "保存失败（最多保存 " + FocusRegionStore.MaximumRegions + " 个区域）。");
+            return;
+        }
+
+        PersistFocusRegions();
+        _ = NotifyAsync("聚焦区域", "已保存「" + saved.Name + "」，共 " + _focusRegions.Count + " 个。");
+    }
+
+    private void OnCycleFocusRegion(int delta)
+    {
+        if (_focusRegions.Count == 0)
+        {
+            _ = NotifyAsync("聚焦区域", "还没有保存的聚焦区域；点「保存区」先保存当前区域。");
+            return;
+        }
+
+        ScreenRect currentRect = _spotlight?.CurrentScreenRect ?? default;
+        FocusRegionItem current = currentRect.Width > 0
+            ? _focusRegions.FindMatching(
+                currentRect.X, currentRect.Y, currentRect.Width, currentRect.Height)
+            : null;
+
+        FocusRegionItem next = _focusRegions.Next(current, delta);
+        if (next is null) return;
+
+        _spotlight?.SetRegion(new ScreenRect(next.X, next.Y, next.Width, next.Height));
+        _ = NotifyAsync("聚焦区域", "切换到「" + next.Name + "」（" + next.Order + "/" + _focusRegions.Count + "）。");
+    }
+
+    private void PersistFocusRegions()
+    {
+        Services.Settings.Classroom.SpotlightRegions = _focusRegions.Serialize();
+        Services.SaveSettings();
+    }
+
+    private Task StartAssistantFromRegionAsync(ScreenRect rect) => Assistant?.OpenRegionAsync(rect) ?? Task.CompletedTask;
+
+    private async Task PasteImageCardAsync(
+        string title, byte[] png, int width, int height, string metadataText)
+    {
+        string source = "";
+        if (_pptSession.Snapshot?.Presentation is not null)
+            source = "课件第 " + (_pptSession.Snapshot?.Slide?.Index ?? 0) + " 页";
+        else if (_board is not null)
+            source = "画板第 " + (Services.Board.CurrentIndex + 1) + " 页";
+
+        if (!string.IsNullOrEmpty(source))
+            metadataText = (metadataText ?? "") + "\n来源：" + source;
+
+        var work = ScreenService.WorkArea;
+        double dpi = CurrentDpi() > 0 ? CurrentDpi() : 1.0;
+        double viewWidth = work.Width / dpi;
+        double viewHeight = work.Height / dpi;
+        double left = Math.Clamp(viewWidth / 2.0 - width / 2.0, 8, Math.Max(8, viewWidth - width - 8));
+        double top = Math.Clamp(viewHeight / 2.0 - height / 2.0, 8, Math.Max(8, viewHeight - height - 8));
+
+        string metadata = new AiPasteMetadata
+        {
+            Kind = AiPasteKind.Steps,
+            Text = metadataText ?? "",
+            Lines = (metadataText ?? "").Split('\n').Where(line => line.Trim().Length > 0).ToList(),
+        }.Serialize();
+
+        bool added = Services.Board.AddImage(new BoardImageAsset
+        {
+            Name = title,
+            Data = png,
+            ContentType = "image/png",
+            Left = (float)left,
+            Top = (float)top,
+            Width = width,
+            Height = height,
+            Metadata = metadata,
+        });
+
+        if (added && _board is null) ToggleBoard();
     }
 
     /// <summary>WPF 保存墨迹: save the active surface (board page or overlay) as .icink.</summary>
@@ -1713,43 +1541,48 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (DocumentActive) { await _documentWorkspace.SaveAsync(); return; }
         try
         {
-            var picker = new Windows.Storage.Pickers.FileSavePicker
-            {
-                SuggestedFileName = $"墨迹 {DateTime.Now:yyyy-MM-dd HH-mm-ss}",
-            };
-            picker.FileTypeChoices.Add("Ink Canvas 墨迹", new List<string> { ".icink" });
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowChrome.GetHwnd((Window)_board ?? _bar));
-            var file = await picker.PickSaveFileAsync();
-            if (file is null) return;
-            await (_board is not null ? Services.Board : Services.ScreenImages).SavePageAsync(file.Path);
+            var target = _board is not null ? Services.Board : Services.ScreenImages;
+            var owner = (Window)_board ?? _bar;
+            bool entireBoard = _board is not null;
+            string name = Core.Settings.ArchivePolicy.FileName(Services.Settings.Archive, DateTimeOffset.Now, entireBoard ? target.PageCount : 1, entireBoard ? "整板" : "批注");
+            var library = Services.Modules.GetExport<IBoardLibraryService>();
+            string path = library is not null ? await library.PickSaveAsync(name) : await ImageFilePicker.SaveArchiveAsync(WindowChrome.GetWorkArea(owner),
+                Core.Settings.ArchivePolicy.ResolveDirectory(Services.Settings.Archive.DefaultDirectory), name);
+            if (path is null || _disposed) return;
+            await Services.Archives.SaveManualAsync(target, path, entireBoard);
         }
         catch (Exception ex)
         {
             Core.Diagnostics.FileLog.WriteLogToFile($"save strokes: {ex}", Core.Diagnostics.LogType.Error);
+            if (!_disposed) await NotifyAsync("存档保存失败", ex.GetBaseException().Message);
         }
     }
 
-    /// <summary>WPF 打开墨迹: replace the active surface's strokes from a .icink file (confirmed).</summary>
+    /// <summary>Opens the available document browser or the archive file picker.</summary>
     public void OpenStrokes() => _ = OpenStrokesAsync();
 
     private async Task OpenStrokesAsync()
     {
         try
         {
-            var picker = new Windows.Storage.Pickers.FileOpenPicker();
-            picker.FileTypeFilter.Add(".icink");
-            foreach (string extension in Services.Plugins.ImportExtensions) picker.FileTypeFilter.Add(extension);
-            if (Services.Modules.HasExport<IPdfWorkspaceService>()) picker.FileTypeFilter.Add(".pdf");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WindowChrome.GetHwnd((Window)_board ?? _bar));
-            var file = await picker.PickSingleFileAsync();
-            if (file is null) return;
-            if (Path.GetExtension(file.Path).Equals(".pdf", StringComparison.OrdinalIgnoreCase)) { await OpenPdfAsync(file.Path); return; }
+            if (Services.Modules.GetExport<IBoardLibraryService>() is { } library)
+            {
+                library.Open();
+                return;
+            }
             var owner = (Window)_board ?? _bar;
             var store = _board is not null ? Services.Board : Services.ScreenImages;
+            var extensions = new[] { ".icink" }.Concat(Services.Plugins.ImportExtensions).ToList();
+            if (Services.Modules.HasExport<IPdfWorkspaceService>()) extensions.Add(".pdf");
+            string path = await ImageFilePicker.OpenArchiveAsync(WindowChrome.GetWorkArea(owner),
+                Core.Settings.ArchivePolicy.ResolveDirectory(Services.Settings.Archive.DefaultDirectory), extensions.Distinct().ToArray());
+            if (path is null || _disposed) return;
+            if (Path.GetExtension(path).Equals(".pdf", StringComparison.OrdinalIgnoreCase)) { await OpenPdfAsync(path); return; }
             var page = store.Current;
-            var apply = await Services.PrepareInkOpenAsync(file.Path, store);
+            bool entireBoard = ReferenceEquals(store, Services.Board);
+            var apply = await Services.PrepareInkOpenAsync(path, store, entireBoard);
             if (_disposed || owner != ((Window)_board ?? _bar) || page != store.Current) return;
-            if (store.Current.Document.Count > 0 || store.CurrentImages.Count > 0 || store.CurrentMedia.Count > 0)
+            if (entireBoard ? store.HasContent : store.Current.Document.Count > 0 || store.CurrentImages.Count > 0 || store.CurrentMedia.Count > 0)
             {
                 if (!await YesOrNoWindow.AskAsync(owner, "打开将替换当前墨迹、图片和视频，是否继续？")) return;
             }
@@ -1764,860 +1597,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    private void OnLotteryPicked(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return;
-        _ = PasteTextCardAsync("抽奖结果", name);
-    }
-
-    public void OpenRoster()
-    {
-        if (_roster is not null) { _roster.Activate(); return; }
-        var window = new RosterWindow(PasteRosterNameToBoard);
-        window.NameDrawn += OnRosterNameDrawn;
-        _roster = window;
-        WindowChrome.ApplyTheme(window, Services.Settings.Appearance.Theme);
-        window.Closed += (_, _) =>
-        {
-            window.NameDrawn -= OnRosterNameDrawn;
-            if (ReferenceEquals(_roster, window)) _roster = null;
-        };
-        window.Activate();
-    }
-
-    private void OnRosterNameDrawn(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return;
-        RecordClassroomEvent(TimelineEventKind.RosterDrawn, name);
-    }
-
-    private void PasteRosterNameToBoard(string name) => _ = PasteRosterNameAsync(name);
-
-    /// <summary>把点名结果渲染成卡片贴到当前白板页，画板未开时先打开。</summary>
-    private async Task PasteRosterNameAsync(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name)) return;
-
-        try
-        {
-            const int width = 220;
-            const int height = 72;
-            byte[] png = await PasteCardRenderer.RenderPngAsync(
-                "点名结果", new[] { name }, width, height);
-            if (png is null || png.Length == 0)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    $"点名贴板：渲染 PNG 失败（{name}）", Core.Diagnostics.LogType.Error);
-                return;
-            }
-
-            var work = ScreenService.WorkArea;
-            double dpi = CurrentDpi();
-            double viewWidth = work.Width / dpi;
-            double viewHeight = work.Height / dpi;
-            double left = Math.Clamp(viewWidth / 2.0 - width / 2.0, 8, Math.Max(8, viewWidth - width - 8));
-            double top = Math.Clamp(viewHeight / 2.0 - height / 2.0, 8, Math.Max(8, viewHeight - height - 8));
-
-            string metadata = new AiPasteMetadata
-            {
-                Kind = AiPasteKind.Steps,
-                Text = name,
-                Lines = new List<string> { name },
-            }.Serialize();
-
-            bool added = Services.Board.AddImage(new BoardImageAsset
-            {
-                Name = "点名结果",
-                Data = png,
-                ContentType = "image/png",
-                Left = (float)left,
-                Top = (float)top,
-                Width = width,
-                Height = height,
-                Metadata = metadata,
-            });
-
-            if (!added)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    $"点名贴板：AddImage 失败（{name}）", Core.Diagnostics.LogType.Error);
-                return;
-            }
-
-            if (_board is null) ToggleBoard();
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"点名贴板失败（{name}）：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    public bool ClearCanvas()
-    {
-        var controller = ActiveController;
-        var automation = Services.Settings.Automation;
-        if (automation.IsAutoSaveStrokesAtClear && controller.Document.Count > automation.MinimumAutomationStrokeNumber)
-        {
-            Services.AutoSave.SaveSnapshot(controller.Document.Strokes, "clear");
-            _ = ScreenshotAsync();
-        }
-        if (DocumentActive) controller.Clear();
-        else (_board is not null ? Services.Board : Services.ScreenImages).ClearCurrentPage();
-        return true;
-    }
-
-    public void OpenSpotlight()
-    {
-        if (_spotlight is not null) { _spotlight.Activate(); return; }
-        var window = new SpotlightWindow();
-        window.CaptureRequested += askAi => _ = CaptureFocusAsync(askAi);
-        window.SaveRegionRequested += OnSaveFocusRegion;
-        window.CycleRegionRequested += OnCycleFocusRegion;
-        _spotlight = window;
-        _spotlight.Closed += (_, _) => _spotlight = null;
-        _spotlight.Activate();
-    }
-
-    public void OpenMagnifier()
-    {
-        if (_magnifier is not null) { _magnifier.Activate(); return; }
-        var window = new MagnifierWindow();
-        window.CaptureRequested += askAi => _ = CaptureFocusAsync(askAi);
-        RestoreWindowPosition(
-            window.MoveTo, Services.Settings.Classroom.MagnifierX, Services.Settings.Classroom.MagnifierY);
-        _magnifier = window;
-        _magnifier.Closed += (_, _) =>
-        {
-            try
-            {
-                Services.Settings.Classroom.MagnifierX = window.PositionX;
-                Services.Settings.Classroom.MagnifierY = window.PositionY;
-                Services.SaveSettings();
-            }
-            catch (Exception) { }
-
-            if (ReferenceEquals(_magnifier, window)) _magnifier = null;
-        };
-        _magnifier.Activate();
-    }
-
-    public void OpenToolkit()
-    {
-        if (_toolkit is not null) { _toolkit.ShowWithoutActivating(); return; }
-        var window = new ToolkitWindow(this, Services.Settings.Appearance.Theme,
-            OpenExampleLibrary, OpenResourceBundle);
-        window.SetCollapsed(Services.Settings.Classroom.ToolkitCollapsed);
-        RestoreWindowPosition(
-            window.MoveTo, Services.Settings.Classroom.ToolkitX, Services.Settings.Classroom.ToolkitY);
-        _toolkit = window;
-        _toolkit.Closed += (_, _) =>
-        {
-            Services.Settings.Classroom.ToolkitCollapsed = window.IsCollapsed;
-            try
-            {
-                Services.Settings.Classroom.ToolkitX = window.PositionX;
-                Services.Settings.Classroom.ToolkitY = window.PositionY;
-            }
-            catch (Exception) { }
-            Services.SaveSettings();
-            if (ReferenceEquals(_toolkit, window)) _toolkit = null;
-        };
-        _toolkit.ShowWithoutActivating();
-    }
-
-    private static void RestoreWindowPosition(Action<int, int> move, int x, int y)
-    {
-        if (move is null || x == int.MinValue || y == int.MinValue) return;
-        var work = ScreenService.WorkArea;
-        int clampedX = Math.Clamp(x, work.X, work.X + Math.Max(0, work.Width - 120));
-        int clampedY = Math.Clamp(y, work.Y, work.Y + Math.Max(0, work.Height - 80));
-        move(clampedX, clampedY);
-    }
-
-    /// <summary>
-    /// 打开本地例题库窗口。窗口采用单实例：已创建（包括通过关闭按钮隐藏）时重新显示并置前，
-    /// 不重复创建，避免丢失当前筛选与选中状态。
-    /// </summary>
-    public void OpenExampleLibrary()
-    {
-        if (_exampleLibrary is not null)
-        {
-            _exampleLibrary.ShowWindow();
-            return;
-        }
-
-        var window = new ExampleLibraryWindow(Services.Settings, Services.Settings.Appearance.Theme);
-        _exampleLibrary = window;
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_exampleLibrary, window)) _exampleLibrary = null;
-        };
-        window.ShowWindow();
-    }
-
-    /// <summary>
-    /// 打开课堂资源包窗口。与例题库一致采用单实例：已创建（包括关闭按钮隐藏）时重新显示并置前，
-    /// 不重复创建，避免丢失当前文件列表与操作结果提示。打包受
-    /// <see cref="InkCanvas.Core.Settings.FeatureSettings.EnableResourceBundle"/> 控制。
-    /// </summary>
-    public void OpenResourceBundle()
-    {
-        if (_resourceBundle is not null)
-        {
-            _resourceBundle.ShowWindow();
-            return;
-        }
-
-        var window = new ResourceBundleWindow(Services.Settings.Features, Services.Settings.Appearance.Theme);
-        _resourceBundle = window;
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_resourceBundle, window)) _resourceBundle = null;
-        };
-        window.ShowWindow();
-    }
-
-    // ---- 课堂场景 / 分组积分 / 讲义导出 / 聚焦贴图 -----------------------
-
-    public void CyclePreset()
-    {
-        var presets = new List<ClassroomPreset>(ClassroomPresetLibrary.BuiltIns);
-        presets.AddRange(LoadCustomPresets());
-
-        int current = 0;
-        for (int i = 0; i < presets.Count; i++)
-        {
-            if (string.Equals(presets[i].Id, _preset?.Id, StringComparison.Ordinal))
-            {
-                current = i;
-                break;
-            }
-        }
-
-        ApplyPreset(presets[(current + 1) % presets.Count]);
-    }
-
-    public void OpenPresetEditor()
-    {
-        if (_presetWindow is not null)
-        {
-            _presetWindow.Activate();
-            return;
-        }
-
-        var window = new PresetWindow(_preset, Services.Settings.Appearance.Theme);
-        window.Saved += preset =>
-        {
-            SaveCustomPreset(preset);
-            ApplyPreset(preset);
-        };
-        _presetWindow = window;
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_presetWindow, window)) _presetWindow = null;
-        };
-        window.Activate();
-    }
-
-    private IReadOnlyList<ClassroomPreset> LoadCustomPresets()
-        => ClassroomPresetLibrary.Deserialize(Services.Settings.Classroom.CustomPresets);
-
-    private void SaveCustomPreset(ClassroomPreset preset)
-    {
-        if (preset is null || preset.IsBuiltIn) return;
-
-        var presets = new List<ClassroomPreset>(LoadCustomPresets());
-        int index = presets.FindIndex(item =>
-            string.Equals(item.Id, preset.Id, StringComparison.Ordinal));
-        if (index >= 0) presets[index] = preset;
-        else presets.Add(preset);
-
-        Services.Settings.Classroom.CustomPresets =
-            ClassroomPresetLibrary.Serialize(presets);
-        Services.SaveSettings();
-    }
-
-    public void ApplyPreset(ClassroomPreset preset)
-    {
-        if (preset is null) return;
-
-        ClassroomPreset normalized = ClassroomPresetLibrary.Normalize(preset.Clone(), preset.Id);
-        _preset = normalized;
-        Services.Settings.Classroom.PresetId = normalized.Id;
-        Services.SaveSettings();
-
-        PresetAction action = ClassroomPresetLibrary.Plan(normalized);
-        foreach (ClassroomTool tool in action.Open) OpenClassroomTool(tool);
-        foreach (ClassroomTool tool in action.Close) CloseClassroomTool(tool);
-        if (action.CollapseToolkit && _toolkit is not null) _toolkit.SetCollapsed(true);
-
-        if (_teachingSession is not null)
-        {
-            _teachingSession.PresetId = normalized.Id;
-            _teachingSession.UpdatedAtMs = Environment.TickCount64;
-        }
-
-        if (!normalized.IsBuiltIn)
-        {
-            SaveCustomPreset(normalized);
-        }
-
-        _ = NotifyAsync("课堂场景", "已切换到「" + normalized.Name + "」。");
-    }
-
-    private void OpenClassroomTool(ClassroomTool tool)
-    {
-        switch (tool)
-        {
-            case ClassroomTool.SlideNavigator:
-                if (_slideNav?.IsVisible != true) ToggleSlideNavigator();
-                break;
-            case ClassroomTool.AiAssistant:
-            case ClassroomTool.AiStepGuide:
-                if (_aiAssistant is null) OpenAiAssistant();
-                else _aiAssistant.Activate();
-                break;
-            case ClassroomTool.Spotlight:
-                OpenSpotlight();
-                break;
-            case ClassroomTool.Magnifier:
-                OpenMagnifier();
-                break;
-            case ClassroomTool.Board:
-                if (_board is null) ToggleBoard();
-                break;
-            case ClassroomTool.Countdown:
-                OpenTimer();
-                break;
-            case ClassroomTool.GroupScore:
-                OpenGroupScore();
-                break;
-            case ClassroomTool.HandoutExport:
-                OpenHandout();
-                break;
-            case ClassroomTool.Toolkit:
-                OpenToolkit();
-                break;
-        }
-    }
-
-    private void CloseClassroomTool(ClassroomTool tool)
-    {
-        switch (tool)
-        {
-            case ClassroomTool.Countdown:
-                _countdown?.Close();
-                break;
-            case ClassroomTool.Spotlight:
-                _spotlight?.Close();
-                break;
-            case ClassroomTool.Magnifier:
-                _magnifier?.Close();
-                break;
-            case ClassroomTool.GroupScore:
-                _groupScoreWindow?.Close();
-                break;
-            case ClassroomTool.SlideNavigator:
-                _slideNav?.HidePanel();
-                break;
-        }
-    }
-
-    public void OpenGroupScore()
-    {
-        EnsureGroupScore();
-
-        if (_groupScoreWindow is not null)
-        {
-            _groupScoreWindow.Activate();
-            return;
-        }
-
-        var window = new GroupScoreWindow(
-            _groupScore,
-            LoadRosterNames(),
-            ParseGroupMode(Services.Settings.Classroom.GroupSplitMode),
-            Services.Settings.Classroom.GroupSplitValue,
-            Services.Settings.Appearance.Theme,
-            text => _ = PasteTextCardAsync("小组积分", text));
-        window.StateChanged += _ =>
-        {
-            Services.Settings.Classroom.GroupSplitMode =
-                window.Mode == GroupSplitMode.BySize ? "size" : "groupCount";
-            Services.Settings.Classroom.GroupSplitValue = window.SplitValue;
-            SaveGroupScore();
-            Services.SaveSettings();
-        };
-        window.Closed += (_, _) =>
-        {
-            SaveGroupScore();
-            if (ReferenceEquals(_groupScoreWindow, window)) _groupScoreWindow = null;
-        };
-
-        _groupScoreWindow = window;
-        WindowChrome.ApplyTheme(window, Services.Settings.Appearance.Theme);
-        window.Activate();
-    }
-
-    private void EnsureGroupScore()
-    {
-        if (_groupScore is not null) return;
-        _groupScore = GroupScoreService.Deserialize(TryRead(GroupScorePath()));
-    }
-
-    private static GroupSplitMode ParseGroupMode(string value)
-        => string.Equals(value, "size", StringComparison.OrdinalIgnoreCase)
-            ? GroupSplitMode.BySize
-            : GroupSplitMode.ByGroupCount;
-
-    private static string GroupScorePath() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "InkCanvas", "groups.json");
-
-    private void SaveGroupScore()
-    {
-        try
-        {
-            if (_groupScore is null) return;
-            string path = GroupScorePath();
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, _groupScore.Serialize());
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"分组积分保存失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    private IReadOnlyList<string> LoadRosterNames()
-    {
-        try
-        {
-            string path = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "InkCanvas", "roster.json");
-            if (!File.Exists(path)) return Array.Empty<string>();
-
-            var roster = new InkCanvas.Features.Classroom.ClassroomRoster();
-            return roster.Load(path) ? roster.Names : Array.Empty<string>();
-        }
-        catch (Exception)
-        {
-            return Array.Empty<string>();
-        }
-    }
-
-    private static string TryRead(string path)
-    {
-        try
-        {
-            return File.Exists(path) ? File.ReadAllText(path) : "";
-        }
-        catch (Exception)
-        {
-            return "";
-        }
-    }
-
-    public void OpenHandout() => _ = ShowHandoutAsync();
-
-    private async Task ShowHandoutAsync()
-    {
-        SlideContentIndex index = EnsureSlideIndexForExport();
-        if (index is null || index.Count == 0)
-        {
-            await NotifyAsync("课后讲义", "请先在课件放映中翻几页，让页索引建立后再导出。");
-            return;
-        }
-
-        var mode = new RadioButtons();
-        mode.Items.Add("批注 + 教师解析");
-        mode.Items.Add("仅批注");
-        mode.SelectedIndex = 0;
-
-        var selectionOnly = new CheckBox { Content = "仅导出勾选页（默认全部）" };
-        var pageChecks = new List<(int SlideId, CheckBox Box)>();
-        var pageList = new StackPanel { Spacing = 2 };
-        foreach (SlideContentEntry entry in index.Slides)
-        {
-            var box = new CheckBox
-            {
-                Content = "第 " + entry.Index + " 页"
-                    + (entry.HasInk ? " · 有批注" : "")
-                    + (entry.Favorite ? " · 收藏" : "")
-                    + (entry.HasAi ? " · AI" : ""),
-                IsChecked = true,
-                MinHeight = 30,
-            };
-            pageChecks.Add((entry.SlideId, box));
-            pageList.Children.Add(box);
-        }
-
-        var preview = new Image
-        {
-            Height = 132,
-            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
-        };
-        SlideContentEntry first = index.Slides[0];
-        if (!string.IsNullOrWhiteSpace(first.ThumbnailPath) && File.Exists(first.ThumbnailPath))
-        {
-            try { preview.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
-                new Uri(first.ThumbnailPath)); }
-            catch (Exception) { }
-        }
-
-        var content = new StackPanel { Spacing = 8 };
-        content.Children.Add(new TextBlock { Text = "导出前预览（第一页）", FontSize = 12, Opacity = 0.75 });
-        content.Children.Add(preview);
-        content.Children.Add(mode);
-        content.Children.Add(selectionOnly);
-        content.Children.Add(new ScrollViewer
-        {
-            Content = pageList,
-            Height = 170,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        });
-
-        var dialog = new ContentDialog
-        {
-            Title = "导出课后讲义",
-            Content = content,
-            PrimaryButtonText = "导出",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-        };
-
-        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
-
-        var options = new HandoutOptions
-        {
-            Content = mode.SelectedIndex == 1
-                ? HandoutContentMode.AnnotationsOnly
-                : HandoutContentMode.AnnotationsWithTeacherNotes,
-        };
-
-        if (selectionOnly.IsChecked == true)
-        {
-            options.SelectedSlideIds = pageChecks
-                .Where(pair => pair.Box.IsChecked == true)
-                .Select(pair => pair.SlideId)
-                .ToList();
-        }
-
-        string directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
-            "InkCanvas",
-            "handout-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-
-        HandoutExportResult result = await HandoutExportService.ExportAsync(
-            new HandoutRenderRequest { Index = index, Options = options }, directory);
-
-        if (!result.Success)
-        {
-            string reason = result.Warnings.Count > 0 ? string.Join("；", result.Warnings) : "没有生成任何页面。";
-            await NotifyAsync("讲义导出失败", reason + "（原课件未被修改）");
-            return;
-        }
-
-        _teachingSession?.RecordExport(result.PdfPath, Environment.TickCount64);
-        SaveTeachingSession();
-        await NotifyAsync("讲义已导出",
-            "共 " + result.Pages.Count + " 页，目录：" + directory
-            + (string.IsNullOrEmpty(result.PdfPath) ? "（仅 PNG）" : "（含 PDF）"));
-    }
-
-    private SlideContentIndex EnsureSlideIndexForExport()
-    {
-        if (_slideIndex is { Count: > 0 }) return _slideIndex;
-
-        PptSnapshot snapshot = _pptSession.Snapshot;
-        PptPresentationInfo presentation = snapshot?.Presentation;
-
-        try
-        {
-            if (presentation is not null)
-            {
-                SlideContentIndex sidecar = LoadSlideIndexSidecar(presentation);
-                if (sidecar is { Count: > 0 }) return _slideIndex = sidecar;
-            }
-
-            // 不在放映时仍允许导出最近一次课件的讲义（课后沉淀场景）。
-            SlideContentIndex latest = LoadLatestSlideIndexSidecar();
-            if (latest is not null) return _slideIndex = latest;
-            if (presentation is null) return _slideIndex;
-
-            PptPresentationDetails details = Services.Ppt.GetPresentationDetails();
-            if (details is null) return _slideIndex;
-
-            _slideIndex = SlideContentIndex.Build(
-                details, _pptSession.CreateArchive(), null,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-
-            string directory = _pptStore.GetPresentationDirectory(presentation);
-            foreach (SlideContentEntry entry in _slideIndex.Slides)
-            {
-                if (entry.SlideId <= 0 || !string.IsNullOrEmpty(entry.ThumbnailPath)) continue;
-                string thumb = Path.Combine(directory, "thumb-" + entry.SlideId + ".png");
-                if (File.Exists(thumb)) entry.ThumbnailPath = thumb;
-            }
-
-            return _slideIndex;
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"讲义导出索引失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            return _slideIndex;
-        }
-    }
-
-    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
-    {
-        if (_bar?.Content is not FrameworkElement root || root.XamlRoot is null)
-            return ContentDialogResult.None;
-        dialog.XamlRoot = root.XamlRoot;
-        return await dialog.ShowAsync();
-    }
-
-    public void PasteSpotlightToBoard() => _ = CaptureFocusAsync(askAi: false);
-
-    public void AskAiFromSpotlight() => _ = CaptureFocusAsync(askAi: true);
-
-    private async Task CaptureFocusAsync(bool askAi)
-    {
-        ScreenRect rect;
-        bool fromSpotlight = _spotlight is not null;
-
-        if (_spotlight is not null)
-        {
-            rect = _spotlight.CurrentScreenRect;
-            _spotlight.SetMaskVisible(false);
-        }
-        else if (_magnifier is not null)
-        {
-            rect = _magnifier.CurrentScreenRect;
-            _magnifier.HideForCapture();
-        }
-        else
-        {
-            await NotifyAsync("聚焦贴图", "请先打开聚光灯或放大镜，调整好聚焦区域后再贴图。");
-            return;
-        }
-
-        if (rect.Width <= 0 || rect.Height <= 0)
-        {
-            RestoreFocusWindow(fromSpotlight);
-            await NotifyAsync("聚焦贴图", "聚焦区域尚未确定，请先拖动聚光灯或移动放大镜取景。");
-            return;
-        }
-
-        try
-        {
-            await Task.Delay(90);
-
-            if (askAi)
-            {
-                await StartAssistantFromRegionAsync(rect);
-                return;
-            }
-
-            string base64 = await AssistantCapture.CapturePngBase64Async(
-                rect.X, rect.Y, rect.Width, rect.Height);
-            byte[] png = string.IsNullOrEmpty(base64)
-                ? Array.Empty<byte>()
-                : Convert.FromBase64String(base64);
-            if (png.Length == 0)
-            {
-                await NotifyAsync("聚焦贴图", "截图失败，请重试。");
-                return;
-            }
-
-            await PasteImageCardAsync("聚焦区域", png, 320, 220, "聚光灯/放大镜截图");
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"聚焦贴图失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-        finally
-        {
-            RestoreFocusWindow(fromSpotlight);
-        }
-        QueueDesktopSelection();
-    }
-
-    private void RestoreFocusWindow(bool fromSpotlight)
-    {
-        if (fromSpotlight) _spotlight?.SetMaskVisible(true);
-        else _magnifier?.ShowAfterCapture();
-    }
-
-    private void OnSaveFocusRegion(ScreenRect rect)
-    {
-        if (rect.Width <= 0 || rect.Height <= 0)
-        {
-            _ = NotifyAsync("聚焦区域", "当前聚焦区无效，请先拖动聚光灯。");
-            return;
-        }
-
-        FocusRegionItem saved = _focusRegions.Add(new FocusRegionItem
-        {
-            X = rect.X,
-            Y = rect.Y,
-            Width = rect.Width,
-            Height = rect.Height,
-            SlideId = _aiSlideId,
-            SlideIndex = _aiSlideIndex,
-            AnimationStep = _pptSession.Snapshot?.IsSlideShowRunning == true
-                ? Services.Ppt.GetAnimationStep()
-                : 0,
-            BoardPageIndex = _board is null ? -1 : Services.Board.CurrentIndex,
-        }, Environment.TickCount64);
-
-        if (saved is null)
-        {
-            _ = NotifyAsync("聚焦区域", "保存失败（最多保存 " + FocusRegionStore.MaximumRegions + " 个区域）。");
-            return;
-        }
-
-        PersistFocusRegions();
-        _ = NotifyAsync("聚焦区域", "已保存「" + saved.Name + "」，共 " + _focusRegions.Count + " 个。");
-    }
-
-    private void OnCycleFocusRegion(int delta)
-    {
-        if (_focusRegions.Count == 0)
-        {
-            _ = NotifyAsync("聚焦区域", "还没有保存的聚焦区域；点「保存区」先保存当前区域。");
-            return;
-        }
-
-        ScreenRect currentRect = _spotlight?.CurrentScreenRect ?? default;
-        FocusRegionItem current = currentRect.Width > 0
-            ? _focusRegions.FindMatching(
-                currentRect.X, currentRect.Y, currentRect.Width, currentRect.Height)
-            : null;
-
-        FocusRegionItem next = _focusRegions.Next(current, delta);
-        if (next is null) return;
-
-        _spotlight?.SetRegion(new ScreenRect(next.X, next.Y, next.Width, next.Height));
-        _ = NotifyAsync("聚焦区域", "切换到「" + next.Name + "」（" + next.Order + "/" + _focusRegions.Count + "）。");
-    }
-
-    private void PersistFocusRegions()
-    {
-        Services.Settings.Classroom.SpotlightRegions = _focusRegions.Serialize();
-        Services.SaveSettings();
-    }
-
-    private async Task StartAssistantFromRegionAsync(ScreenRect rect)
-    {
-        _aiTarget = CaptureAssistantTarget();
-        string thumb = await AssistantCapture.CapturePngBase64Async(
-            rect.X, rect.Y, rect.Width, rect.Height);
-        double dpi = CurrentDpi() > 0 ? CurrentDpi() : 1.0;
-
-        _aiAnchor = new AssistantRect(
-            rect.X / dpi, rect.Y / dpi,
-            (rect.X + rect.Width) / dpi, (rect.Y + rect.Height) / dpi);
-        _aiThumb = thumb;
-        _aiStrokes = new List<AssistantStroke>();
-        _aiScale = 1.0;
-        _aiSlideId = _pptSession.Snapshot?.Slide?.SlideId ?? 0;
-        _aiSlideIndex = _pptSession.Snapshot?.Slide?.Index ?? 0;
-
-        var problem = new ProblemContext
-        {
-            SlideId = _aiSlideId,
-            SlideIndex = _aiSlideIndex,
-            AnimationStep = _pptSession.Snapshot?.IsSlideShowRunning == true
-                ? Services.Ppt.GetAnimationStep()
-                : 0,
-        };
-        ProblemContextPolicy.Add(problem, new ProblemRegion
-        {
-            ImageBase64 = thumb,
-            Anchor = _aiAnchor,
-            Source = "focus",
-        });
-        _aiProblem = problem;
-
-        PrepareAssistantWindow();
-        StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-    }
-
-    private async Task PasteTextCardAsync(string title, string text)
-    {
-        var lines = new List<string>();
-        foreach (string line in (text ?? "").Split('\n'))
-        {
-            string trimmed = line.Trim();
-            if (trimmed.Length > 0) lines.Add(trimmed);
-        }
-
-        if (lines.Count == 0) return;
-
-        var (width, height) = PasteCardLayout.Estimate(lines);
-        byte[] png = await PasteCardRenderer.RenderPngAsync(title, lines, width, height);
-        if (png.Length == 0) return;
-
-        await PasteImageCardAsync(title, png, width, height, text);
-    }
-
-    private async Task PasteImageCardAsync(
-        string title, byte[] png, int width, int height, string metadataText)
-    {
-        string source = "";
-        if (_pptSession.Snapshot?.Presentation is not null)
-            source = "课件第 " + _aiSlideIndex + " 页";
-        else if (_board is not null)
-            source = "画板第 " + (Services.Board.CurrentIndex + 1) + " 页";
-
-        if (!string.IsNullOrEmpty(source))
-            metadataText = (metadataText ?? "") + "\n来源：" + source;
-
-        var work = ScreenService.WorkArea;
-        double dpi = CurrentDpi() > 0 ? CurrentDpi() : 1.0;
-        double viewWidth = work.Width / dpi;
-        double viewHeight = work.Height / dpi;
-        double left = Math.Clamp(viewWidth / 2.0 - width / 2.0, 8, Math.Max(8, viewWidth - width - 8));
-        double top = Math.Clamp(viewHeight / 2.0 - height / 2.0, 8, Math.Max(8, viewHeight - height - 8));
-
-        string metadata = new AiPasteMetadata
-        {
-            Kind = AiPasteKind.Steps,
-            Text = metadataText ?? "",
-            Lines = (metadataText ?? "").Split('\n').Where(line => line.Trim().Length > 0).ToList(),
-        }.Serialize();
-
-        bool added = Services.Board.AddImage(new BoardImageAsset
-        {
-            Name = title,
-            Data = png,
-            ContentType = "image/png",
-            Left = (float)left,
-            Top = (float)top,
-            Width = width,
-            Height = height,
-            Metadata = metadata,
-        });
-
-        if (added && _board is null) ToggleBoard();
-        if (added)
-        {
-            _teachingSession?.Link(
-                "tool", Guid.NewGuid().ToString("N"), _aiSlideId, _aiSlideIndex,
-                Services.Board.CurrentIndex, title, Environment.TickCount64);
-        }
-    }
-
     public void OpenReplay()
     {
-        if (_replay is not null) { _replay.Activate(); return; }
-        // Replay whichever surface the user is looking at: the board page when open, else the overlay.
+        if (_replay is not null) { WindowChrome.ShowWithoutActivation(_replay); return; }
         var controller = ActiveController;
         if (!controller.BeginPlayback()) return;
         bool restoreOverlay = _board is null && !DocumentActive && !Overlay.Presenter.InkVisible;
@@ -2627,186 +1609,46 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _documentWorkspace?.Window ?? (Window)_board ?? _bar);
         NotifyWindowOpened(_replay);
         _replay.Closed += (_, _) => { _replay = null; if (restoreOverlay) Overlay.Presenter.InkVisible = false; };
-        _replay.Activate();
+        WindowChrome.ShowWithoutActivation(_replay);
         WindowChrome.EnsureAbove(_replay);
     }
 
-    public void OpenTimeMachine() => _ = OpenTimeMachineAsync();
-
-    private async Task OpenTimeMachineAsync()
-    {
-        if (_timeMachine is not null) { _timeMachine.Activate(); return; }
-
-        // 正在录制画板：直接回放当前会话，无需弹会话管理。
-        if (_recorder?.IsRecording == true && _recorder.Session.Events.Count > 0)
-        {
-            ShowTimeMachine(_recorder.Session);
-            return;
-        }
-
-        var sessions = ClassroomSessionStore
-            .LoadAll(ClassroomSessionStore.MaxSessionsLoaded, out int omitted)
-            .Where(s => s.Events.Count > 0)
-            .ToList();
-        if (omitted > 0)
-        {
-            // 仅列表截断，不删除磁盘上的旧会话；提示用户可通过显式清理回收空间。
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"板书时光机：仅列出最近 {ClassroomSessionStore.MaxSessionsLoaded} 个会话，省略 {omitted} 个（未删除）",
-                Core.Diagnostics.LogType.Info);
-        }
-        if (sessions.Count == 0)
-        {
-            await NotifyAsync("板书时光机", "暂无录制记录。先在画板中书写，再打开时光机。");
-            return;
-        }
-
-        var chosen = await PickSessionAsync(sessions);
-        if (chosen is not null) ShowTimeMachine(chosen);
-    }
-
-    private void ShowTimeMachine(ClassroomSession session)
-    {
-        _timeMachine = new TimeMachineWindow(session, Services.Board, Services.Settings.Appearance.Theme);
-        _timeMachine.Closed += (_, _) => _timeMachine = null;
-        _timeMachine.Activate();
-    }
-
-    /// <summary>简单会话列表对话框：选择 / 重命名 / 删除 / 导入 / 导出。</summary>
-    private async Task<ClassroomSession> PickSessionAsync(List<ClassroomSession> sessions)
-    {
-        if (_bar?.Content is not FrameworkElement root || root.XamlRoot is null) return null;
-
-        var list = new ListView { Height = 300, SelectionMode = ListViewSelectionMode.Single };
-        void Rebuild()
-        {
-            list.Items.Clear();
-            foreach (var s in sessions)
-            {
-                int pageCount = s.Events is { Count: > 0 } ? s.Events.Max(e => e.PageIndex) + 1 : 0;
-                long durationMs = s.Events is { Count: > 0 } ? Math.Max(0, s.Events[^1].TimeMs) : 0;
-                list.Items.Add(
-                    $"{s.Name}  ·  录制 {s.CreatedAt:yyyy-MM-dd HH:mm}  ·  时长 {FormatSessionDuration(durationMs)}"
-                    + $"  ·  {pageCount} 页  ·  {s.Events.Count} 事件");
-            }
-        }
-        Rebuild();
-
-        var nameBox = new TextBox { PlaceholderText = "新名称", MinWidth = 140 };
-        var renameButton = new Button { Content = "重命名选中" };
-        var deleteButton = new Button { Content = "删除选中" };
-        var importButton = new Button { Content = "导入…" };
-        var exportButton = new Button { Content = "导出选中…" };
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        actions.Children.Add(nameBox);
-        actions.Children.Add(renameButton);
-        actions.Children.Add(deleteButton);
-        actions.Children.Add(importButton);
-        actions.Children.Add(exportButton);
-
-        var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(new TextBlock { Text = "选择要回放的板书会话：", Opacity = 0.8 });
-        panel.Children.Add(list);
-        panel.Children.Add(actions);
-
-        renameButton.Click += (_, _) =>
-        {
-            int i = list.SelectedIndex;
-            if (i < 0 || string.IsNullOrWhiteSpace(nameBox.Text)) return;
-            string newName = nameBox.Text.Trim();
-            if (ClassroomSessionStore.Rename(sessions[i].Id, newName)) { sessions[i].Name = newName; Rebuild(); list.SelectedIndex = i; }
-        };
-        deleteButton.Click += (_, _) =>
-        {
-            int i = list.SelectedIndex;
-            if (i < 0) return;
-            ClassroomSessionStore.Delete(sessions[i].Id);
-            sessions.RemoveAt(i);
-            Rebuild();
-        };
-        importButton.Click += async (_, _) =>
-        {
-            var file = await PickSessionFileAsync(save: false);
-            if (file is null) return;
-            var imported = ClassroomSessionStore.Import(file.Path);
-            if (imported is null) return;
-            sessions.Insert(0, imported);
-            Rebuild();
-        };
-        exportButton.Click += async (_, _) =>
-        {
-            int i = list.SelectedIndex;
-            if (i < 0) return;
-            var file = await PickSessionFileAsync(save: true);
-            if (file is null) return;
-            ClassroomSessionStore.Export(sessions[i], file.Path);
-        };
-
-        var dialog = new ContentDialog
-        {
-            Title = "板书时光机 · 会话",
-            Content = panel,
-            PrimaryButtonText = "回放所选",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = root.XamlRoot,
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return null;
-        int index = list.SelectedIndex;
-        return index >= 0 && index < sessions.Count ? sessions[index] : null;
-    }
-
-    private static string FormatSessionDuration(long durationMs)
-    {
-        long totalSeconds = Math.Max(0, durationMs) / 1000;
-        long minutes = totalSeconds / 60;
-        long seconds = totalSeconds % 60;
-        return minutes >= 60
-            ? $"{minutes / 60}:{minutes % 60:00}:{seconds:00}"
-            : $"{minutes}:{seconds:00}";
-    }
-
-    private async Task<StorageFile> PickSessionFileAsync(bool save)
-    {
-        if (_bar is null) return null;
-        if (save)
-        {
-            var picker = new FileSavePicker { SuggestedFileName = "classroom-session" };
-            picker.FileTypeChoices.Add("板书会话", new List<string> { ".json" });
-            InitializeWithWindow.Initialize(picker, WindowChrome.GetHwnd(_bar));
-            return await picker.PickSaveFileAsync();
-        }
-        else
-        {
-            var picker = new FileOpenPicker();
-            picker.FileTypeFilter.Add(".json");
-            InitializeWithWindow.Initialize(picker, WindowChrome.GetHwnd(_bar));
-            return await picker.PickSingleFileAsync();
-        }
-    }
-
-    public void OpenGuide()
-    {
-        if (_guide is not null) { _guide.Activate(); return; }
-        _guide = InfoWindow.OpenGuide(Services.Settings.Appearance.Theme);
-        _guide.Closed += (_, _) => _guide = null;
-        _guide.Activate();
-    }
+    public void OpenGuide() => OpenSettingsPage("操作指南");
 
     public void OpenPenPalette(bool highlighter)
     {
+        ActiveController.Tool = highlighter ? InkTool.Highlighter : InkTool.Pen;
+        if (_board is not null)
+        {
+            _board.ShowPenPalette(); return;
+        }
+        // WPF MW_FloatBarIcons.cs:721-731: clicking the same pen button toggles the palette closed.
+        var detachedPalette = _detachedPalettes.FirstOrDefault(window => window.IsHighlighter == highlighter);
+        if (detachedPalette is not null) { WindowChrome.EnsureAbove(detachedPalette); return; }
+        if (_palette?.IsPinned == true)
+        {
+            if (_paletteHighlighter == highlighter) { WindowChrome.EnsureAbove(_palette); return; }
+            _detachedPalettes.Add(_palette);
+            _palette = null;
+        }
+        if (_palette is not null && _paletteHighlighter == highlighter) { _palette.Close(); _palette = null; return; }
         if (_palette is not null) { _palette.Close(); _palette = null; }
         _paletteHighlighter = highlighter;
-        var controller = _board is not null ? Services.Board.Current : Services.OverlayInk;
-        _palette = new PenPaletteWindow(controller, highlighter, Services.Settings.Appearance.Theme)
+        var controller = ActiveController;
+        _palette = new PenPaletteWindow(controller, highlighter, EffectiveTheme,
+            _board is not null ? Services.Settings.Appearance.BlackboardScale : Services.Settings.Appearance.FloatingBarScale,
+            Services.Settings.Canvas)
         {
+            AutoDismissEnabled = () => Services.Settings.Appearance.AutoDismissAnnotationToolPanels,
             HighlighterAlpha = Services.Settings.Canvas.InkAlpha,
             LightColorScheme = Services.Settings.Appearance.Theme == 1,
             InkWidthChanged = width =>
             {
-                Services.Settings.Canvas.InkWidth = width;
-                Services.ApplySettings();
-                Services.SaveSettings();
+                if (highlighter) Services.Settings.Canvas.HighlighterWidth = width;
+                else if (controller.CurrentAttributes.TaperKind == Core.Ink.TaperKind.InkWash) Services.Settings.Canvas.InkWashWidth = width;
+                else Services.Settings.Canvas.InkWidth = width;
+                controller.ConfigurePenWidths((float)Services.Settings.Canvas.InkWidth,
+                    (float)(Services.Settings.Canvas.HighlighterWidth ?? Services.Settings.Canvas.InkWidth));
             },
             InkStyleChanged = style =>
             {
@@ -2814,45 +1656,92 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 Services.ApplySettings();
                 Services.SaveSettings();
             },
-            InkAlphaChanged = alpha =>
+            PenNibChanged = nib =>
             {
-                Services.Settings.Canvas.InkAlpha = alpha;
+                Services.Settings.Canvas.PenNib = nib;
                 Services.ApplySettings();
                 Services.SaveSettings();
             },
-            AttributesChanged = () => _bar?.Bar.RefreshSelection(),
+            InkAlphaChanged = alpha =>
+            {
+                Services.Settings.Canvas.InkAlpha = alpha;
+            },
+            AttributesChanged = () => { Services.RememberToolOptions(controller); _bar?.Bar.RefreshSelection(); },
+            ColorPaletteChanged = () => { Services.ApplySettings(); Services.SaveSettings(); },
+            EditColorAsync = EditCustomColorAsync,
         };
-        _palette.Closed += (_, _) => _palette = null;
-        _palette.Activate();
-        if (_bar is not null)
+        NotifyWindowOpened(_palette);
+        ConfigurePaletteNibMode(_palette);
+        var openedPalette = _palette;
+        _palette.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_palette, openedPalette)) _palette = null;
+            _detachedPalettes.Remove(openedPalette);
+        };
+        if (_board is not null || _bar is not null)
         {
             var tool = highlighter ? InkTool.Highlighter : InkTool.Pen;
-            _palette.PlaceAboveBar(
-                () => _bar.GetToolAnchor(tool),
-                WindowChrome.GetHwnd(_bar),
-                () => WindowChrome.GetScreenBounds(_bar, _bar.Bar));
+            _palette.PlaceAboveBar(() => _board is not null ? _board.GetToolAnchor(tool) : _bar.GetToolAnchor(tool),
+                WindowChrome.GetHwnd((Window)_board ?? _bar),
+                () => _board is not null ? _board.GetToolbarBounds() : WindowChrome.GetScreenBounds(_bar, _bar.Bar));
         }
+        WindowChrome.ShowWithoutActivation(_palette);
         WindowChrome.EnsureAbove(_palette);
+    }
+
+    public async Task EditCustomColorAsync(FrameworkElement anchor, InkColor color, Action<InkColor> changed)
+    {
+        if (_colorEditor is not null) { _colorEditor.Activate(); return; }
+        var candidates = OpenWindows.Concat(_board?.ToolPanels.Cast<Window>() ?? Enumerable.Empty<Window>());
+        var owner = candidates.FirstOrDefault(window => window.Content is FrameworkElement root && ReferenceEquals(root.XamlRoot, anchor.XamlRoot));
+        if (owner is null) return;
+        var window = new ColorEditorWindow(owner, WindowChrome.GetScreenBounds(owner, anchor), color, EffectiveTheme, changed);
+        _colorEditor = window;
+        try
+        {
+            NotifyWindowOpened(window);
+            window.Activate();
+            WindowChrome.EnsureAbove(window);
+            await window.Completion;
+        }
+        finally { if (ReferenceEquals(_colorEditor, window)) _colorEditor = null; }
+    }
+
+    private void CloseDetachedPalettes()
+    {
+        foreach (var palette in _detachedPalettes.ToArray()) palette.Close();
     }
 
     public void OpenShapePicker()
     {
-        if (_shapePicker is not null) { _shapePicker.Close(); _shapePicker = null; }
-        _shapePicker = new ShapePickerWindow(ActiveController,
-            () => _bar?.Bar.RefreshSelection(), Services.Settings.Appearance.Theme);
-        _shapePicker.Closed += (_, _) => _shapePicker = null;
-        _shapePicker.Activate();
-        if (_bar is not null)
+        if (_shapePicker is not null)
         {
-            _shapePicker.PlaceAboveBar(
-                () => _bar.GetToolAnchor(InkTool.Shape),
-                WindowChrome.GetHwnd(_bar),
-                () => WindowChrome.GetScreenBounds(_bar, _bar.Bar));
+            if (!_shapePicker.AutoHide) WindowChrome.EnsureAbove(_shapePicker);
+            else _shapePicker.Close();
+            return;
         }
+        bool boardMode = _board is not null;
+        _shapePicker = new ShapePickerWindow(ActiveController,
+            () => { Services.RememberToolOptions(ActiveController); _bar?.Bar.RefreshSelection(); }, EffectiveTheme,
+            boardMode ? Services.Settings.Appearance.BlackboardScale : Services.Settings.Appearance.FloatingBarScale,
+            boardMode)
+        {
+            AutoDismissEnabled = () => boardMode || Services.Settings.Appearance.AutoDismissAnnotationToolPanels,
+        };
+        NotifyWindowOpened(_shapePicker);
+        var openedPicker = _shapePicker;
+        _shapePicker.Closed += (_, _) => { if (ReferenceEquals(_shapePicker, openedPicker)) _shapePicker = null; };
+        var board = ActiveBoardWindow;
+        if (board is not null || _bar is not null)
+        {
+            _shapePicker.PlaceAboveBar(() => board is not null ? board.GetToolAnchor(InkTool.Shape) : _bar.GetToolAnchor(InkTool.Shape),
+                WindowChrome.GetHwnd((Window)board ?? _bar),
+                () => board is not null ? board.GetToolbarBounds() : WindowChrome.GetScreenBounds(_bar, _bar.Bar));
+        }
+        WindowChrome.ShowWithoutActivation(_shapePicker);
         WindowChrome.EnsureAbove(_shapePicker);
     }
 
-    /// <summary>云端截图取景：有文档/画板窗口时截该窗口，否则截虚拟桌面。</summary>
     internal ScreenRect GetScreenshotBounds()
     {
         var workspace = _documentWorkspace?.Window ?? (Window)_board;
@@ -2861,29 +1750,43 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public async Task ScreenshotAsync() => await CaptureScreenshotToFileAsync();
 
-    /// <summary>整屏截图并保存；返回文件路径，失败返回 null。</summary>
     private async Task<string> CaptureScreenshotToFileAsync()
     {
         try
         {
-            var screen = ScreenService.Primary;
-            string dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "InkCanvas");
+            var screen = GetScreenshotBounds();
+            string dir = Path.Combine(Services.Settings.Automation.AutoSavedStrokesLocation, "Screenshots");
             string path = await ScreenshotService.CaptureToFileAsync(dir, screen.X, screen.Y, screen.Width, screen.Height,
                 Services.Settings.Automation.IsSaveScreenshotsInDateFolders);
 
             if (Services.Settings.Automation.IsAutoSaveStrokesAtScreenshot)
-                Services.AutoSave.SaveSnapshot(Services.OverlayInk.Document.Strokes, "screenshot");
-
+                await Services.AutoSave.SaveSnapshotAsync(ActiveController.Document.Strokes, "screenshot");
             return path;
         }
         catch (Exception ex)
         {
-            // Capture can fail on a locked-down desktop; never take the app down for it.
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"截图失败：{ex.Message}", Core.Diagnostics.LogType.Error);
+            Core.Diagnostics.FileLog.WriteLogToFile($"Screenshot: {ex.Message}", Core.Diagnostics.LogType.Error);
             return null;
         }
+    }
+
+    public bool ClearCanvas() => ClearCanvas(inkOnly: false);
+    public bool ClearHandwriting() => ClearCanvas(inkOnly: true);
+
+    private bool ClearCanvas(bool inkOnly)
+    {
+        var controller = ActiveController;
+        if (Services.Settings.Archive.ScreenCapture.SaveOnClear) _ = SaveScreenArchiveAsync("清屏前存档");
+        var automation = Services.Settings.Automation;
+        if (automation.IsAutoSaveStrokesAtClear && controller.Document.Count > automation.MinimumAutomationStrokeNumber)
+        {
+            _ = Services.AutoSave.SaveSnapshotAsync(controller.Document.Strokes, "clear");
+            _ = ScreenshotAsync();
+        }
+        if (DocumentActive) _documentWorkspace.ClearCanvas(inkOnly);
+        else if (inkOnly) controller.ClearHandwriting();
+        else (_board is not null ? Services.Board : Services.ScreenImages).ClearCurrentPage();
+        return true;
     }
 
     public void ToggleFold()
@@ -2905,18 +1808,28 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public void ToggleClickThrough()
     {
+        if (DocumentActive) { ActiveController.Tool = ActiveController.Tool == InkTool.Pan ? InkTool.Pen : InkTool.Pan; return; }
+        if (_board is not null)
+        {
+            _ = CloseBoardToMouseModeAsync();
+            return;
+        }
         bool enableMouseMode = !Overlay.ClickThrough;
         if (enableMouseMode)
         {
+            OptionPopupCoordinator.DismissUnpinned();
             SaveBeforeMouseMode();
             bool showInk = _lastSlideShowState
-                ? Services.Settings.PowerPoint.IsShowStrokeOnSelectInPowerPoint
+                ? !Services.Settings.PowerPoint.HideStrokesAfterLeavingAnnotation
                 : !Services.Settings.Canvas.HideStrokeWhenSelecting;
             Overlay.SetInteractionMode(clickThrough: true, inkVisible: showInk);
+            if (Core.Settings.AutomationPolicy.ShouldClearOnMouseMode(Services.Settings.Automation, Services.Settings.PowerPoint, _lastSlideShowState))
+                Services.ScreenImages.ClearCurrentPage();
         }
         else
         {
             // CursorIcon_Click in the WPF source restores drawing without clearing strokes.
+            Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
             Overlay.SetInteractionMode(clickThrough: false, inkVisible: true);
         }
 
@@ -2925,15 +1838,17 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _bar.Bar.ClickThroughActive = Overlay.ClickThrough;
             _bar.Bar.RefreshSelection();
         }
+        QueueDesktopSelection();
     }
 
     private void SaveBeforeMouseMode()
     {
+        if (Services.Settings.Archive.ScreenCapture.SaveOnMouseMode) _ = SaveScreenArchiveAsync("切换鼠标模式");
         var strokes = ActiveController.Document.Strokes;
         if (strokes.Count <= Services.Settings.Automation.MinimumAutomationStrokeNumber) return;
         if (_lastSlideShowState) _pptSession.RequestScreenshot();
         else _ = ScreenshotAsync();
-        Services.AutoSave.SaveSnapshot(strokes, _lastSlideShowState ? "ppt-mouse-mode" : "mouse-mode");
+        _ = Services.AutoSave.SaveSnapshotAsync(strokes, _lastSlideShowState ? "ppt-mouse-mode" : "mouse-mode");
     }
 
     /// <summary>Launch in pass-through mode so the overlay does not capture the desktop's input.</summary>
@@ -2947,23 +1862,16 @@ public sealed partial class ShellController : IShellActions, IDisposable
 
     public void PptPrevious() => NavigatePpt(next: false);
 
-    /// <summary>Diagnostics only: which navigation source the active show currently resolves to.</summary>
-    internal PresentationSourceLevel PptNavigationSource => _pptSources.Active;
-
-    /// <summary>Diagnostics only: tick of the last completed <see cref="NavigatePpt"/> call.</summary>
-    internal long PptNavigationLastExitMs => _pptGuard.LastExitMs;
-
     private void NavigatePpt(bool next)
     {
         long now = Environment.TickCount64;
-        if (!_pptGuard.TryEnter(now, out long retryAfterMs))
+        if (!_pptGuard.TryEnter(now, out long retryAfter))
         {
-            // Explicit flips that land inside the debounce window must not vanish: queue exactly
-            // one retry for the remaining interval. Keyboard repeat and toolbar clicks converge
-            // on the latest direction instead of turning into two page flips.
-            if (retryAfterMs > 0) QueuePptNavigationRetry(next, retryAfterMs);
+            if (retryAfter > 0) SchedulePptNavigationRetry(next, retryAfter);
             return;
         }
+        _pptNavigationRetry?.Stop();
+        _pendingPptNavigation = null;
         try
         {
             // The generation guards the screenshot request raised synchronously by the session.
@@ -2971,7 +1879,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
             _pptCaptureSession = _pptGate.Session;
             _pptCaptureGeneration = generation;
 
+            if (_board is not null) ToggleBoard();
+            if (_lastSlideShowState) _ = SaveScreenArchiveAsync("PPT 翻页前存档");
             bool moved = NavigateThroughSources(next);
+            QueuePresentationRefresh();
 
             // The host receives its own simulated navigation back as a slide change; remember
             // that it was ours so the poll loop does not treat it as an external event.
@@ -2987,22 +1898,31 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    /// <summary>
-    /// Delivers a flip that arrived inside <see cref="NavigationGuard"/>'s debounce window.
-    /// Only the latest direction is kept and the timer fires once, so a rapid double click ends
-    /// in a single additional flip instead of being swallowed.
-    /// </summary>
-    private void QueuePptNavigationRetry(bool next, long retryAfterMs)
+    private void SchedulePptNavigationRetry(bool next, long delay)
     {
-        _pptRetryNext = next;
-        if (_pptRetryQueued) return;
-        _pptRetryQueued = true;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[PPT] 导航请求落在 {retryAfterMs}ms 节流窗口内，排队补发 {(next ? "Next" : "Previous")}",
-            Core.Diagnostics.LogType.Info);
-        _pptRetryTimer.Stop();
-        _pptRetryTimer.Interval = TimeSpan.FromMilliseconds(retryAfterMs + 10);
-        _pptRetryTimer.Start();
+        if (_pptNavigationRetry is null)
+        {
+            _pptNavigationRetry = _dispatcher.CreateTimer();
+            _pptNavigationRetry.IsRepeating = false;
+            _pptNavigationRetry.Tick += (_, _) =>
+            {
+                var pending = _pendingPptNavigation;
+                _pendingPptNavigation = null;
+                pending?.Invoke();
+            };
+        }
+        int showSession = _pptGate.Session;
+        bool isShow = _lastSlideShowState;
+        string presentation = _pptSession.Snapshot.Presentation?.Identity;
+        _pendingPptNavigation = () =>
+        {
+            if (!_disposed && !_exiting && showSession == _pptGate.Session && isShow == _lastSlideShowState
+                && presentation == _pptSession.Snapshot.Presentation?.Identity)
+                NavigatePpt(next);
+        };
+        _pptNavigationRetry.Stop();
+        _pptNavigationRetry.Interval = TimeSpan.FromMilliseconds(delay + 1);
+        _pptNavigationRetry.Start();
     }
 
     /// <summary>
@@ -3084,80 +2004,34 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _blackScreen.Closed += (_, _) =>
         {
             _blackScreen = null;
-            ReleaseBlackScreenEscape();
+            RefreshShortcutRegistration();
         };
         _blackScreen.Activate();
         // The window can show without owning focus, so cover that case with a global Esc that
         // only exists while the black screen is up. The window also handles Esc itself.
-        TryRegisterBlackScreenEscape();
+        RefreshShortcutRegistration();
         Core.Diagnostics.FileLog.WriteLogToFile("黑屏已开启（F9/B 或点击/Esc 恢复）", Core.Diagnostics.LogType.Info);
-    }
-
-    /// <summary>
-    /// Escape is reserved only while the black screen is visible. Registration fails when the
-    /// key is already taken (e.g. Esc exits a running slideshow), in which case the window's own
-    /// KeyDown still closes it.
-    /// </summary>
-    private void TryRegisterBlackScreenEscape()
-    {
-        if (_blackScreen is null || _blackScreenEscapeHotkey) return;
-        if (Overlay.Hotkeys.Register(HotkeyModifiers.None, 0x1B /* Escape */, ToggleBlackScreen))
-        {
-            _blackScreenEscapeHotkey = true;
-            _blackScreenEscapeFailureLogged = false;
-            return;
-        }
-        if (_blackScreenEscapeFailureLogged) return;
-        _blackScreenEscapeFailureLogged = true;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            "黑屏 Esc 全局热键注册失败，改用窗口内按键关闭", Core.Diagnostics.LogType.Info);
-    }
-
-    private void ReleaseBlackScreenEscape()
-    {
-        if (!_blackScreenEscapeHotkey) return;
-        _blackScreenEscapeHotkey = false;
-        // HotkeyService can only drop the whole group: rebuild it so Esc is not held after close.
-        Overlay.Hotkeys.UnregisterAll();
-        RegisterOverlayHotkeys();
     }
 
     private void CloseBlackScreen()
     {
-        BlackScreenWindow window = _blackScreen;
-        if (window is null) return;
+        var window = _blackScreen;
         _blackScreen = null;
-        try { window.Close(); }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile($"关闭黑屏失败：{ex}", Core.Diagnostics.LogType.Error);
-        }
-        finally { ReleaseBlackScreenEscape(); }
+        window?.Close();
+        RefreshShortcutRegistration();
     }
 
     public void RotatePptNavigationCorner()
     {
-        List<NavigationCorner> allowed = AllowedCorners();
-        if (allowed.Count == 0) return;
-
-        NavigationCorner candidate = _pptCorner;
-        for (int i = 0; i < 4; i++)
-        {
-            candidate = NavigationLayout.NextCorner(candidate);
-            if (allowed.Contains(candidate)) break;
-        }
-        _pptCorner = candidate;
-
-        var snapshot = _pptShowSnapshot;
-        if (snapshot is not null) UpdatePptNavigation(snapshot);
+        // Kept for shell action compatibility. All enabled corners are displayed together.
+        UpdatePptNavigation(_pptShowSnapshot ?? PptSnapshot.Detached);
     }
 
     public void CollapsePptNavigation()
     {
-        _pptNavCollapsed = true;
+        _pptNavCollapsed = !_pptNavCollapsed;
         var snapshot = _pptShowSnapshot;
-        if (snapshot is not null) UpdatePptNavigation(snapshot);
-        else _pptNav?.Update(PptSnapshot.Detached, false, false, default);
+        UpdatePptNavigation(snapshot ?? PptSnapshot.Detached);
     }
 
     public void TogglePptNavigationWindow()
@@ -3212,39 +2086,37 @@ public sealed partial class ShellController : IShellActions, IDisposable
     /// <summary>翻到有 AI 讲解的页时，从页索引取出已保存讲解并重新显示在浮窗里。</summary>
     private void OnSlideAiReviewRequested(int slideId)
     {
-        SlideContentEntry entry = _slideIndex?.Find(slideId);
-        if (entry is null || string.IsNullOrWhiteSpace(entry.Text)) return;
-
-        _aiStream?.Abort();
-        _aiStream = null;
-        _aiTarget = null; // 课件回看保持原有“贴回主展板”行为，不参与板中板路由
-        _aiGate.Invalidate();
-        _aiSlideId = slideId;
-        _aiSlideIndex = entry.Index;
-        _aiThumb = "";
-
-        if (_aiAssistant is null)
-        {
-            _aiProblem = null;
-            PrepareAssistantWindow();
-        }
-
-        AssistantSession review = AssistantMachine.CreateSession(
-            AssistantMode.Chat, "review-" + slideId + "-" + entry.AnimationStep);
-        review.State = AssistantState.Done;
-        review.TeachingMode = AssistantTeachingMode.Full;
-        review.RevealedSteps = 0;
-        review.Text = entry.Text;
-        _aiSession = review;
-
-        _aiAssistant?.Apply(review, "");
-        _aiAssistant?.ShowNotice("已调出第 " + entry.Index + " 页保存的 AI 讲解");
+        var entry = _slideIndex?.Find(slideId);
+        if (entry is not null) Assistant?.Review(slideId, entry.Index, entry.AnimationStep, entry.Text);
     }
 
-    /// <summary>每 2 秒按当前页序重建索引；收藏/AI 标记从 sidecar 与内存保留。</summary>
+    /// <summary>Keep the current slide current, reading a full inventory only while the legacy index is visible.</summary>
     private void RefreshSlideIndex(PptSnapshot snapshot)
     {
         if (snapshot?.IsSlideShowRunning != true || snapshot.Presentation is null) return;
+
+        if (_slideIndex?.Identity != snapshot.Presentation.Identity)
+        {
+            _slideIndex = LoadSlideIndexSidecar(snapshot.Presentation) ?? new SlideContentIndex();
+            _slideIndex.Identity = snapshot.Presentation.Identity;
+            _slideIndex.Name = snapshot.Presentation.Name;
+        }
+        int currentSlideId = snapshot.Slide?.SlideId ?? 0;
+        int animationStep = Services.Ppt.GetAnimationStep();
+        if (snapshot.Slide is { } activeSlide)
+        {
+            var active = _slideIndex.Find(activeSlide.SlideId);
+            if (active is null)
+            {
+                active = new SlideContentEntry { SlideId = activeSlide.SlideId, Index = activeSlide.Index, Name = activeSlide.Name };
+                _slideIndex.Slides.Add(active);
+            }
+            active.Index = activeSlide.Index;
+            active.HasInk = Services.OverlayInk.Document.Count > 0;
+            active.InkStrokeCount = Services.OverlayInk.Document.Count;
+            active.AnimationStep = animationStep;
+        }
+        if (_slideNav?.IsVisible != true) return;
 
         DateTime now = DateTime.UtcNow;
         if (now - _lastSlideIndexRefreshUtc < TimeSpan.FromSeconds(2)) return;
@@ -3258,7 +2130,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             SlideContentIndex sidecar = LoadSlideIndexSidecar(details.Presentation);
             SlideContentIndex previous = sidecar ?? _slideIndex;
             _slideIndex = SlideContentIndex.Build(
-                details, _pptSession.CreateArchive(), previous,
+                details, _pptSession.CreateIndexArchive(), previous,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
             string directory = _pptStore.GetPresentationDirectory(details.Presentation);
@@ -3269,8 +2141,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 if (File.Exists(thumb)) entry.ThumbnailPath = thumb;
             }
 
-            int currentSlideId = snapshot.Slide?.SlideId ?? 0;
-            int animationStep = Services.Ppt.GetAnimationStep();
             SlideContentEntry current = _slideIndex.Find(currentSlideId);
             if (current is not null && string.IsNullOrEmpty(current.Text))
             {
@@ -3279,9 +2149,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
             }
 
             if (current is not null) current.AnimationStep = animationStep;
-
-            _teachingSession?.SetCurrentSlide(
-                currentSlideId, snapshot.Slide?.Index ?? 0, animationStep, Environment.TickCount64);
 
             _slideNav?.Update(_slideIndex, currentSlideId);
         }
@@ -3309,49 +2176,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
     }
 
     /// <summary>无放映时读取最近一次课件的 SlideIndex.json，并把缺失缩略图按同目录 thumb-{slideId}.png 回填。</summary>
-    private SlideContentIndex LoadLatestSlideIndexSidecar()
-    {
-        try
-        {
-            string root = Path.Combine(
-                Services.Settings.Automation.AutoSavedStrokesLocation,
-                "Auto Saved - Presentations");
-            if (!Directory.Exists(root)) return null;
-
-            var files = new DirectoryInfo(root)
-                .GetFiles("SlideIndex.json", SearchOption.AllDirectories)
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .Take(3)
-                .ToList();
-
-            foreach (FileInfo file in files)
-            {
-                SlideContentIndex index = SlideContentIndex.Deserialize(File.ReadAllText(file.FullName));
-                if (index is null || index.Count == 0) continue;
-
-                string directory = file.DirectoryName ?? root;
-                foreach (SlideContentEntry entry in index.Slides)
-                {
-                    if (!string.IsNullOrEmpty(entry.ThumbnailPath) && File.Exists(entry.ThumbnailPath))
-                        continue;
-
-                    string thumb = Path.Combine(directory, "thumb-" + entry.SlideId + ".png");
-                    if (File.Exists(thumb)) entry.ThumbnailPath = thumb;
-                }
-
-                return index;
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"读取最近课件索引失败：{ex.Message}", Core.Diagnostics.LogType.Info);
-            return null;
-        }
-    }
-
     private void SaveSlideIndex()
     {
         PptPresentationInfo presentation = _pptSession.Snapshot?.Presentation;
@@ -3394,71 +2218,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
     {
         if (transition is null) return;
 
-        // 统一课堂时间轴：翻页与批注变化都写入当前录制会话。
-        if (transition.Kind is PptInkTransitionKind.Slide or PptInkTransitionKind.Begin)
-        {
-            int slideIndex = transition.Current?.Slide?.Index ?? 0;
-            int slideId = transition.Current?.Slide?.SlideId ?? 0;
-            if (slideIndex > 0)
-            {
-                string screenshot = ResolvePptScreenshotPath(transition, slideIndex, slideId);
-                RecordClassroomEvent(TimelineEventKind.PptSlideChanged,
-                    InkTimeline.EncodePptSlideChanged(slideId, slideIndex, screenshot));
-            }
-            RecordClassroomEvent(TimelineEventKind.PptInkChanged,
-                (transition.Incoming?.Count ?? 0).ToString());
-        }
-
         // A slide change invalidates any selection made on the previous slide.
         if (transition.Kind != PptInkTransitionKind.Slide) return;
         Services.OverlayInk.Selection.Clear();
         _bar?.Bar.RefreshSelection();
-    }
-
-    /// <summary>
-    /// 为翻页事件解析可用的截图路径：
-    /// 优先复用最近一次 <see cref="OnPptScreenshotRequested"/> 的截图；
-    /// 录制中且没有可用截图时主动截取放映窗口并保存到会话目录。
-    /// 任何失败都只记日志并返回空串，绝不阻塞或中断 PPT 翻页。
-    /// </summary>
-    private string ResolvePptScreenshotPath(PptInkTransition transition, int slideIndex, int slideId)
-    {
-        if (!string.IsNullOrWhiteSpace(_pptScreenshotPath)
-            && ((_pptScreenshotSlideId > 0 && _pptScreenshotSlideId == slideId)
-                || _pptScreenshotSlideIndex == slideIndex))
-        {
-            return _pptScreenshotPath;
-        }
-
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording || recorder.Session is null) return "";
-
-        try
-        {
-            string root = recorder.SessionDirectory ?? ClassroomSessionStore.DefaultDirectory;
-            string directory = Path.Combine(root, recorder.Session.Id);
-            string path = Path.Combine(directory, $"ppt-{slideIndex}.png");
-            if (File.Exists(path))
-            {
-                RememberPptScreenshot(path, slideIndex, slideId);
-                return path;
-            }
-
-            ScreenRect area = ResolveSlideShowBounds(transition);
-            var (pixels, width, height) = ScreenshotService.Capture(area.X, area.Y, area.Width, area.Height);
-            if (width <= 0 || height <= 0) return "";
-
-            Directory.CreateDirectory(directory);
-            _ = ScreenshotService.SavePngAsync(path, pixels, width, height);
-            RememberPptScreenshot(path, slideIndex, slideId);
-            return path;
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"PPT timeline screenshot: {ex}", Core.Diagnostics.LogType.Error);
-            return "";
-        }
     }
 
     private void RememberPptScreenshot(string path, int slideIndex, int slideId)
@@ -3466,42 +2229,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
         _pptScreenshotPath = path;
         _pptScreenshotSlideIndex = slideIndex;
         _pptScreenshotSlideId = slideId;
-    }
-
-    private static ScreenRect ResolveSlideShowBounds(PptInkTransition transition)
-    {
-        nint hwnd = transition.Current?.WindowHandle ?? 0;
-        if (hwnd != 0 && ShowWindowTracker.TryGet(hwnd, out ShowWindowInfo info)
-            && info.IsFullScreen && info.Width > 0 && info.Height > 0)
-        {
-            return new ScreenRect(info.X, info.Y, info.Width, info.Height);
-        }
-        return ScreenService.Primary;
-    }
-
-    /// <summary>
-    /// 向录制中的课堂时间轴追加一个非墨迹事件；未录制时静默忽略，异常只记录日志。
-    /// </summary>
-    private void RecordClassroomEvent(TimelineEventKind kind, string payload = null, int? pageIndex = null)
-    {
-        var recorder = _recorder;
-        if (recorder is null || !recorder.IsRecording || recorder.Session is null) return;
-
-        try
-        {
-            recorder.Append(new TimelineEvent
-            {
-                TimeMs = recorder.ElapsedMs,
-                PageIndex = pageIndex ?? Services.Board.CurrentIndex,
-                Kind = kind,
-                Payload = payload,
-            });
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"Timeline/{kind}: {ex.Message}", Core.Diagnostics.LogType.Error);
-        }
     }
 
     public void PptExit()
@@ -3517,282 +2244,9 @@ public sealed partial class ShellController : IShellActions, IDisposable
     public void PptOpenNavigation()
     {
         if (!_lastSlideShowState) return;
-        if (!Overlay.ClickThrough) ToggleClickThrough();
-        _pptSession.ShowSlideNavigationPane();
-    }
-
-    // ---- AI 助教 ---------------------------------------------------------
-
-    public void OpenAiAssistant()
-    {
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] OpenAiAssistant 入口：board={_board is not null}，assistantExists={_aiAssistant is not null}",
-            Core.Diagnostics.LogType.Info);
-        try
-        {
-            OpenAiAssistantCore();
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教打开失败：{ex}", Core.Diagnostics.LogType.Error);
-            try
-            {
-                ShowAssistantMessage("AI 助教打开失败，请稍后重试。");
-            }
-            catch (Exception inner)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教错误提示失败：{inner}", Core.Diagnostics.LogType.Error);
-                _ = NotifyAsync("AI 助教", "打开失败：" + ex.GetBaseException().Message);
-            }
-        }
-    }
-
-    private void OpenAiAssistantCore()
-    {
-        _aiTarget = CaptureAssistantTarget();
-        var controller = ActiveController;
-        IReadOnlyList<InkStroke> sourceStrokes = controller.Selection;
-        var bounds = controller.SelectionBounds;
-        string source = "selection";
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] Core 入口：controller={controller?.GetType().Name ?? "null"}，"
-            + $"selection={sourceStrokes.Count}，"
-            + $"bounds=({bounds.Left:0.0},{bounds.Top:0.0},{bounds.Width:0.0}x{bounds.Height:0.0})，source={source}"
-            + $"，target={AssistantTargetPolicy.Describe(_aiTarget)}",
-            Core.Diagnostics.LogType.Info);
-
-        if (sourceStrokes.Count == 0 || bounds.Width < 16 || bounds.Height < 16)
-        {
-            source = "canvas";
-            // Friendly fallback: the selection tool is tap-only today. When nothing is
-            // selected we recognize every stroke on the canvas; when the canvas is empty
-            // we recognize the whole overlay viewport (screenshot-only chat).
-            sourceStrokes = controller.Document.Strokes;
-            if (sourceStrokes.Count == 0)
-            {
-                sourceStrokes = Array.Empty<InkStroke>();
-                var (targetWork, targetDpi, _, _) = AssistantTarget();
-                double viewWidth = targetWork.Width / targetDpi;
-                double viewHeight = targetWork.Height / targetDpi;
-                Window canvasWindow = TargetCanvasWindow();
-                if (canvasWindow is not null)
-                {
-                    ScreenRect client = WindowChrome.GetClientBounds(WindowChrome.GetHwnd(canvasWindow));
-                    if (client.Width > 0 && client.Height > 0)
-                    {
-                        viewWidth = client.Width / targetDpi;
-                        viewHeight = client.Height / targetDpi;
-                    }
-                }
-                bounds = new Rect(0, 0, (float)viewWidth, (float)viewHeight);
-            }
-            else
-            {
-                float minX = float.MaxValue, minY = float.MaxValue;
-                float maxX = float.MinValue, maxY = float.MinValue;
-                foreach (InkStroke stroke in sourceStrokes)
-                {
-                    foreach (var point in stroke.Points)
-                    {
-                        minX = MathF.Min(minX, point.X);
-                        minY = MathF.Min(minY, point.Y);
-                        maxX = MathF.Max(maxX, point.X);
-                        maxY = MathF.Max(maxY, point.Y);
-                    }
-                }
-                bounds = new Rect(minX - 8, minY - 8, maxX - minX + 16, maxY - minY + 16);
-                if (bounds.Width < 16 || bounds.Height < 16)
-                {
-                    ShowAssistantMessage("画布上还没有可识别的内容，请先书写或用「选择」工具点选。");
-                    return;
-                }
-            }
-        }
-
-        Matrix3x2 matrix = controller.ViewTransform;
-        Vector2 topLeft = Vector2.Transform(new Vector2(bounds.Left, bounds.Top), matrix);
-        Vector2 bottomRight = Vector2.Transform(new Vector2(bounds.Right, bounds.Bottom), matrix);
-
-        var viewRect = new AssistantRect(
-            Math.Min(topLeft.X, bottomRight.X),
-            Math.Min(topLeft.Y, bottomRight.Y),
-            Math.Max(topLeft.X, bottomRight.X),
-            Math.Max(topLeft.Y, bottomRight.Y));
-        _aiAnchor = viewRect;
-
-        List<AssistantStroke> strokes = BuildAssistantStrokes(sourceStrokes, matrix);
-        double scale = Math.Sqrt(Math.Abs(matrix.GetDeterminant()));
-        var (_, dpi, originXDip, originYDip) = AssistantTarget();
-        // controller.ViewTransform 给的是画布客户区 DIP，截图 API 要屏幕绝对物理像素：
-        // 板窗口客户区原点不在 (0,0)，必须先加客户区原点再乘目标 DPI。
-        int px = (int)Math.Round((viewRect.Left + originXDip) * dpi);
-        int py = (int)Math.Round((viewRect.Top + originYDip) * dpi);
-        int pw = (int)Math.Round(viewRect.Width * dpi);
-        int ph = (int)Math.Round(viewRect.Height * dpi);
-
-        _aiSlideId = _pptSession.Snapshot?.Slide?.SlideId ?? 0;
-        _aiSlideIndex = _pptSession.Snapshot?.Slide?.Index ?? 0;
-
-        _ = StartAssistantAsync(strokes, scale, px, py, pw, ph, source);
-    }
-
-    private void ShowAssistantMessage(string message)
-    {
-        try
-        {
-            _aiTarget = CaptureAssistantTarget();
-            _aiThumb = "";
-            _aiAnchor = CenterAnchor();
-            _aiSession = AssistantMachine.CreateSession(AssistantMode.Auto, "");
-            AssistantMachine.Fail(_aiSession, message);
-            PrepareAssistantWindow().Apply(_aiSession, _aiThumb);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile($"AI 助教提示浮窗失败：{ex}", Core.Diagnostics.LogType.Error);
-            _ = NotifyAsync("AI 助教", message);
-        }
-    }
-
-    private async Task StartAssistantAsync(
-        List<AssistantStroke> strokes, double scale, int px, int py, int pw, int ph, string source)
-    {
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] 截图开始：px={px},py={py},pw={pw},ph={ph},source={source}",
-            Core.Diagnostics.LogType.Info);
-        string thumb;
-        try
-        {
-            thumb = await AssistantCapture.CapturePngBase64Async(px, py, pw, ph);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 截图失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            thumb = "";
-        }
-
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] 截图完成：thumb.Length={thumb.Length}",
-            Core.Diagnostics.LogType.Info);
-        _aiThumb = thumb;
-
-        if (!AiTargetCanvasAvailable())
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[AI] 截图期间目标画布已关闭，丢弃本次请求：target={AssistantTargetPolicy.Describe(_aiTarget)}",
-                Core.Diagnostics.LogType.Info);
-            return;
-        }
-
-        var problem = new ProblemContext
-        {
-            SlideId = _aiSlideId,
-            SlideIndex = _aiSlideIndex,
-            AnimationStep = _pptSession.Snapshot?.IsSlideShowRunning == true
-                ? Services.Ppt.GetAnimationStep()
-                : 0,
-        };
-        ProblemContextPolicy.Add(problem, new ProblemRegion
-        {
-            ImageBase64 = _aiThumb,
-            Anchor = _aiAnchor,
-            Source = source ?? "",
-        });
-
-        _aiProblem = problem;
-        _aiStrokes = strokes;
-        _aiScale = scale;
-
-        try
-        {
-            PrepareAssistantWindow();
-            StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 浮窗启动失败：{ex}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    /// <summary>
-    /// 用当前拼题上下文构造请求。多选区时不发墨迹（先截图为准），并让外接矩形决定浮窗位置。
-    /// </summary>
-    private AssistantRequest BuildProblemRequest(AssistantTeachingMode? teachingOverride = null)
-    {
-        IReadOnlyList<ProblemRegion> ordered = ProblemContextPolicy.Ordered(_aiProblem);
-        AssistantRect combined = ProblemContextPolicy.CombinedAnchor(_aiProblem);
-        if (!combined.IsEmpty) _aiAnchor = combined;
-
-        _aiThumb = ProblemContextPolicy.PrimaryImage(_aiProblem);
-        bool multi = ordered.Count > 1;
-
-        AssistantTeachingMode teaching = teachingOverride ?? AssistantTeachingPolicy.Parse(
-            Services.Settings.Ai.TeachingMode);
-        // 课堂/投屏默认不直接公布完整答案；教师仍可在浮窗内手动切到完整解答。
-        if (teachingOverride is null && teaching == AssistantTeachingMode.Full && IsClassroomPresentation())
-            teaching = AssistantTeachingMode.StepByStep;
-
-        return new AssistantRequest
-        {
-            ImageBase64 = _aiThumb,
-            Images = ordered,
-            InkStrokes = multi ? Array.Empty<AssistantStroke>() : _aiStrokes,
-            Viewport = new AssistantViewport { Scale = _aiScale, Rect = _aiAnchor },
-            Mode = AssistantMode.Auto,
-            Teaching = teaching,
-            SessionId = _aiProblem?.SessionId ?? "",
-            SlideContext = BuildSlideContext(),
-        };
-    }
-
-    private bool IsClassroomPresentation()
-        => _pptSession.Snapshot?.IsSlideShowRunning == true
-           || string.Equals(_preset?.Id, "teach", StringComparison.Ordinal);
-
-    /// <summary>
-    /// 课件上下文只作辅助：标题、当前页文本、必要的前后页文本；COM 读取失败时返回 null，
-    /// 退化为纯框选识别，不阻塞也不影响基础讲题。
-    /// </summary>
-    private SlideContext BuildSlideContext()
-    {
-        PptSnapshot snapshot = _pptSession.Snapshot;
-        if (snapshot?.Presentation is null) return null;
-
-        try
-        {
-            string currentText = SafeSlideText(_aiSlideId);
-            string previousText = "";
-            string nextText = "";
-            PptPresentationDetails details = Services.Ppt.GetPresentationDetails();
-            if (details?.Slides is { Count: > 0 })
-            {
-                int position = -1;
-                for (int i = 0; i < details.Slides.Count; i++)
-                {
-                    if (details.Slides[i].SlideId != _aiSlideId) continue;
-                    position = i;
-                    break;
-                }
-
-                if (position > 0)
-                    previousText = SafeSlideText(details.Slides[position - 1].SlideId);
-                if (position >= 0 && position + 1 < details.Slides.Count)
-                    nextText = SafeSlideText(details.Slides[position + 1].SlideId);
-            }
-
-            return SlideContextPolicy.Build(
-                snapshot.Presentation.Name, _aiSlideId, _aiSlideIndex,
-                currentText, previousText, nextText,
-                _teachingSession?.CurrentAnimationStep ?? 0);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"课件上下文读取失败：{ex.Message}", Core.Diagnostics.LogType.Info);
-            return null;
-        }
+        var window = _pptNavigations.GetValueOrDefault(PptNavigationPlacement.BottomLeft)
+            ?? _pptNavigations.Values.FirstOrDefault();
+        window?.SetPreviewOpen(!window.PreviewOpen);
     }
 
     private string SafeSlideText(int slideId)
@@ -3808,7 +2262,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    /// <summary>当前放映课件的显示名；未连接或读取失败时返回空。</summary>
+
     private string CurrentPresentationName()
     {
         try
@@ -3821,1290 +2275,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    private AssistantWindow PrepareAssistantWindow()
-    {
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] Prepare 入口：anchor=({_aiAnchor.Left:0.0},{_aiAnchor.Top:0.0})-({_aiAnchor.Right:0.0},{_aiAnchor.Bottom:0.0})，"
-            + $"regions={_aiProblem?.Count ?? 0}，board={_board is not null}",
-            Core.Diagnostics.LogType.Info);
-        if (_aiAssistant is not null) _aiAssistant.Close();
-
-        Core.Diagnostics.FileLog.WriteLogToFile("[AI] 即将构造 AssistantWindow", Core.Diagnostics.LogType.Info);
-        var window = new AssistantWindow(Services.Settings.Appearance.Theme, Services.Settings.Features);
-        _aiAssistant = window;
-        _aiAssistantFromSideBoard = _aiTarget?.Kind == AssistantCanvasKind.SideBoard;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] AssistantWindow 构造完成：hwnd=0x{WindowChrome.GetHwnd(window).ToInt64():X}",
-            Core.Diagnostics.LogType.Info);
-        window.StopRequested += OnAiStopRequested;
-        window.RetryRequested += OnAiRetryRequested;
-        window.CopyRequested += OnAiCopyRequested;
-        window.PasteRequested += OnAiPasteRequested;
-        window.FollowUpRequested += OnAiFollowUpRequested;
-        window.TeachingModeRequested += OnAiTeachingModeChanged;
-        window.RevealNextRequested += OnAiRevealNext;
-        window.VariantRequested += OnAiVariantRequested;
-        window.AddRegionRequested += () => _ = AddAiRegionAsync();
-        window.RemoveRegionRequested += OnAiRemoveRegion;
-        window.ReRecognizeRegionRequested += OnAiReRecognizeRegion;
-        window.MoveRegionRequested += OnAiMoveRegion;
-        window.RegionSelected += OnAiRegionSelected;
-        window.Closed += () => OnAiWindowClosed(window);
-        window.SetAnchor(_aiAnchor);
-        window.RegionSelectionEnabled =
-            Services.Settings.Ai.EnableLocalCorrection && !(_aiProblem is { Count: > 1 });
-        window.ApplyProblem(_aiProblem);
-        window.SetFavoriteSource(
-            CurrentPresentationName(),
-            _aiSlideId > 0 ? _aiSlideId : _aiProblem?.SlideId ?? 0,
-            AiFavoriteBoardPage());
-
-        var (work, dpi, originXDip, originYDip) = AssistantTarget();
-        var workDip = new AssistantRect(work.X / dpi, work.Y / dpi,
-            (work.X + work.Width) / dpi, (work.Y + work.Height) / dpi);
-        double workWidth = workDip.Width;
-        double workHeight = workDip.Height;
-        double cardWidth = AssistantWindow.CardWidth;
-        double cardHeight = Math.Max(200, Math.Min(460, workHeight * AssistantWindow.MaxHeightRatio));
-
-        AssistantRect anchor = _aiAnchor.IsEmpty ? CenterAnchor() : _aiAnchor;
-        // 锚点是客户区 DIP；定位用窗口需要屏幕绝对 DIP 与目标工作区。
-        AssistantRect screenAnchor = AssistantLayout.Offset(anchor, originXDip, originYDip);
-
-        AssistantPlacement placement;
-        if (anchor.Width > workWidth * 0.6 || anchor.Height > workHeight * 0.6)
-        {
-            // 整屏/大范围识别时锚点几乎铺满视口，跟随锚点会把浮窗顶到左上角；
-            // 改为固定在目标工作区右下角，并按同一工作区做边界 clamp。
-            placement = AssistantLayout.DockBottomRight(workDip, cardWidth, cardHeight);
-        }
-        else
-        {
-            placement = AssistantLayout.PlaceInWorkArea(screenAnchor, cardWidth, cardHeight, workDip);
-        }
-
-        // 目标画布窗口作为 owner：子板/主展板时浮窗随板走；overlay 模式不设 Win32 owner，
-        // 避免此前把 WinUI 浮窗挂到独立 Win32 分层窗口后不可见。
-        Window canvasWindow = TargetCanvasWindow();
-        IntPtr owner = canvasWindow is not null ? WindowChrome.GetHwnd(canvasWindow) : IntPtr.Zero;
-        IntPtr anchorHwnd = owner != IntPtr.Zero ? owner : Overlay.Window.Handle;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] SetOwner 前：target={AssistantTargetPolicy.Describe(_aiTarget)}，"
-            + $"owner=0x{owner.ToInt64():X}，currentOwner=0x{WindowChrome.GetOwner(window).ToInt64():X}",
-            Core.Diagnostics.LogType.Info);
-        WindowChrome.SetOwner(window, owner);
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] SetOwner 后：currentOwner=0x{WindowChrome.GetOwner(window).ToInt64():X}",
-            Core.Diagnostics.LogType.Info);
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] ShowAt 前：placement=({placement.X:0.0},{placement.Y:0.0})，dpi={dpi:0.###}，workHeight={workHeight:0.0}",
-            Core.Diagnostics.LogType.Info);
-        window.ShowAt(placement, dpi, workHeight);
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] ShowAt 后：appWindowId={window.AppWindow.Id.Value}，isVisible={window.AppWindow.IsVisible}，"
-            + $"position=({window.AppWindow.Position.X},{window.AppWindow.Position.Y})，"
-            + $"size={window.AppWindow.Size.Width}x{window.AppWindow.Size.Height}",
-            Core.Diagnostics.LogType.Info);
-        WindowChrome.EnsureAbove(window, anchorHwnd);
-        _aiHiddenWithSideBoard = false;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] EnsureAbove 后：isVisible={window.AppWindow.IsVisible}，anchor=0x{anchorHwnd.ToInt64():X}",
-            Core.Diagnostics.LogType.Info);
-        ShowLassoAiHintOnce(window);
-        return window;
-    }
-
-    /// <summary>
-    /// 首次使用套索 / AI 识别时的一次性轻提示：提示内容走浮窗现有 notice 行，
-    /// 约 2.6 秒自动消失；写入设置后不再出现，避免反复打扰。
-    /// </summary>
-    private void ShowLassoAiHintOnce(AssistantWindow window)
-    {
-        if (window is null || Services.Settings.Ai.HasSeenLassoHint) return;
-
-        try
-        {
-            Services.Settings.Ai.HasSeenLassoHint = true;
-            Services.SaveSettings();
-        }
-        catch
-        {
-            // 设置写入失败不应阻断 AI 功能；下次启动会再次提示一次。
-        }
-
-        window.ShowNotice("框选内容后，可使用 AI 识别公式和图形。");
-    }
-
-    private void StartAssistantStream(AssistantRequest request, bool followUp, string question)
-    {
-        _aiClient ??= new AiClient(AiConfig.ReadFromEnvironment());
-        _aiStream?.Abort();
-        _aiStream = null;
-
-        long now = Environment.TickCount64;
-        if (followUp)
-        {
-            _aiSession ??= AssistantMachine.CreateSession(AssistantMode.Chat, request.SessionId);
-            AssistantMachine.BeginFollowUp(_aiSession, question, now);
-            _aiSession.Mode = AssistantMode.Chat;
-        }
-        else
-        {
-            _aiSession = AssistantMachine.CreateSession(request.Mode, request.SessionId);
-            AssistantMachine.BeginCapture(_aiSession, now);
-            AssistantMachine.BeginRecognize(_aiSession);
-            _aiSession.TeachingMode = request.Teaching;
-            _aiSession.RevealedSteps = 0;
-        }
-
-        if (_aiTarget is not null) _aiTarget.SessionId = _aiSession?.SessionId ?? "";
-
-        _aiAssistant?.Apply(_aiSession, _aiThumb);
-        _aiAssistant?.SetBusy(true);
-
-        // 翻页后复用同一浮窗时刷新收藏来源，避免把新页讲评记到旧 slideId。
-        _aiAssistant?.SetFavoriteSource(
-            CurrentPresentationName(),
-            _aiSlideId > 0 ? _aiSlideId : _aiProblem?.SlideId ?? 0,
-            AiFavoriteBoardPage());
-
-        _aiTwoStage = Services.Settings.Ai.EnableTwoStage
-            && (_aiProblem is null || _aiProblem.Count <= 1);
-        _aiStageFirstToken = null;
-        _aiStageReset = false;
-        ResetAiPreStage();
-
-        if (_aiTwoStage)
-        {
-            try
-            {
-                _aiSession.LocalHint = LocalFormulaTranscriber.Hint(request.InkStrokes, _aiSession);
-                _aiAssistant?.Apply(_aiSession, _aiThumb);
-            }
-            catch (Exception ex)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    $"AI 本地提示失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            }
-        }
-
-        int generation = _aiGate.Begin(request.SessionId);
-
-        try
-        {
-            if (_aiTwoStage)
-            {
-                AiStreamHandle handle = _aiClient.StartTwoStage(
-                    request,
-                    ev => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiEvent(ev);
-                    }),
-                    err => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiError(err);
-                    }),
-                    () => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiDone();
-                    }));
-                _aiStream = handle;
-                handle.SecondStageStarted += () => _dispatcher.TryEnqueue(() =>
-                {
-                    if (ReferenceEquals(_aiStream, handle) && _aiGate.IsCurrent(generation))
-                        OnAiSecondStageStarted();
-                });
-            }
-            else
-            {
-                _aiStream = _aiClient.Start(
-                    request,
-                    ev => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiEvent(ev);
-                    }),
-                    err => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiError(err);
-                    }),
-                    () => _dispatcher.TryEnqueue(() =>
-                    {
-                        if (_aiGate.IsCurrent(generation)) OnAiDone();
-                    }));
-            }
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 请求启动失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            OnAiError("AI 请求启动失败");
-        }
-    }
-
-    private void OnAiEvent(AssistantEvent ev)
-    {
-        if (_aiSession is null) return;
-        if (!AiTargetStillCurrent(writeBack: false)) return;
-        try
-        {
-            if (_aiTwoStage) ApplyTwoStageEvent(ev);
-            else AssistantMachine.ApplyEvent(_aiSession, ev, Environment.TickCount64);
-
-            if (Services.Settings.Ai.EnableVerification && ev.Kind == AssistantEventKind.Formula)
-                VerifySessionFormula(_aiSession);
-            _aiAssistant?.Apply(_aiSession, _aiThumb);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 事件处理失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    /// <summary>
-    /// 两阶段去重：InkOnly 只作首屏预览，WithImage 通常从头重放最终结果。
-    /// 检测到首 token 重放时清空草稿，避免两份内容叠加。
-    /// </summary>
-    private void ApplyTwoStageEvent(AssistantEvent ev)
-    {
-        if (ev is null || _aiSession is null) return;
-
-        if (ev.Kind == AssistantEventKind.Token)
-        {
-            bool replay = !_aiStageReset
-                && _aiStageFirstToken is not null
-                && _aiSession.Text.Length > 0
-                && string.Equals(ev.Text, _aiStageFirstToken, StringComparison.Ordinal);
-
-            if (replay)
-            {
-                _aiSession.Text = "";
-                _aiSession.Formula = "";
-                _aiSession.Steps.Clear();
-                _aiSession.Annotations.Clear();
-                _aiSession.TokenCount = 0;
-                _aiSession.FirstTokenAtMs = 0;
-                _aiSession.LocalHint = "";
-                _aiStageReset = true;
-            }
-
-            _aiStageFirstToken ??= ev.Text ?? "";
-        }
-
-        AssistantMachine.ApplyEvent(_aiSession, ev, Environment.TickCount64);
-    }
-
-    /// <summary>
-    /// WithImage 阶段启动前，把 InkOnly 阶段产生的草稿暂存并清空会话；
-    /// 两段是同一份正文的重放/续写，完成后按语义合并去重。
-    /// </summary>
-    private void OnAiSecondStageStarted()
-    {
-        if (_aiSession is null || !_aiTwoStage) return;
-        if (!AiTargetStillCurrent(writeBack: false)) return;
-
-        _aiPreStageText = _aiSession.Text;
-        _aiPreStageSteps = _aiSession.Steps
-            .Select(step => CloneStep(step))
-            .ToList();
-        _aiPreStageFormula = _aiSession.Formula;
-        _aiSecondStageStarted = true;
-
-        _aiSession.Text = "";
-        _aiSession.Steps.Clear();
-        _aiSession.Formula = "";
-        _aiSession.TokenCount = 0;
-        _aiSession.State = AssistantState.Streaming;
-        _aiAssistant?.Apply(_aiSession, _aiThumb, preserveScroll: true);
-    }
-
-    /// <summary>合并两阶段结果：新文本已包含旧文本时取较长的，否则拼接；步骤按内容去重。</summary>
-    private void MergeAiPreStage()
-    {
-        if (!_aiSecondStageStarted || _aiSession is null) return;
-
-        string newText = _aiSession.Text ?? "";
-        string preText = _aiPreStageText ?? "";
-        if (string.IsNullOrEmpty(newText))
-        {
-            _aiSession.Text = preText;
-        }
-        else if (!string.IsNullOrEmpty(preText))
-        {
-            if (newText.Contains(preText, StringComparison.Ordinal)
-                || preText.Contains(newText, StringComparison.Ordinal))
-            {
-                _aiSession.Text = newText.Length >= preText.Length ? newText : preText;
-            }
-            else
-            {
-                _aiSession.Text = preText + newText;
-            }
-        }
-
-        if (_aiPreStageSteps.Count > 0)
-        {
-            List<AssistantStep> current = _aiSession.Steps;
-            if (current.Count == 0)
-            {
-                ReplaceSteps(current, _aiPreStageSteps);
-            }
-            else if (current.Count != _aiPreStageSteps.Count || !StepsEquivalent(current, _aiPreStageSteps))
-            {
-                var merged = new List<AssistantStep>(current.Count + _aiPreStageSteps.Count);
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                foreach (AssistantStep step in _aiPreStageSteps)
-                {
-                    if (seen.Add(StepKey(step))) merged.Add(CloneStep(step));
-                }
-
-                foreach (AssistantStep step in current)
-                {
-                    if (seen.Add(StepKey(step))) merged.Add(CloneStep(step));
-                }
-
-                ReplaceSteps(current, merged);
-            }
-        }
-
-        if (string.IsNullOrEmpty(_aiSession.Formula))
-            _aiSession.Formula = _aiPreStageFormula;
-
-        ResetAiPreStage();
-    }
-
-    private void ResetAiPreStage()
-    {
-        _aiPreStageText = "";
-        _aiPreStageSteps.Clear();
-        _aiPreStageFormula = "";
-        _aiSecondStageStarted = false;
-    }
-
-    private static AssistantStep CloneStep(AssistantStep step) => new()
-    {
-        Index = step.Index,
-        Text = step.Text ?? "",
-        Latex = step.Latex ?? "",
-    };
-
-    private static string StepKey(AssistantStep step) =>
-        step.Index.ToString(System.Globalization.CultureInfo.InvariantCulture)
-        + "\u0001" + (step.Text ?? "")
-        + "\u0001" + (step.Latex ?? "");
-
-    private static bool StepsEquivalent(List<AssistantStep> left, List<AssistantStep> right)
-    {
-        for (int i = 0; i < left.Count; i++)
-        {
-            if (!string.Equals(left[i].Text ?? "", right[i].Text ?? "", StringComparison.Ordinal)
-                || !string.Equals(left[i].Latex ?? "", right[i].Latex ?? "", StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static void ReplaceSteps(List<AssistantStep> target, IReadOnlyList<AssistantStep> source)
-    {
-        target.Clear();
-        foreach (AssistantStep step in source) target.Add(CloneStep(step));
-    }
-
-    private static void VerifySessionFormula(AssistantSession session)
-    {
-        if (session is null || string.IsNullOrWhiteSpace(session.Formula)) return;
-
-        try
-        {
-            VerificationResult result = EquationVerifier.Verify(session.Formula, session.Confidence);
-            session.Verified = result.Status == VerificationStatus.Verified;
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 自检失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    private void OnAiError(string message)
-    {
-        if (!AiTargetStillCurrent(writeBack: false)) { _aiAssistant?.SetBusy(false); return; }
-        if (_aiSession is null) { _aiAssistant?.SetBusy(false); return; }
-        ResetAiPreStage();
-        AssistantMachine.Fail(_aiSession, message);
-        _aiAssistant?.Apply(_aiSession, _aiThumb);
-        _aiAssistant?.SetBusy(false);
-        _aiStream = null;
-    }
-
-    private void OnAiDone()
-    {
-        if (!AiTargetStillCurrent(writeBack: false)) { _aiAssistant?.SetBusy(false); return; }
-        if (_aiSession is null) { _aiAssistant?.SetBusy(false); return; }
-        try
-        {
-            MergeAiPreStage();
-            AssistantMachine.Finish(_aiSession);
-            if (Services.Settings.Ai.EnableVerification) VerifySessionFormula(_aiSession);
-            _aiSession.LocalHint = "";
-            _aiAssistant?.Apply(_aiSession, _aiThumb);
-            _aiAssistant?.SetPasted(false);
-            _aiAssistant?.SetBusy(false);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 完成处理失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            _aiAssistant?.SetBusy(false);
-        }
-
-        RecordAiExplanation();
-
-        if (!string.IsNullOrEmpty(_reRecognizeRegionId))
-        {
-            string id = _reRecognizeRegionId;
-            _reRecognizeRegionId = null;
-            if (!AiTargetStillCurrent(writeBack: true))
-            {
-                _reRecognizeRegionId = null;
-            }
-            else if (_aiProblem is not null)
-            {
-                ProblemRegion region = _aiProblem.Regions.Find(item => item.Id == id);
-                if (region is not null && !string.IsNullOrWhiteSpace(_aiSession?.Text))
-                    region.Text = _aiSession.Text.Trim();
-                _aiAssistant?.ApplyProblem(_aiProblem);
-                if (!_aiProblem.IsEmpty)
-                    StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-            }
-        }
-
-        _aiStream = null;
-
-        if (_variantPending)
-        {
-            _variantPending = false;
-            if (AiTargetStillCurrent(writeBack: true)) _ = PreviewVariantAsync(_aiSession);
-        }
-    }
-
-    /// <summary>把 AI 讲解按 slideId 归档到课件页索引，翻回该页可回查并导出讲义。</summary>
-    private void RecordAiExplanation()
-    {
-        if (_aiSession is null || _aiSlideId <= 0) return;
-        if (string.IsNullOrWhiteSpace(_aiSession.Text)) return;
-
-        try
-        {
-            if (_slideIndex is not null)
-            {
-                _slideIndex.SetText(_aiSlideId, _aiSession.Text);
-                _slideIndex.MarkAi(_aiSlideId);
-                SaveSlideIndex();
-                _slideNav?.Update(_slideIndex, _pptSession.Snapshot?.Slide?.SlideId ?? 0);
-            }
-
-            _teachingSession?.Link(
-                "ai", _aiSession.SessionId, _aiSlideId, _aiSlideIndex,
-                AiFavoriteBoardPage(), "", Environment.TickCount64);
-            SaveTeachingSession();
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 讲解归档失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    /// <summary>统一课堂会话落盘：课件、画板、AI、练习、工具结果与导出都关联到同一 ID。</summary>
-    private void SaveTeachingSession()
-    {
-        if (_teachingSession is null || string.IsNullOrEmpty(_teachingSession.Id)) return;
-
-        try
-        {
-            string directory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "InkCanvas", "teaching");
-            Directory.CreateDirectory(directory);
-            File.WriteAllText(
-                Path.Combine(directory, "session-" + _teachingSession.Id + ".json"),
-                _teachingSession.Serialize());
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"课堂会话保存失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    private void OnAiStopRequested()
-    {
-        if (!AiTargetStillCurrent(writeBack: false)) return;
-        _aiStream?.Abort();
-        _aiStream = null;
-        ResetAiPreStage();
-        if (_aiSession is null) return;
-        AssistantMachine.Finish(_aiSession);
-        _aiAssistant?.Apply(_aiSession, _aiThumb);
-        _aiAssistant?.SetBusy(false);
-    }
-
-    private void OnAiRetryRequested() => OpenAiAssistant();
-
-    /// <summary>
-    /// 切换讲题模式只调整展示裁剪，不重新识别或重发请求；已生成内容按新模式重排。
-    /// </summary>
-    private void OnAiTeachingModeChanged(AssistantTeachingMode mode)
-    {
-        if (_aiSession is null) return;
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-
-        AssistantMachine.SetTeachingMode(_aiSession, mode);
-        Services.Settings.Ai.TeachingMode = AssistantTeachingPolicy.Wire(mode);
-        Services.SaveSettings();
-        _aiAssistant?.Apply(_aiSession, _aiThumb, preserveScroll: true);
-
-        // 若当前会话由「只给提示」裁剪而来（没有步骤/公式），切到需要更多内容的模式时，
-        // 复用同一识别结果重新生成，而不是重新截图或重新识别。
-        bool lacksDetail = _aiSession.Steps.Count == 0
-            && string.IsNullOrEmpty(_aiSession.Formula);
-        if (mode != AssistantTeachingMode.Hint && lacksDetail && !string.IsNullOrEmpty(_aiThumb))
-        {
-            StartAssistantStream(BuildProblemRequest(mode), followUp: false, question: "");
-        }
-    }
-
-    private void OnAiRevealNext()
-    {
-        if (_aiSession is null) return;
-        if (!AssistantMachine.RevealNextStep(_aiSession)) return;
-        _aiAssistant?.Apply(_aiSession, _aiThumb, preserveScroll: true);
-    }
-
-    /// <summary>基于当前题生成同知识点变式题；结果先预览编辑，不直接贴入。</summary>
-    private void OnAiVariantRequested(bool advanced)
-    {
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-        if (_aiProblem is null || _aiProblem.IsEmpty)
-        {
-            _aiAssistant?.ShowNotice("先框选一道题，再生成变式题");
-            return;
-        }
-
-        _variantDifficulty = advanced ? ExerciseDifficulty.Advanced : ExerciseDifficulty.Basic;
-        _variantPending = true;
-
-        AssistantRequest request = ExerciseFlowPolicy.BuildRequest(
-            _aiProblem,
-            _variantDifficulty,
-            _aiSession?.SessionId ?? _aiProblem.SessionId,
-            AssistantTeachingMode.Full);
-        request.SlideContext = BuildSlideContext();
-
-        StartAssistantStream(request, followUp: false, question: "");
-    }
-
-    private async Task PreviewVariantAsync(AssistantSession session)
-    {
-        if (session is null || session.State != AssistantState.Done) return;
-
-        VariantQuestionDraft draft = ExerciseFlowPolicy.Parse(
-            session.Text, _variantDifficulty,
-            sourceSessionId: session.SessionId,
-            slideId: _aiSlideId,
-            slideIndex: _aiSlideIndex,
-            nowMs: Environment.TickCount64);
-
-        if (!draft.IsValid)
-        {
-            await NotifyAsync("变式题", "AI 没有返回可用题目，请重试或补充框选。");
-            return;
-        }
-
-        var textBox = new TextBox
-        {
-            Text = draft.Text,
-            AcceptsReturn = true,
-            TextWrapping = TextWrapping.Wrap,
-            Height = 150,
-            FontSize = 13,
-        };
-        var answerBox = new TextBox
-        {
-            Text = draft.Answer,
-            Height = 34,
-            FontSize = 13,
-            PlaceholderText = "参考答案（可留空）",
-        };
-
-        var content = new StackPanel { Spacing = 8 };
-        content.Children.Add(new TextBlock
-        {
-            Text = "预览并编辑后再贴入新画板页；原题不会被覆盖。",
-            FontSize = 12,
-            Opacity = 0.75,
-            TextWrapping = TextWrapping.Wrap,
-        });
-        content.Children.Add(new TextBlock { Text = "题目", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        content.Children.Add(textBox);
-        content.Children.Add(new TextBlock { Text = "参考答案", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        content.Children.Add(answerBox);
-
-        var dialog = new ContentDialog
-        {
-            Title = (_variantDifficulty == ExerciseDifficulty.Advanced ? "提高变式" : "基础变式") + " · 随堂练习",
-            Content = content,
-            PrimaryButtonText = "开始练习",
-            SecondaryButtonText = "仅贴到新页",
-            CloseButtonText = "取消",
-            DefaultButton = ContentDialogButton.Primary,
-        };
-
-        ContentDialogResult result = await ShowDialogAsync(dialog);
-        if (result == ContentDialogResult.None) return;
-
-        draft.Text = textBox.Text?.Trim() ?? "";
-        draft.Answer = answerBox.Text?.Trim() ?? "";
-        if (!ExerciseFlowPolicy.CanStart(draft))
-        {
-            await NotifyAsync("随堂练习", "题目内容不能为空。");
-            return;
-        }
-
-        await StartPracticeAsync(draft, startTimer: result == ContentDialogResult.Primary);
-    }
-
-    private async Task StartPracticeAsync(VariantQuestionDraft draft, bool startTimer)
-    {
-        if (_board is null) ToggleBoard();
-        if (_board is null)
-        {
-            await NotifyAsync("随堂练习", "画板未能打开，请稍后重试。");
-            return;
-        }
-
-        if (!Services.Board.InsertPageAfterCurrent())
-        {
-            await NotifyAsync("随堂练习", "无法新建画板页（可能已达页数上限）。");
-            return;
-        }
-
-        int pageIndex = Services.Board.CurrentIndex;
-        Services.Board.RenamePage(pageIndex, Services.Settings.Classroom.PracticePageName);
-
-        IReadOnlyList<string> lines = ExerciseFlowPolicy.BuildPasteLines(draft);
-        var (width, height) = PasteCardLayout.Estimate(lines);
-        byte[] png = await PasteCardRenderer.RenderPngAsync("随堂练习", lines, width, height);
-        if (png.Length == 0)
-        {
-            await NotifyAsync("随堂练习", "练习卡片渲染失败，已保留新页。");
-            return;
-        }
-
-        var work = ScreenService.WorkArea;
-        double dpi = CurrentDpi() > 0 ? CurrentDpi() : 1.0;
-        double left = Math.Clamp(
-            (work.Width / dpi) / 2.0 - width / 2.0, 8, Math.Max(8, work.Width / dpi - width - 8));
-        double top = Math.Clamp(
-            (work.Height / dpi) / 2.0 - height / 2.0, 8, Math.Max(8, work.Height / dpi - height - 8));
-
-        string metadata = new AiPasteMetadata
-        {
-            Kind = AiPasteKind.Steps,
-            Text = draft.Text,
-            Lines = new List<string>(lines),
-        }.Serialize();
-
-        bool added = Services.Board.AddImage(new BoardImageAsset
-        {
-            Name = "随堂练习",
-            Data = png,
-            ContentType = "image/png",
-            Left = (float)left,
-            Top = (float)top,
-            Width = width,
-            Height = height,
-            Metadata = metadata,
-        });
-
-        if (!added)
-        {
-            await NotifyAsync("随堂练习", "练习卡片贴入失败，已保留空的新页。");
-            return;
-        }
-
-        PracticePlan plan = ExerciseFlowPolicy.Plan(
-            draft, pageIndex, Services.Settings.Classroom.CountdownMinutes);
-        _activePractice = plan;
-
-        ApplyPreset(ClassroomPresetLibrary.ForId("practice"));
-        if (startTimer)
-        {
-            OpenTimer();
-            _countdown?.StartCountdown(TimeSpan.FromMinutes(plan.CountdownMinutes));
-        }
-
-        _teachingSession?.Link(
-            "exercise", draft.Id, _aiSlideId, _aiSlideIndex, pageIndex, draft.Text,
-            Environment.TickCount64);
-        SaveTeachingSession();
-
-        await NotifyAsync("随堂练习",
-            "已贴入第 " + (pageIndex + 1) + " 页"
-            + (startTimer ? "，倒计时已开始（" + plan.CountdownMinutes + " 分钟）。" : "。"));
-    }
-
-    /// <summary>把画布当前选区截图追加为拼题的又一个区域。</summary>
-    private async Task AddAiRegionAsync()
-    {
-        if (_aiProblem is null || _aiAssistant is null) return;
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-
-        InkController controller = _aiTarget?.Kind switch
-        {
-            AssistantCanvasKind.SideBoard => Services.SideBoard.Current,
-            AssistantCanvasKind.MainBoard => Services.Board.Current,
-            _ => ActiveController,
-        };
-        IReadOnlyList<InkStroke> selection = controller.Selection;
-        Rect bounds = controller.SelectionBounds;
-        if (selection.Count == 0 || bounds.Width < 16 || bounds.Height < 16)
-        {
-            _aiAssistant.ShowNotice("先在画布上用选择工具框选题干/图形/条件，再点「追加选区」");
-            return;
-        }
-
-        var window = _aiAssistant;
-        Matrix3x2 matrix = controller.ViewTransform;
-        Vector2 topLeft = Vector2.Transform(new Vector2(bounds.Left, bounds.Top), matrix);
-        Vector2 bottomRight = Vector2.Transform(new Vector2(bounds.Right, bounds.Bottom), matrix);
-        var viewRect = new AssistantRect(
-            Math.Min(topLeft.X, bottomRight.X),
-            Math.Min(topLeft.Y, bottomRight.Y),
-            Math.Max(topLeft.X, bottomRight.X),
-            Math.Max(topLeft.Y, bottomRight.Y));
-
-        var (_, dpi, originXDip, originYDip) = AssistantTarget();
-        string thumb = await AssistantCapture.CapturePngBase64Async(
-            (int)Math.Round((viewRect.Left + originXDip) * dpi),
-            (int)Math.Round((viewRect.Top + originYDip) * dpi),
-            (int)Math.Round(viewRect.Width * dpi),
-            (int)Math.Round(viewRect.Height * dpi));
-
-        if (!ReferenceEquals(_aiAssistant, window) || _aiProblem is null) return;
-
-        ProblemRegion added = ProblemContextPolicy.Add(_aiProblem, new ProblemRegion
-        {
-            ImageBase64 = thumb,
-            Anchor = viewRect,
-            Source = "selection",
-        });
-        if (added is null)
-        {
-            window.ShowNotice("该选区没有可识别内容");
-            return;
-        }
-
-        _aiStrokes.AddRange(BuildAssistantStrokes(selection, matrix));
-        AssistantRect combined = ProblemContextPolicy.CombinedAnchor(_aiProblem);
-        if (!combined.IsEmpty)
-        {
-            _aiAnchor = combined;
-            window.SetAnchor(_aiAnchor);
-        }
-
-        window.ApplyProblem(_aiProblem);
-        window.ShowNotice("已追加第 " + added.Order + " 个选区，共 " + _aiProblem.Count + " 块");
-        StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-    }
-
-    private void OnAiRemoveRegion(string id)
-    {
-        if (_aiProblem is null || _aiAssistant is null) return;
-        if (!ProblemContextPolicy.Remove(_aiProblem, id)) return;
-
-        _aiAssistant.ApplyProblem(_aiProblem);
-        if (_aiProblem.IsEmpty)
-        {
-            _aiAssistant.ShowNotice("已移除全部选区，可回画布重新框选");
-            return;
-        }
-
-        StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-    }
-
-    /// <summary>只重新识别一个选区：识别完成后写回该区文字，再携带完整拼题上下文重新求解。</summary>
-    private void OnAiReRecognizeRegion(string id)
-    {
-        if (_aiProblem is null || _aiAssistant is null) return;
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-
-        ProblemRegion region = _aiProblem.Regions.Find(item => item.Id == id);
-        if (region is null || string.IsNullOrEmpty(region.ImageBase64))
-        {
-            _aiAssistant.ShowNotice("该选区没有可重新识别的图片");
-            return;
-        }
-
-        _reRecognizeRegionId = id;
-        var request = new AssistantRequest
-        {
-            ImageBase64 = region.ImageBase64,
-            Images = new[] { region },
-            InkStrokes = Array.Empty<AssistantStroke>(),
-            Viewport = new AssistantViewport { Scale = 1.0, Rect = region.Anchor },
-            Mode = AssistantMode.Auto,
-            SessionId = _aiProblem.SessionId,
-            Teaching = AssistantTeachingMode.Full,
-            Purpose = "region",
-            SlideContext = BuildSlideContext(),
-        };
-
-        _aiAssistant.ShowNotice("正在重新识别第 " + region.Order + " 个选区…");
-        StartAssistantStream(request, followUp: false, question: "");
-    }
-
-    private void OnAiMoveRegion(string id, int delta)
-    {
-        if (_aiProblem is null || _aiAssistant is null) return;
-        if (!ProblemContextPolicy.Move(_aiProblem, id, delta)) return;
-
-        _aiAssistant.ApplyProblem(_aiProblem);
-        StartAssistantStream(BuildProblemRequest(), followUp: false, question: "");
-    }
-
-    private void OnAiCopyRequested()
-    {
-        if (_aiSession is null) return;
-        string text = string.IsNullOrEmpty(_aiSession.Formula) ? _aiSession.Text : _aiSession.Formula;
-        if (string.IsNullOrEmpty(text)) return;
-
-        try
-        {
-            var package = new DataPackage();
-            package.SetText(text);
-            Clipboard.SetContent(package);
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile($"AI 复制失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-        }
-    }
-
-    private void OnAiPasteRequested() => _ = PasteAssistantAsync();
-
-    private async Task PasteAssistantAsync()
-    {
-        if (!AiTargetStillCurrent(writeBack: true)) { _aiAssistant?.SetBusy(false); return; }
-        if (_aiSession is null || _aiAssistant is null) return;
-        if (_aiSession.State != AssistantState.Done) return;
-
-        var window = _aiAssistant;
-        AssistantSession session = _aiSession;
-        List<string> lines = BuildPasteLines(session);
-        var (width, height) = PasteCardLayout.Estimate(lines);
-
-        window.SetBusy(true);
-        byte[] png = await PasteCardRenderer.RenderPngAsync("AI 助教", lines, width, height);
-        if (!ReferenceEquals(_aiAssistant, window)) return;
-        if (!AiTargetStillCurrent(writeBack: true))
-        {
-            window.SetBusy(false);
-            return;
-        }
-
-        if (png is null || png.Length == 0)
-        {
-            window.SetBusy(false);
-            AssistantMachine.Fail(session, "贴回失败");
-            window.Apply(session, _aiThumb);
-            return;
-        }
-
-        var (work, dpi, _, _) = AssistantTarget();
-        double viewWidth = work.Width / dpi;
-        double viewHeight = work.Height / dpi;
-        if (_aiTarget?.Kind == AssistantCanvasKind.SideBoard && _sideBoard is not null)
-        {
-            ScreenRect client = WindowChrome.GetClientBounds(WindowChrome.GetHwnd(_sideBoard));
-            if (client.Width > 0 && client.Height > 0)
-            {
-                viewWidth = client.Width / dpi;
-                viewHeight = client.Height / dpi;
-            }
-        }
-        var (left, top, w, h) = PasteCardLayout.Place(
-            _aiAnchor, width, height, viewWidth, viewHeight);
-
-        string metadata = "";
-        if (Services.Settings.Ai.EnableEditablePaste)
-        {
-            try
-            {
-                metadata = BuildPasteMetadata(session).Serialize();
-            }
-            catch (Exception ex)
-            {
-                Core.Diagnostics.FileLog.WriteLogToFile(
-                    $"AI 贴回元数据生成失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            }
-        }
-
-        BoardService targetBoard = AiTargetBoard();
-        bool added = targetBoard.AddImage(new BoardImageAsset
-        {
-            Name = "AI 助教",
-            Data = png,
-            ContentType = "image/png",
-            Left = (float)left,
-            Top = (float)top,
-            Width = (float)w,
-            Height = (float)h,
-            Metadata = metadata,
-        });
-        if (!added)
-        {
-            window.SetBusy(false);
-            window.ShowNotice("贴回失败：目标画板当前页已失效，请重新框选后再试");
-            return;
-        }
-
-        if (targetBoard == Services.Board && _board is null) ToggleBoard();
-
-        window.SetBusy(false);
-        window.SetPasted(true);
-    }
-
-    private void OnAiFollowUpRequested(string question)
-    {
-        if (_aiSession is null) return;
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-
-        var request = new AssistantRequest
-        {
-            ImageBase64 = _aiThumb,
-            InkStrokes = Array.Empty<AssistantStroke>(),
-            Viewport = new AssistantViewport { Scale = 1.0, Rect = _aiAnchor },
-            Mode = AssistantMode.Chat,
-            SessionId = _aiSession.SessionId,
-        };
-        StartAssistantStream(request, followUp: true, question: question);
-    }
-
-    private void OnAiWindowClosed(AssistantWindow window)
-    {
-        if (!ReferenceEquals(_aiAssistant, window)) return;
-        _aiGate.Invalidate();
-        _variantPending = false;
-        _aiStream?.Abort();
-        _aiStream = null;
-        _aiRegionStream?.Abort();
-        _aiRegionStream = null;
-        ResetAiPreStage();
-        _aiAssistantFromSideBoard = false;
-        _aiHiddenWithSideBoard = false;
-        _aiAssistant = null;
-    }
-
-    private void OnAiRegionSelected(AssistantRect rect)
-    {
-        AssistantSession receivedSession = _aiSession;
-        AssistantWindow receivedWindow = _aiAssistant;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"AI 局部纠错入口：recv rect=({rect.Left:0.0},{rect.Top:0.0})-({rect.Right:0.0},{rect.Bottom:0.0})，"
-            + $"EnableLocalCorrection={Services.Settings.Ai.EnableLocalCorrection}，"
-            + $"会话={(receivedSession is null ? "null" : receivedSession.State.ToString())}，"
-            + $"窗口={(receivedWindow is null ? "null" : "ok")}",
-            Core.Diagnostics.LogType.Trace);
-
-        if (!AiTargetStillCurrent(writeBack: true)) return;
-        if (!Services.Settings.Ai.EnableLocalCorrection) return;
-        if (rect.IsEmpty) return;
-
-        AssistantSession session = _aiSession;
-        AssistantWindow window = _aiAssistant;
-        if (session is null || window is null) return;
-        if (session.State != AssistantState.Done)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 局部纠错入口：会话状态 {session.State} 非 Done，提示后返回",
-                Core.Diagnostics.LogType.Trace);
-            window.ShowNotice("生成完成后才能局部纠错");
-            return;
-        }
-
-        bool formulaTarget = !string.IsNullOrWhiteSpace(session.Formula);
-        string target = formulaTarget ? session.Formula ?? "" : session.Text ?? "";
-        AssistantRect anchor = _aiAnchor;
-        var (start, length) = RegionTextMapper.Map(anchor, rect, target);
-        AssistantRegion region = new()
-        {
-            Rect = rect,
-            TextStart = start,
-            TextLength = length,
-            Source = "region",
-        };
-
-        _aiRegionStream?.Abort();
-        _aiRegionStream = null;
-
-        try
-        {
-            _aiClient ??= new AiClient(AiConfig.ReadFromEnvironment());
-
-            var request = new AssistantRequest
-            {
-                ImageBase64 = _aiThumb,
-                InkStrokes = Array.Empty<AssistantStroke>(),
-                Viewport = new AssistantViewport { Scale = 1.0, Rect = _aiAnchor },
-                Mode = session.Mode,
-                SessionId = session.SessionId ?? "",
-                Stage = AssistantStage.WithImage,
-                Region = region,
-            };
-
-            var buffer = new StringBuilder();
-            string formula = null;
-            bool failure = false;
-
-            window.ShowNotice("局部纠错中…");
-
-            _aiRegionStream = _aiClient.Start(
-                request,
-                ev => _dispatcher.TryEnqueue(() =>
-                {
-                    if (!ReferenceEquals(_aiAssistant, window)) return;
-                    if (ev.Kind == AssistantEventKind.Token)
-                    {
-                        buffer.Append(ev.Text ?? "");
-                    }
-                    else if (ev.Kind == AssistantEventKind.Formula && !string.IsNullOrEmpty(ev.Latex))
-                    {
-                        formula = ev.Latex;
-                    }
-                }),
-                err => _dispatcher.TryEnqueue(() =>
-                {
-                    failure = true;
-                    Core.Diagnostics.FileLog.WriteLogToFile(
-                        $"AI 局部纠错失败：{err}", Core.Diagnostics.LogType.Error);
-                    if (!ReferenceEquals(_aiAssistant, window)) return;
-                    window.ShowNotice("局部纠错失败，已保留原结果");
-                }),
-                () => _dispatcher.TryEnqueue(() =>
-                {
-                    _aiRegionStream = null;
-                    if (failure || !ReferenceEquals(_aiAssistant, window)) return;
-                    if (!ReferenceEquals(_aiSession, session)) return;
-                    if (!AiTargetStillCurrent(writeBack: true)) return;
-
-                    string replacement = string.IsNullOrWhiteSpace(formula) ? buffer.ToString() : formula;
-                    if (string.IsNullOrWhiteSpace(replacement))
-                    {
-                        Core.Diagnostics.FileLog.WriteLogToFile(
-                            "AI 局部纠错结果：返回内容为空，保留原结果",
-                            Core.Diagnostics.LogType.Trace);
-                        window.ShowNotice("局部纠错未返回内容");
-                        return;
-                    }
-
-                    try
-                    {
-                        string trimmed = replacement.Trim();
-                        LocalCorrectionResult result = LocalCorrectionFlow.Apply(
-                            session, anchor, rect, trimmed);
-                        AssistantSession updated = result.Session;
-
-                        if (updated is null)
-                        {
-                            Core.Diagnostics.FileLog.WriteLogToFile(
-                                $"AI 局部纠错结果应用失败：流程返回 null（Field={result.Field}，替换长度 {trimmed.Length}）",
-                                Core.Diagnostics.LogType.Error);
-                            window.ShowNotice("局部纠错结果应用失败");
-                            return;
-                        }
-
-                        int previousLength = result.Field == nameof(AssistantSession.Formula)
-                            ? (session.Formula ?? "").Length
-                            : (session.Text ?? "").Length;
-                        int updatedLength = result.Field == nameof(AssistantSession.Formula)
-                            ? (updated.Formula ?? "").Length
-                            : (updated.Text ?? "").Length;
-
-                        updated.Regions.Add(region);
-                        _aiSession = updated;
-                        window.Apply(updated, _aiThumb, preserveScroll: true);
-
-                        bool appended = result.Field == nameof(AssistantSession.Text)
-                            && string.IsNullOrEmpty(session.Text)
-                            && !string.IsNullOrEmpty(updated.Text);
-                        Core.Diagnostics.FileLog.WriteLogToFile(
-                            $"AI 局部纠错结果应用成功：Field={result.Field}，"
-                            + $"start={result.Start}，length={result.Length}，长度 {previousLength}->{updatedLength}，"
-                            + $"替换长度 {trimmed.Length}，追加={appended}，"
-                            + $"region=({region.Rect.Left:0.0},{region.Rect.Top:0.0})-({region.Rect.Right:0.0},{region.Rect.Bottom:0.0})",
-                            Core.Diagnostics.LogType.Event);
-                        window.ShowNotice(appended ? "已将局部结果追加到正文" : "已应用局部纠错");
-                    }
-                    catch (Exception ex)
-                    {
-                        Core.Diagnostics.FileLog.WriteLogToFile(
-                            $"AI 局部纠错结果应用失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-                        window.ShowNotice("局部纠错结果应用失败");
-                    }
-                }));
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"AI 局部纠错启动失败：{ex.Message}", Core.Diagnostics.LogType.Error);
-            window.ShowNotice("局部纠错失败，已保留原结果");
-        }
-    }
-
-
-    /// <summary>按当前激活画布（子板优先 → 主展板 → overlay）记录本次 AI 请求目标。</summary>
-    private AssistantTarget CaptureAssistantTarget()
-    {
-        AssistantCanvasKind kind = AssistantCanvasKind.Overlay;
-        object canvas = null, page = null;
-        int pageIndex = 0;
-        if (_sideBoard is { IsShown: true } && ReferenceEquals(ActiveController, _sideBoard.CurrentController))
-        {
-            kind = AssistantCanvasKind.SideBoard;
-            canvas = Services.SideBoard;
-            pageIndex = Services.SideBoard.CurrentIndex;
-        }
-        else if (_board is not null && ReferenceEquals(ActiveController, _board.CurrentController))
-        {
-            kind = AssistantCanvasKind.MainBoard;
-            canvas = Services.Board;
-            pageIndex = Services.Board.CurrentIndex;
-        }
-        if (canvas is BoardService board && pageIndex >= 0 && pageIndex < board.Pages.Count)
-            page = board.Pages[pageIndex];
-        return new AssistantTarget
-        {
-            Canvas = canvas, Page = page, Kind = kind, PageIndex = pageIndex,
-            SessionId = _aiSession?.SessionId ?? "",
-        };
-    }
-
-    /// <summary>按已记录目标重建当前快照，用于过期判定；未记录目标时返回 null。</summary>
-    private AssistantTarget SnapshotAssistantTarget()
-    {
-        if (_aiTarget is null) return null;
-        BoardService board = _aiTarget.Kind switch
-        {
-            AssistantCanvasKind.SideBoard => Services.SideBoard,
-            AssistantCanvasKind.MainBoard => Services.Board,
-            _ => null,
-        };
-        int index = board?.CurrentIndex ?? 0;
-        object page = board is not null && index >= 0 && index < board.Pages.Count ? board.Pages[index] : null;
-        return new AssistantTarget
-        {
-            Canvas = board, Page = page, Kind = _aiTarget.Kind, PageIndex = index,
-            SessionId = _aiSession?.SessionId ?? "",
-        };
-    }
-
-    /// <summary>
-    /// 异步响应目标校验。writeBack=true（贴回/局部纠错等写操作）要求同板、同页、
-    /// 同页对象与同会话；流式显示只要求同板同会话，避免切页时浮窗卡在生成中。
-    /// 失败一律写日志，写回失败与跨板失败额外用浮窗提示用户。
-    /// </summary>
-    private bool AiTargetStillCurrent(bool writeBack)
-    {
-        AssistantTarget requested = _aiTarget;
-        if (requested is null) return true; // 聚焦区域/课件回看等旧路径保持原行为
-        requested.SessionId = _aiSession?.SessionId ?? requested.SessionId;
-        AssistantTarget current = SnapshotAssistantTarget();
-        bool sameCanvas = AssistantTargetPolicy.SameCanvas(requested, current);
-        bool sameSession = AssistantTargetPolicy.SameSession(requested, current);
-        bool ok = writeBack
-            ? AssistantTargetPolicy.CanWriteBack(requested, current)
-            : sameCanvas && sameSession;
-        if (ok) return true;
-
-        string notice = AssistantTargetPolicy.StaleNotice(requested, current);
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[AI] 丢弃过期响应：writeBack={writeBack}，requested=({AssistantTargetPolicy.Describe(requested)})，"
-            + $"current=({AssistantTargetPolicy.Describe(current)})，notice={notice}",
-            Core.Diagnostics.LogType.Info);
-        if (writeBack || !sameCanvas) _aiAssistant?.ShowNotice(notice);
-        return false;
-    }
-
-    /// <summary>发起请求的目标画布窗口是否仍然存在（截图 await 期间子板/主展板可能已关闭）。</summary>
-    private bool AiTargetCanvasAvailable()
-    {
-        if (_aiTarget is null) return true;
-        return _aiTarget.Kind switch
-        {
-            AssistantCanvasKind.SideBoard => _sideBoard is not null,
-            AssistantCanvasKind.MainBoard => _board is not null,
-            _ => true,
-        };
-    }
-
-    /// <summary>本次 AI 请求是否锚定板中板。</summary>
-    private bool AssistantBelongsToSideBoard
-        => _aiAssistantFromSideBoard
-           || (_aiTarget?.Kind == AssistantCanvasKind.SideBoard
-               && ReferenceEquals(_aiTarget.Canvas, Services.SideBoard));
-
-    /// <summary>收藏来源页：按目标板取页索引；overlay 维持旧语义（主展板未打开为 -1）。</summary>
-    private int AiFavoriteBoardPage()
-        => _aiTarget?.Kind switch
-        {
-            AssistantCanvasKind.SideBoard => Services.SideBoard.CurrentIndex,
-            AssistantCanvasKind.MainBoard => Services.Board.CurrentIndex,
-            _ => _board is null ? -1 : Services.Board.CurrentIndex,
-        };
-
-    /// <summary>贴回等写操作的目标板；overlay/未记录目标回退主展板，保持既有行为。</summary>
-    private BoardService AiTargetBoard()
-        => _aiTarget?.Kind == AssistantCanvasKind.SideBoard ? Services.SideBoard : Services.Board;
-
-    /// <summary>目标画布窗口：子板优先，其次主展板，overlay 返回 null。</summary>
-    private Window TargetCanvasWindow()
-        => _aiTarget?.Kind switch
-        {
-            AssistantCanvasKind.SideBoard => _sideBoard,
-            AssistantCanvasKind.MainBoard => _board,
-            _ => null,
-        };
-
-    /// <summary>
-    /// AI 助教定位与截图的目标几何。板模式取板窗口所在显示器的工作区、DPI 与客户区左上
-    /// 屏幕坐标（换算为 DIP）；overlay 模式保持主屏工作区、(0,0) 客户区原点与 overlay DPI，
-    /// 不改变现有全屏 overlay 行为。
-    /// </summary>
-    private (ScreenRect Work, double Dpi, double OriginXDip, double OriginYDip) AssistantTarget()
-    {
-        Window canvasWindow = TargetCanvasWindow();
-        if (canvasWindow is not null)
-        {
-            IntPtr hwnd = WindowChrome.GetHwnd(canvasWindow);
-            if (hwnd != IntPtr.Zero)
-            {
-                ScreenInfo info = ScreenService.FromWindow(hwnd);
-                if (info.WorkArea.Width > 0 && info.WorkArea.Height > 0)
-                {
-                    double boardDpi = info.DpiScale > 0 ? info.DpiScale : 1.0;
-                    ScreenRect client = WindowChrome.GetClientBounds(hwnd);
-                    return (info.WorkArea, boardDpi, client.X / boardDpi, client.Y / boardDpi);
-                }
-            }
-        }
-
-        return (ScreenService.WorkArea, CurrentDpi(), 0, 0);
-    }
 
     private double CurrentDpi()
     {
@@ -5112,110 +2282,6 @@ public sealed partial class ShellController : IShellActions, IDisposable
         return dpi > 0 ? dpi : 1.0;
     }
 
-    private AssistantRect CenterAnchor()
-    {
-        var (work, dpi, originXDip, originYDip) = AssistantTarget();
-        var workDip = new AssistantRect(work.X / dpi, work.Y / dpi,
-            (work.X + work.Width) / dpi, (work.Y + work.Height) / dpi);
-        // 锚点语义保持为客户区 DIP；板模式减去客户区原点，overlay 模式原点为 (0,0)。
-        double centerX = workDip.CenterX - originXDip;
-        double centerY = workDip.CenterY - originYDip;
-        return new AssistantRect(centerX - 8, centerY - 8, centerX + 8, centerY + 8);
-    }
-
-    private static List<AssistantStroke> BuildAssistantStrokes(IReadOnlyList<InkStroke> selection, Matrix3x2 matrix)
-    {
-        var strokes = new List<AssistantStroke>(selection.Count);
-        foreach (InkStroke stroke in selection)
-        {
-            var points = new List<AssistantPoint>(stroke.Points.Count);
-            foreach (InkPoint point in stroke.Points)
-            {
-                Vector2 view = Vector2.Transform(new Vector2(point.X, point.Y), matrix);
-                points.Add(new AssistantPoint
-                {
-                    X = view.X,
-                    Y = view.Y,
-                    Pressure = point.Pressure,
-                    TimeMs = point.TimeMs,
-                });
-            }
-
-            strokes.Add(new AssistantStroke
-            {
-                BaseWidth = stroke.Attributes.BaseWidth,
-                ColorArgb = stroke.Attributes.EffectiveColor.PackedArgb,
-                Points = points,
-            });
-        }
-
-        return strokes;
-    }
-
-    private static List<string> BuildPasteLines(AssistantSession session)
-    {
-        var lines = new List<string>();
-        string text = (session.Text ?? "").Replace("\r\n", "\n").Replace('\r', '\n');
-        foreach (string raw in text.Split('\n'))
-        {
-            string line = raw.Trim();
-            if (line.Length > 0) lines.Add(line);
-        }
-
-        int number = 1;
-        foreach (AssistantStep step in session.Steps)
-        {
-            string detail = step.Text ?? "";
-            string latex = AssistantText.LatexToPlain(step.Latex ?? "");
-            if (!string.IsNullOrEmpty(latex))
-                detail = string.IsNullOrEmpty(detail) ? latex : detail + " / " + latex;
-            if (string.IsNullOrEmpty(detail)) continue;
-
-            int index = step.Index > 0 ? step.Index : number;
-            lines.Add(index + ". " + detail);
-            number = index + 1;
-        }
-
-        if (!string.IsNullOrEmpty(session.Formula))
-            lines.Add(AssistantText.LatexToPlain(session.Formula));
-
-        if (lines.Count == 0) lines.Add("AI 助教暂无返回内容");
-        return lines;
-    }
-
-    /// <summary>贴回卡片的可编辑源数据：公式优先，其次步骤，再看图形批注。</summary>
-    private static AiPasteMetadata BuildPasteMetadata(AssistantSession session)
-    {
-        var metadata = new AiPasteMetadata
-        {
-            Kind = DerivePasteKind(session),
-            Latex = session.Formula ?? "",
-            Text = session.Text ?? "",
-            Lines = BuildPasteLines(session),
-        };
-
-        foreach (var annotation in session.Annotations ?? new List<IReadOnlyList<IReadOnlyList<double>>>())
-        {
-            var points = new List<double>();
-            foreach (var element in annotation ?? Array.Empty<IReadOnlyList<double>>())
-            {
-                if (element is null) continue;
-                foreach (double value in element) points.Add(value);
-            }
-
-            if (points.Count > 0) metadata.Annotations.Add(points);
-        }
-
-        return metadata;
-    }
-
-    private static AiPasteKind DerivePasteKind(AssistantSession session)
-    {
-        if (!string.IsNullOrEmpty(session.Formula)) return AiPasteKind.Formula;
-        if (session.Steps is { Count: > 0 }) return AiPasteKind.Steps;
-        if (session.Annotations is { Count: > 0 }) return AiPasteKind.Shape;
-        return AiPasteKind.Steps;
-    }
 
     public void Exit() => _ = ExitAsync(restart: false);
     public void Restart() => _ = ExitAsync(restart: true);
@@ -5228,19 +2294,51 @@ public sealed partial class ShellController : IShellActions, IDisposable
         {
             if (Services.Settings.Advanced.IsSecondConfimeWhenShutdownApp && !_installingUpdate
                 && !await ConfirmAsync(restart ? "重启 Ink Canvas" : "退出 Ink Canvas", restart ? "确认保存设置并重启 Ink Canvas？" : "确认关闭 Ink Canvas？")) return;
+            if (Services.Settings.Archive.ScreenCapture.SaveOnExit)
+            {
+                await SaveScreenArchiveAsync(restart ? "重启前屏幕存档" : "退出前屏幕存档");
+                await WaitForScreenArchivesAsync();
+                if (Services.ScreenArchives.LastError is { } captureError && Services.ScreenArchives.IsEnabled(_lastSlideShowState)
+                    && Services.OverlayInk.Document.Count > 0 && _board is null)
+                { await NotifyAsync("截图白板存档失败", captureError); return; }
+            }
             if (_documentWorkspace is not null && !await _documentWorkspace.CloseAsync()) return;
+            if (!await SaveResumeAsync(force: true))
+            {
+                await NotifyAsync("续接进度保存失败", "请检查用户数据目录的可用空间和写入权限后重试。");
+                return;
+            }
+            if (Services.Settings.Archive.SaveOnExit)
+            {
+                try
+                {
+                    if (_board is not null) await _board.SaveArchiveBeforeCloseAsync(restart ? "重启程序" : "退出程序");
+                    else await Services.Archives.SaveAutomaticAsync(restart ? "重启程序" : "退出程序");
+                }
+                catch (Exception ex)
+                {
+                    await NotifyAsync("白板存档失败", "白板内容已保留，请检查保存设置后再退出。\n" + ex.GetBaseException().Message);
+                    return;
+                }
+            }
             if (restart)
             {
                 Services.SaveSettings();
-                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath, "-m") { UseShellExecute = true }); }
+                try
+                {
+                    if (Services.ExtensionInstalls.Pending.Count > 0) { using var helper = Features.Update.UpdateService.LaunchRestart(); }
+                    else System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath, "-m") { UseShellExecute = true });
+                }
                 catch (Exception ex) { await NotifyAsync("重启失败", ex.Message); return; }
             }
             _exiting = true;
-_pollTimer.Stop();
-        _pptRetryTimer?.Stop();
+            _pollTimer.Stop();
 
             if (Services.Settings.Automation.IsAutoSaveStrokesAtClear)
-                Services.AutoSave.SaveSnapshot(Services.OverlayInk.Document.Strokes, "exit");
+                await Services.AutoSave.SaveSnapshotAsync(Services.OverlayInk.Document.Strokes, "exit");
+            await Services.AutoSave.WaitForPendingAsync();
+            await Services.Archives.WaitForPendingAsync();
+            await WaitForScreenArchivesAsync();
             Services.SaveSettings();
 
             Dispose();
@@ -5252,7 +2350,26 @@ _pollTimer.Stop();
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
-        CloseSideBoardForExit();
+        Overlay.Window.InputBegan -= OnOverlayInputBegan;
+        _palette?.FlushSliderChanges();
+        foreach (var palette in _detachedPalettes.ToArray()) palette.FlushSliderChanges();
+        _bar?.GetOpenPanel(BarPanelKind.Eraser)?.FlushSettingsChanges();
+        _resumeTimer?.Stop();
+        _pptNavigationRetry?.Stop();
+        _pendingPptNavigation = null;
+        foreach (var reminder in _resumeReminders.ToArray()) reminder.Close();
+        _pptPreviewSource?.Dispose();
+        CloseSideBoard();
+        _board?.CloseForShutdown();
+        _cachedBoard?.CloseForShutdown();
+        _cachedBoard = null;
+        _documentAi?.Dispose();
+        _colorEditor?.Close();
+        _spotlight?.Close();
+        _magnifier?.Close();
+        _slideNav?.Close();
+        CloseBlackScreen();
+        _pptSession.InkTransition -= OnPptInkTransition;
         StopShortcutTracking();
         Overlay.InteractionChanged -= RefreshShortcutRegistration;
         StopDocumentForegroundTracking();
@@ -5264,8 +2381,9 @@ _pollTimer.Stop();
         Services.Plugins.Changed -= OnExtensionCommandsChanged;
         Services.Modules.Changed -= OnExtensionCommandsChanged;
         Services.SettingsApplied -= ApplyDocumentSettings;
+        Services.SettingsApplied -= RefreshIconFonts;
+        Services.SettingsApplied -= ApplyArchivePaths;
         Services.SettingsApplied -= ApplyDisplaySettings;
-        Services.SettingsApplied -= ApplySideBoardDisplaySettings;
         Services.SettingsApplied -= RefreshPaletteNibModes;
         Services.Plugins.Dispose();
         Services.Modules.Dispose();
@@ -5283,25 +2401,14 @@ _pollTimer.Stop();
         _selectionToolbar = null;
         _replay?.Close();
         _pollTimer.Stop();
-        _recorder?.Dispose();
-        _timeMachine?.Close();
-        ResetAiPreStage();
-        _aiStream?.Abort();
-        _aiRegionStream?.Abort();
-        _aiAssistant?.Close();
         _countdown?.Dispose();
-        _spotlight?.Close();
-        _magnifier?.Close();
-        _roster?.Close();
-        _toolkit?.Close();
-        CloseBlackScreen();
-        _pptSession.InkTransition -= OnPptInkTransition;
         ClosePptNavigationWindows();
         _pptSession.Dispose();
         Services.Ppt.RefreshRequested -= QueuePresentationRefresh;
         Services.Ppt.Dispose();
         Updater.Dispose();
         Overlay.Window.DisplaySettingsChanged -= QueueDisplayRefresh;
+        Overlay.Window.PowerStateChanged -= CancelWindowDrags;
         Overlay.Dispose();
         Services.Dispose();
     }

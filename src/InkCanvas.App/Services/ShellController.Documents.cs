@@ -32,6 +32,7 @@ public sealed partial class ShellController
     {
         var service = Services.Modules.GetExport<IPdfWorkspaceService>();
         if (service is null) { await NotifyAsync("PDF 模块", "请将 PDF 模块包解压到程序的 Modules 目录，重新启动后使用。"); return; }
+        if (_board is not null && !await _board.CloseWithArchiveAsync()) return;
         try { await service.OpenAsync(path); }
         catch (Exception ex) { await NotifyAsync("打开 PDF 失败", ex.GetBaseException().Message); }
     }
@@ -140,8 +141,12 @@ public sealed partial class ShellController
 
     private sealed class DocumentHost(ShellController shell) : IDocumentWorkspaceHost
     {
+        public IAiDocumentBridge DocumentAi => shell._documentAi;
         public Window Owner => shell.DocumentActive ? shell._documentWorkspace.Window : (Window)shell._board ?? shell._bar;
         public Core.Settings.AppSettings Settings => shell.Services.Settings;
+        public string DataDirectory => shell.Services.Store.Directory;
+        public void SavePreferences() => shell.Services.SaveSettings();
+        public void OfferResume(string title, string description, Func<Task> resume, Func<Task> dismiss) => shell.OfferResume(title, description, resume, dismiss);
         public Core.Ink.Rect ToolbarScreenBounds => shell.DesktopToolbarBounds;
         public Features.Board.BoardService Board => shell.Services.Board;
         public void ConfigureWindow(Window window, int width = 1120, int height = 820)

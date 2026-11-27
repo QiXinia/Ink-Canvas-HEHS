@@ -13,7 +13,7 @@ internal static class ConstructionShapes
         var source = new ShapeSource(group ?? Guid.NewGuid(), Provider, ConstructionExport.Encode(state));
         var projection = new GeometryProjection(state, ConstructionExport.Width, ConstructionExport.Height);
         var strokes = new List<InkStroke>();
-        foreach (var item in state.Objects.Where(item => item.Visible))
+        foreach (var item in state.Objects.Where(evaluation.IsVisible))
         {
             if (!evaluation.Values.TryGetValue(item.Label, out var value) || !value.Defined) continue;
             foreach (var path in projection.Paths(value)) Add(path, item.Color, item.LineWidth);

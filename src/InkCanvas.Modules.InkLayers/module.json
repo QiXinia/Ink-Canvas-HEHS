@@ -1,0 +1,9 @@
+{
+  "Id": "inkcanvas.ink-layers",
+  "Name": "书写图层",
+  "Version": "1.0.0",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.InkLayers.dll",
+  "EntryType": "InkCanvas.Modules.InkLayers.InkLayersModule",
+  "PackageFiles": []
+}

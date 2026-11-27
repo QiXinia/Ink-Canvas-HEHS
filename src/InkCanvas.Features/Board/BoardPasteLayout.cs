@@ -26,13 +26,9 @@ public static class BoardPasteLayout
         float fraction = float.IsFinite(maxVisibleWidthFraction)
             ? Math.Clamp(maxVisibleWidthFraction, 0.01f, 1f)
             : DefaultMaxVisibleWidthFraction;
-        float maxWidth = viewportWidth * fraction;
-        if (width > maxWidth)
-        {
-            float scale = maxWidth / width;
-            width = maxWidth;
-            height *= scale;
-        }
+        float scale = Math.Min(1, Math.Min(viewportWidth * fraction / width, viewportHeight * 0.8f / height));
+        width *= scale;
+        height *= scale;
         if (!(width > 0) || !(height > 0)) return default;
 
         float left = (viewportWidth - width) / 2f;

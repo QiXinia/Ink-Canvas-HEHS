@@ -5,4 +5,7 @@
     <RootNamespace>InkCanvas.Core</RootNamespace>
     <AssemblyName>InkCanvas.Core</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="2.0.0" />
+  </ItemGroup>
 </Project>

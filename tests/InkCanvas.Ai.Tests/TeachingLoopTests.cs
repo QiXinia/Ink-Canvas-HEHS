@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using InkCanvas.Core.AiAssistant;
-using InkCanvas.Core.Classroom;
 using Xunit;
 
 namespace InkCanvas.Ai.Tests;
@@ -201,71 +200,6 @@ public sealed class AiResponseGateTests
         gate.Invalidate();
 
         Assert.False(gate.IsCurrent(generation, "a"));
-    }
-}
-
-public sealed class TeachingSessionTests
-{
-    [Fact]
-    public void Link_RecordsAiAndExerciseWithSlideAnchor()
-    {
-        TeachingSession session = TeachingSession.Create("第一节课", 100);
-
-        session.Link("ai", "ai-1", 7, 2, 0, nowMs: 110);
-        session.Link("exercise", "ex-1", 7, 2, 3, nowMs: 120);
-
-        Assert.Contains("ai-1", session.AiSessionIds);
-        Assert.Contains("ex-1", session.ExerciseIds);
-        Assert.Equal(2, session.Links.Count);
-        Assert.Equal(2, session.LinksForSlide(7).Count);
-        Assert.True(session.HasLink("ai", "ai-1"));
-        Assert.Equal(120, session.UpdatedAtMs);
-    }
-
-    [Fact]
-    public void SlideKey_DistinguishesAnimationSteps()
-    {
-        Assert.NotEqual(
-            TeachingSession.SlideKey(3, 2, 0),
-            TeachingSession.SlideKey(3, 2, 1));
-        Assert.Equal("slide:3@2#1", TeachingSession.SlideKey(3, 2, 1));
-    }
-
-    [Fact]
-    public void SetCurrentSlide_UpdatesOnlyOnChange()
-    {
-        TeachingSession session = TeachingSession.Create("课", 10);
-        session.SetCurrentSlide(4, 1, 0, 20);
-        Assert.Equal(20, session.UpdatedAtMs);
-
-        session.SetCurrentSlide(4, 1, 0, 30);
-        Assert.Equal(20, session.UpdatedAtMs);
-
-        session.SetCurrentSlide(4, 1, 2, 40);
-        Assert.Equal(40, session.UpdatedAtMs);
-    }
-
-    [Fact]
-    public void Serialize_RoundTripsLinksAndVersions()
-    {
-        TeachingSession session = TeachingSession.Create("课", 10);
-        session.Link("ai", "ai-9", 2, 1, -1, nowMs: 15);
-        session.RecordExport(@"C:\out\handout.pdf", 20);
-
-        TeachingSession restored = TeachingSession.Deserialize(session.Serialize());
-
-        Assert.NotNull(restored);
-        Assert.Equal(session.Id, restored.Id);
-        Assert.Single(restored.Links);
-        Assert.Contains(@"C:\out\handout.pdf", restored.ExportPaths);
-        Assert.True(restored.Version >= 1);
-    }
-
-    [Fact]
-    public void Deserialize_InvalidJson_ReturnsNull()
-    {
-        Assert.Null(TeachingSession.Deserialize("{not json"));
-        Assert.Null(TeachingSession.Deserialize(""));
     }
 }
 

@@ -34,10 +34,10 @@ public static class ShapeMenuCatalog
         => new(kind, label, kind.ToString(), new Thickness(8, 10, 8, 10), SlotWidth: 30, LongPress: sticky, Rotation: rotation);
     public static readonly ShapeMenuCategory[] Categories =
     {
-        new ShapeMenuCategory("线条", new[] { new[] { Item(ShapeKind.Line, "直线"), Item(ShapeKind.DashedLine, "虚线"),
-            Item(ShapeKind.DotLine, "点线"), Item(ShapeKind.Arrow, "箭头"), Item(ShapeKind.ParallelLine, "平行线") } }),
-        new ShapeMenuCategory("坐标", new[]
+        new ShapeMenuCategory("线条与坐标", new[]
         {
+            new[] { Item(ShapeKind.Line, "直线"), Item(ShapeKind.DashedLine, "虚线"),
+                Item(ShapeKind.DotLine, "点线"), Item(ShapeKind.Arrow, "箭头"), Item(ShapeKind.ParallelLine, "平行线") },
             new[] { Item(ShapeKind.CoordinateBoth, "坐标系（双向，中心原点）"),
                 Item(ShapeKind.CoordinateXOneWay, "坐标系（x 单向）"), Item(ShapeKind.CoordinateYOneWay, "坐标系（y 单向）") },
             new[] { Item(ShapeKind.CoordinateFirstQuadrant, "坐标系（第一象限）"), Item(ShapeKind.Coordinate3D, "空间坐标系"),
@@ -51,7 +51,7 @@ public static class ShapeMenuCatalog
                 Item(ShapeKind.EllipseFromCenter, "中心椭圆"), Item(ShapeKind.EllipseWithFoci, "椭圆（两点，含焦点）"), Item(ShapeKind.EllipseWithFociFromCenter, "中心椭圆（含焦点）") },
             new[] { Item(ShapeKind.DashedCircle, "虚线圆（两点）"), Item(ShapeKind.DashedCircleFromCenter, "中心虚线圆"),
                 Item(ShapeKind.RightTriangle, "直角三角形"), Item(ShapeKind.Diamond, "菱形"), Item(ShapeKind.Parallelogram, "平行四边形") },
-            new[] { Item(ShapeKind.Trapezoid, "梯形") },
+            new[] { Item(ShapeKind.Trapezoid, "梯形"), Item(ShapeKind.Sector, "扇形") },
         }),
         new ShapeMenuCategory("曲线", new[]
         {
@@ -67,10 +67,17 @@ public static class ShapeMenuCatalog
             new[] { Item(ShapeKind.Cuboid, "长方体（两笔）"), Item(ShapeKind.Cube, "正方体（两笔）"),
                 Item(ShapeKind.TriangularPrism, "三棱柱（两笔）"), Item(ShapeKind.PentagonalPrism, "五棱柱（两笔）"), Item(ShapeKind.HexagonalPrism, "六棱柱（两笔）") },
             new[] { Item(ShapeKind.Tetrahedron, "四面体"), Item(ShapeKind.SquarePyramid, "四棱锥（两笔）") },
+            new[] { Item(ShapeKind.TriangularFrustum, "三棱台（两笔）"), Item(ShapeKind.SquareFrustum, "四棱台（两笔）"),
+                Item(ShapeKind.PentagonalFrustum, "五棱台（两笔）"), Item(ShapeKind.HexagonalFrustum, "六棱台（两笔）") },
         }),
     };
     public static readonly ShapeMenuItem[][] Rows = Categories.SelectMany(category => category.Rows).ToArray();
     public static readonly double[] RowSpacings = new double[Rows.Length];
+    public static readonly ShapeMenuItem[] ExpansionItems =
+    [
+        Item(ShapeKind.RoundedRectangle, "圆角矩形"), Item(ShapeKind.SuperRoundedRectangle, "超圆角矩形"),
+        Item(ShapeKind.RoundedRectangleRing, "圆角矩形环"),
+    ];
 }
 
 /// <summary>
@@ -84,11 +91,14 @@ internal static class ShapeIcons
 {
     public static Canvas Create(ShapeKind kind, Brush foreground)
     {
-        if (kind is >= ShapeKind.Cube and <= ShapeKind.ConeFrustum)
+        if (kind is >= ShapeKind.Cube and <= ShapeKind.ConeFrustum or ShapeKind.Sector
+            || ShapeGenerator.IsRoundedRectangle(kind) || ShapeGenerator.IsPolygonalFrustum(kind))
         {
             var strokes = ShapeGenerator.IsTwoStepSolid(kind)
                 ? ShapeGenerator.GenerateSolid(kind, new(35, 100), new(205, 245), kind == ShapeKind.SquarePyramid ? new(-20, -135) : new(65, -65), new() { TaperKind = InkCanvas.Core.Ink.TaperKind.None })
-                : ShapeGenerator.Generate(kind, new(35, 35), new(265, 265), new() { TaperKind = InkCanvas.Core.Ink.TaperKind.None });
+                : kind == ShapeKind.Sector
+                    ? ShapeGenerator.Generate(kind, new(70, 70), new(245, 70), new())
+                    : ShapeGenerator.Generate(kind, new(35, 35), new(265, 265), new() { TaperKind = InkCanvas.Core.Ink.TaperKind.None });
             var canvas = New(300, 300);
             foreach (var stroke in strokes)
             {
@@ -456,18 +466,20 @@ public sealed class ShapePreview : UserControl
     private readonly DispatcherQueueTimer _holdTimer;
     private readonly System.Collections.Generic.List<Grid> _cells = new();
     private readonly SegmentedSelector _categories;
+    private readonly int _polygonCategory = -1;
+    private int CategoryCount => ShapeMenuCatalog.Categories.Length + (_polygonCategory >= 0 ? 1 : 0);
+    private readonly List<(int VertexCount, TouchIconButton Button)> _polygonButtons = new();
     private readonly StackPanel _categoryBodies = new() { Width = 230 };
     private readonly bool[] _createdCategories = new bool[ShapeMenuCatalog.Categories.Length];
     private readonly Brush _foreground;
-    private readonly ShapeMenuItem[] _items = ShapeMenuCatalog.Rows.SelectMany(row => row).ToArray();
+    private readonly ShapeMenuItem[] _items;
     private int _selectedCategory;
     private Grid _pressedCell;
     private bool _holdFired;
     private uint? _pressedPointer;
     private Point _pressPosition;
     private bool _autoHide = true;
-    public static int AllCategoryIndex => ShapeMenuCatalog.Categories.Length;
-    private bool ShowingAll => _selectedCategory == AllCategoryIndex;
+    private bool ShowingAll => _selectedCategory == CategoryCount;
     private static double CategoryHeight(ShapeMenuCategory category) => category.Rows.Length * RowHeight
         + Math.Max(0, category.Rows.Length - 1) * RowOverlap;
     private static double StandardBodyHeight => ShapeMenuCatalog.Categories.Max(CategoryHeight);
@@ -479,8 +491,11 @@ public sealed class ShapePreview : UserControl
     public event Action AutoHideChanged;
 
     public int ShapeCount => _items.Length;
+    public int AllCategoriesIndex => CategoryCount;
     public IReadOnlyList<Grid> VisibleCells => _cells.Where(cell => cell.Tag is ShapeMenuItem item
-        && (ShowingAll || ShapeMenuCatalog.Categories[_selectedCategory].Rows.SelectMany(row => row).Contains(item)))
+        && (ShowingAll || _selectedCategory == _polygonCategory && ShapeGenerator.IsRoundedRectangle(item.Kind)
+            || _selectedCategory < ShapeMenuCatalog.Categories.Length
+            && ShapeMenuCatalog.Categories[_selectedCategory].Rows.SelectMany(row => row).Contains(item)))
         .OrderBy(cell => Array.IndexOf(_items, (ShapeMenuItem)cell.Tag)).ToArray();
     public Grid GetCell(ShapeKind kind)
     {
@@ -493,21 +508,21 @@ public sealed class ShapePreview : UserControl
     public void SelectCategoryFor(ShapeKind kind)
     {
         if (ShowingAll) return;
-        int index = Array.FindIndex(ShapeMenuCatalog.Categories,
+        int index = kind == ShapeKind.Polygon || ShapeGenerator.IsRoundedRectangle(kind) ? _polygonCategory : Array.FindIndex(ShapeMenuCatalog.Categories,
             category => category.Rows.SelectMany(row => row).Any(item => item.Kind == kind));
         if (index >= 0) _categories.SelectedIndex = index;
     }
 
     public void SelectCategory(int index)
     {
-        if (index < 0 || index > AllCategoryIndex) return;
+        if (index < 0 || index > AllCategoriesIndex) return;
         _selectedCategory = index;
         if (ShowingAll)
             for (int category = 0; category < ShapeMenuCatalog.Categories.Length; category++) EnsureCategory(category);
-        else EnsureCategory(index);
+        else if (index != _polygonCategory) EnsureCategory(index);
         for (int i = 0; i < _categoryBodies.Children.Count; i++)
             _categoryBodies.Children[i].Visibility = ShowingAll || i == index ? Visibility.Visible : Visibility.Collapsed;
-        _categoryBodies.Height = ShowingAll ? ShapeMenuCatalog.Categories.Sum(CategoryHeight) : StandardBodyHeight;
+        _categoryBodies.Height = ShowingAll ? ShapeMenuCatalog.Categories.Sum(CategoryHeight) + (_polygonCategory >= 0 ? StandardBodyHeight : 0) : StandardBodyHeight;
         if (_categories.SelectedIndex != index) _categories.SelectedIndex = index;
     }
 
@@ -524,14 +539,32 @@ public sealed class ShapePreview : UserControl
 
         Header = new PopupHeader("图形", theme);
         Header.PinChanged += () => { _autoHide = !Header.IsPinned; AutoHideChanged?.Invoke(); };
-
-        _categories = new SegmentedSelector(ShapeMenuCatalog.Categories.Select(category => category.Name).Append("全部").ToArray(),
-            columns: ShapeMenuCatalog.Categories.Length + 1);
-        _categories.SetOptionHelp(AllCategoryIndex, "显示全部形状，展开更高的面板");
+        var extension = controller.PolygonExtension;
+        var expansionItems = ShapeMenuCatalog.ExpansionItems
+            .Where(item => extension?.AdditionalShapes.Contains(item.Kind) == true).ToArray();
+        _items = ShapeMenuCatalog.Rows.SelectMany(row => row).Concat(expansionItems).ToArray();
+        var names = ShapeMenuCatalog.Categories.Select(category => category.Name);
+        if (extension is not null)
+        {
+            _polygonCategory = ShapeMenuCatalog.Categories.Length;
+            names = names.Append(expansionItems.Length > 0 ? "拓展" : "多边形");
+        }
+        _categories = new SegmentedSelector(names.Append("全部").ToArray(), columns: CategoryCount + 1);
+        if (_categories.Content is Grid categoryTabs)
+        {
+            categoryTabs.ColumnDefinitions[0].Width = new GridLength(2.4, GridUnitType.Star);
+            if (_polygonCategory >= 0) categoryTabs.ColumnDefinitions[_polygonCategory].Width = new GridLength(1.4, GridUnitType.Star);
+        }
+        _categories.SetOptionHelp(AllCategoriesIndex, "显示全部形状，展开更高的面板");
         for (int index = 0; index < ShapeMenuCatalog.Categories.Length; index++)
         {
             _categories.SetOptionHelp(index, ShapeMenuCatalog.Categories[index].Name + "图形");
             _categoryBodies.Children.Add(new Border { Visibility = Visibility.Collapsed });
+        }
+        if (extension is not null)
+        {
+            _categories.SetOptionHelp(_polygonCategory, "图形拓展包的可编辑图形");
+            _categoryBodies.Children.Add(BuildPolygonPresets(extension, theme, expansionItems));
         }
         _categories.SelectedIndex = 0;
         _categories.SelectionChanged += () => SelectCategory(_categories.SelectedIndex);
@@ -575,6 +608,53 @@ public sealed class ShapePreview : UserControl
             _controller.ShapeSelectionChanged -= RefreshSelection;
             ResetPress();
         };
+    }
+
+    private StackPanel BuildPolygonPresets(IPolygonExtension extension, int theme, ShapeMenuItem[] expansionItems)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 3, HorizontalAlignment = HorizontalAlignment.Center };
+        foreach (int vertices in extension.PresetVertexCounts)
+        {
+            var button = new TouchIconButton
+            {
+                Width = 48, MinHeight = 40, Padding = new Thickness(4), LabelFontSize = 12, Label = $"{vertices} 边",
+                SelectionBackground = PopupBrushes.FloatBarSelected(), ContentForeground = _foreground,
+                HoverBackground = PopupBrushes.FloatBarButtonHover(theme), PressedBackground = PopupBrushes.FloatBarButtonPressed(theme),
+            };
+            button.SetContent(new Viewbox { Width = 24, Height = 24, Child = BuildPolygonIcon(vertices, _foreground) });
+            AutomationProperties.SetName(button, $"可编辑{vertices}边形");
+            ToolTipService.SetToolTip(button, "拖动创建，随后用选择工具编辑顶点及查看内角。长按可连续绘制。");
+            ButtonHoldAction.Attach(button, () => Pick(sticky: false), () => Pick(sticky: true));
+            _polygonButtons.Add((vertices, button));
+            row.Children.Add(button);
+
+            void Pick(bool sticky)
+            {
+                _controller.SelectPolygon(vertices, sticky);
+                SelectionMade?.Invoke(ShapeKind.Polygon, sticky);
+            }
+        }
+        var panel = new StackPanel
+        {
+            Height = StandardBodyHeight, Padding = new Thickness(6, 8, 6, 0), Spacing = 6,
+            Children = { new TextBlock { Text = "可编辑多边形", Foreground = _foreground, FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center }, row },
+        };
+        if (expansionItems.Length > 0)
+            panel.Children.Add(BuildCategoryRows(new ShapeMenuCategory("圆角图形", [expansionItems]), _foreground));
+        return panel;
+    }
+
+    private static Canvas BuildPolygonIcon(int count, Brush foreground)
+    {
+        var canvas = new Canvas { Width = 30, Height = 30 };
+        var polygon = new Microsoft.UI.Xaml.Shapes.Polygon { Stroke = foreground, StrokeThickness = 1.7 };
+        for (int vertex = 0; vertex < count; vertex++)
+        {
+            var (sin, cos) = Math.SinCos(Math.Tau * vertex / count - Math.PI / 2);
+            polygon.Points.Add(new(15 + 11 * cos, 15 + 11 * sin));
+        }
+        canvas.Children.Add(polygon);
+        return canvas;
     }
 
     private void EnsureCategory(int index)
@@ -629,14 +709,20 @@ public sealed class ShapePreview : UserControl
             Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             Tag = item,
         };
+        cell.Children.Add(new SelectionIndicator { CornerRadius = new CornerRadius(4) });
         cell.Children.Add(icon);
-        cell.Children.Add(new FontIcon { Glyph = "\uE77A", FontSize = 9,
-            FontFamily = new FontFamily("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons"),
+        cell.Children.Add(new FontIcon { Glyph = "\uF60E", FontSize = 9,
+            FontFamily = IconFontStyle.Font,
             Foreground = PopupBrushes.Accent(), HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed, IsHitTestVisible = false });
         AutomationProperties.SetName(cell, item.Label);
         string instruction = item.Kind == ShapeKind.CoordinateTwoPoint
             ? "从原点拖动至另一角，确定两条坐标轴的长度和方向"
+            : item.Kind == ShapeKind.Sector ? "从圆心拖出第一条半径，选中后可编辑圆心、半径和张角"
+            : item.Kind == ShapeKind.ConeFrustum ? "拖动绘制圆台，选中后可调整上底宽度"
+            : ShapeGenerator.IsPolygonalFrustum(item.Kind) ? "第一笔绘制底面，第二笔拖动设置上底位移，选中后可调整上底宽度"
+            : item.Kind == ShapeKind.RoundedRectangleRing ? "拖动绘制，选中后可调整尺寸、圆角和环宽"
+            : ShapeGenerator.IsRoundedRectangle(item.Kind) ? "拖动绘制，选中后可调整尺寸和圆角"
             : ShapeGenerator.IsTwoStepSolid(item.Kind)
             ? item.Kind == ShapeKind.SquarePyramid ? "第一笔绘制底面，第二笔落点确定顶点"
                 : item.Kind == ShapeKind.Cube ? "第一笔绘制正方面，第二笔调整投影方向" : "第一笔绘制截面，第二笔拖动确定深度方向"
@@ -665,11 +751,14 @@ public sealed class ShapePreview : UserControl
 
     private void RefreshSelection()
     {
+        foreach (var (vertices, button) in _polygonButtons)
+            button.IsSelected = _controller.Tool == InkTool.Shape && _controller.ShapeKind == ShapeKind.Polygon
+                && _controller.PolygonVertexCount == vertices;
         foreach (var cell in _cells)
         {
             var item = (ShapeMenuItem)cell.Tag;
             bool selected = _controller.Tool == InkTool.Shape && _controller.ShapeKind == item.Kind;
-            cell.Background = selected ? PopupBrushes.FloatBarSelected() : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            cell.Children.OfType<SelectionIndicator>().Single().IsSelected = selected;
             cell.Children.OfType<FontIcon>().Single().Visibility = selected && _controller.StickyShape ? Visibility.Visible : Visibility.Collapsed;
             AutomationProperties.SetItemStatus(cell, selected ? _controller.StickyShape ? "连续绘制" : "已选中" : "");
         }

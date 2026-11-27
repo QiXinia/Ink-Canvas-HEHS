@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./Images/Ink Canvas Artistry.png" style="width:96px;"/>
+<picture><source media="(prefers-color-scheme: dark)" srcset="./Images/Brand/InkCanvas.Dark.svg"><img src="./Images/Brand/InkCanvas.Light.svg" width="96" alt="Ink Canvas"/></picture>
 
 # Ink Canvas · WinUI 3
 
@@ -75,6 +75,8 @@ tests/InkCanvas.Core.Tests  单元测试（含笔锋回归）
 
 ## 快速开始
 
+鸿蒙交互实现提示与源码入口见[代码参考](docs/code-reference/ai-assisted-development.md)。
+
 ```powershell
 .\build.ps1 build
 .\build.ps1 test
@@ -86,7 +88,7 @@ tests/InkCanvas.Core.Tests  单元测试（含笔锋回归）
 选择、旋转、克隆与套索擦的操作说明和验证范围见 [SELECTION.md](./docs/SELECTION.md)。选择模式下从空白处拖动即可框选；顶部圆形控制柄负责旋转，Shift 按 15° 吸附；开启「克隆」后可从选区连续拖出副本；「套索擦」可圈选后整项删除对象，并一次撤销恢复。
 
 - **旧 `.isf` 墨迹存档无法读取**。ISF 依赖 `System.Windows.Ink`，WinUI 3 无此栈。
-  新格式为 `.icink`（JSON，逐点存宽度）。
+  新格式为 `.icink`，支持 JSON 笔画数据与包含媒体的 ZIP 白板存档。
 - 设置文件 `Settings.json` **保持原 JSON 键名**，可直接沿用。
 - 图形识别为自研拟合，判定边界与 `InkAnalyzer` 不完全一致。
 - 上游 502 KB 单体设置 XAML 未逐像素复刻，改为按真实设置模型重建的分组设置页。

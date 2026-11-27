@@ -1,0 +1,9 @@
+{
+  "Id": "inkcanvas.shape-expansion",
+  "Name": "图形拓展包",
+  "Version": "1.1.0",
+  "ApiVersion": 1,
+  "EntryAssembly": "InkCanvas.Modules.ShapeExpansion.dll",
+  "EntryType": "InkCanvas.Modules.ShapeExpansion.ShapeExpansionModule",
+  "PackageFiles": []
+}

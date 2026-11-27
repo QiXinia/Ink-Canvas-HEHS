@@ -6,7 +6,11 @@ namespace InkCanvas.Core.Shapes;
 public static partial class ShapeGenerator
 {
     public static bool IsTwoStepSolid(ShapeKind kind) => kind is ShapeKind.Cuboid or ShapeKind.Cube
-        or ShapeKind.TriangularPrism or ShapeKind.PentagonalPrism or ShapeKind.HexagonalPrism or ShapeKind.SquarePyramid;
+        or ShapeKind.TriangularPrism or ShapeKind.PentagonalPrism or ShapeKind.HexagonalPrism or ShapeKind.SquarePyramid
+        || IsPolygonalFrustum(kind);
+
+    public static bool IsPolygonalFrustum(ShapeKind kind) => kind is ShapeKind.SquareFrustum or ShapeKind.TriangularFrustum
+        or ShapeKind.PentagonalFrustum or ShapeKind.HexagonalFrustum;
 
     public static Vector2 SolidBaseEnd(ShapeKind kind, Vector2 start, Vector2 end)
     {
@@ -22,8 +26,14 @@ public static partial class ShapeGenerator
         var low = Vector2.Min(start, end);
         var high = Vector2.Max(start, end);
         if (high.X - low.X < .01f || high.Y - low.Y < .01f) return Array.Empty<Vector2>();
-        int sides = kind switch { ShapeKind.TriangularPrism => 3, ShapeKind.PentagonalPrism => 5, ShapeKind.HexagonalPrism => 6, _ => 4 };
-        if (kind == ShapeKind.SquarePyramid)
+        int sides = kind switch
+        {
+            ShapeKind.TriangularPrism or ShapeKind.TriangularFrustum => 3,
+            ShapeKind.PentagonalPrism or ShapeKind.PentagonalFrustum => 5,
+            ShapeKind.HexagonalPrism or ShapeKind.HexagonalFrustum => 6,
+            _ => 4,
+        };
+        if (kind is ShapeKind.SquarePyramid or ShapeKind.SquareFrustum)
         {
             var center = (low + high) / 2;
             return new[] { new Vector2(center.X, low.Y), new Vector2(high.X, center.Y), new Vector2(center.X, high.Y), new Vector2(low.X, center.Y) };
@@ -60,7 +70,7 @@ public static partial class ShapeGenerator
             Parameters = new[] { start.X, start.Y, end.X, end.Y, offset.X, offset.Y },
         });
 
-    internal static List<InkStroke> GenerateSolidContours(ShapeKind kind, Vector2 start, Vector2 end, Vector2 offset, StrokeAttributes attrs)
+    internal static List<InkStroke> GenerateSolidContours(ShapeKind kind, Vector2 start, Vector2 end, Vector2 offset, StrokeAttributes attrs, float topScale = DefaultFrustumTopScale)
     {
         attrs ??= new StrokeAttributes();
         if (kind == ShapeKind.Cuboid) return GenerateCuboid(start, end, offset, attrs);
@@ -78,7 +88,13 @@ public static partial class ShapeGenerator
         var vertices = new Vector3[pyramid ? count + 1 : count * 2];
         for (int i = 0; i < count; i++) vertices[i] = new Vector3(polygon[i], 0);
         if (pyramid) vertices[count] = new Vector3((Vector2.Min(start, end) + Vector2.Max(start, end)) / 2, 1);
-        else for (int i = 0; i < count; i++) vertices[count + i] = new Vector3(polygon[i], 1);
+        else
+        {
+            var center = (start + end) * .5f;
+            bool frustum = IsPolygonalFrustum(kind);
+            for (int i = 0; i < count; i++)
+                vertices[count + i] = new Vector3(frustum ? center + (polygon[i] - center) * topScale : polygon[i], 1);
+        }
 
         // This viewing ray projects to zero under p.xy + p.z * offset. Reversing the
         // depth direction can make the face drawn first either the near or the far face.
@@ -117,7 +133,11 @@ public static partial class ShapeGenerator
         }
     }
 
-    private static List<InkStroke> GenerateRoundSolid(ShapeKind kind, Vector2 start, Vector2 end, StrokeAttributes attrs)
+    internal static List<InkStroke> GenerateFrustum(Vector2 start, Vector2 end, StrokeAttributes attrs, float topScale)
+        => GenerateRoundSolid(ShapeKind.ConeFrustum, start, end, attrs, topScale);
+
+    private static List<InkStroke> GenerateRoundSolid(ShapeKind kind, Vector2 start, Vector2 end, StrokeAttributes attrs,
+        float topScale = DefaultFrustumTopScale)
     {
         var result = new List<InkStroke>();
         if (!float.IsFinite(start.X) || !float.IsFinite(start.Y) || !float.IsFinite(end.X) || !float.IsFinite(end.Y)) return result;
@@ -145,11 +165,10 @@ public static partial class ShapeGenerator
             return result;
         }
 
-        const float topScale = .55f;
         float baseRx = width / 2, baseRy = MathF.Min(baseRx / SolidEllipseRatio, height / 4);
         bool inverted = end.Y < start.Y;
         var largeCenter = new Vector2((low.X + high.X) / 2, inverted ? low.Y + baseRy : high.Y - baseRy);
-        var smallCenter = new Vector2(largeCenter.X, inverted ? high.Y - baseRy * topScale : low.Y + baseRy * topScale);
+        var (smallCenter, _) = FrustumTop(start, end, topScale);
         // Common tangents of homothetic ellipses. The side edges meet the rims tangentially,
         // including short, wide frustums and inverted drags.
         float normalY = (1 - topScale) * baseRy / (smallCenter.Y - largeCenter.Y);

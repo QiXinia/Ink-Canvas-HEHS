@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
 using InkCanvas.Platform.Windows;
 using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 
 namespace InkCanvas.Controls.Controls;
 
@@ -26,12 +28,38 @@ public sealed class InkSurface : UserControl, IDisposable
     private readonly Dictionary<uint, OverlayPointer> _activePointers = new();
     private bool _disposed;
     public bool IsRenderingSuspended { get; private set; }
+    private bool _presentationPaused;
+    private bool _viewportFrameQueued;
+    private long _viewportFrameTime;
+    public bool ViewportReleaseMotionEnabled { get; set; } = true;
+    /// <summary>Lets a document move a cached composition surface while retaining input and ink caches.</summary>
+    public void PausePresentation(bool paused)
+    {
+        if (_presentationPaused == paused) return;
+        _presentationPaused = paused;
+        _canvas.Opacity = paused ? 0 : 1;
+        if (!paused && !IsRenderingSuspended) _canvas.Invalidate();
+    }
     public event Action InputBegan;
     /// <summary>Lets a continuous document bind the touched page before its first sample.</summary>
     public event Action<OverlayPointer> InputStarting;
+    public Func<OverlayPointer, bool> InterceptPointerPressed { get; set; }
     public event Action InputEnded;
     public event Action InputCanceled;
+    /// <summary>Signals that the current controller view has been drawn for a host presentation handover.</summary>
+    public event Action FrameDrawn;
     public bool DrawCommitted { get; set; } = true;
+    private bool _showLiveInk = true;
+    public bool ShowLiveInk
+    {
+        get => _showLiveInk;
+        set
+        {
+            if (_showLiveInk == value) return;
+            _showLiveInk = value;
+            _canvas.Invalidate();
+        }
+    }
     /// <summary>Optional page extent in document coordinates. Null keeps an infinite canvas.</summary>
     public InkCanvas.Core.Ink.Rect? ContentBounds { get; set; }
 
@@ -47,7 +75,7 @@ public sealed class InkSurface : UserControl, IDisposable
         PointerPressed += OnPointerPressed;
         PointerMoved += OnPointerMoved;
         PointerEntered += OnPointerEntered;
-        PointerExited += (_, args) => _controller?.HideEraserPreview(args.Pointer.PointerId);
+        PointerExited += (_, args) => _controller?.OnPointerExited(args.Pointer.PointerId);
         Unloaded += (_, _) => _controller?.HideEraserPreview();
         PointerReleased += OnPointerReleased;
         PointerCanceled += OnPointerCanceled;
@@ -65,6 +93,9 @@ public sealed class InkSurface : UserControl, IDisposable
             // board rebind never leaves the previous document driving redraws of this surface.
             if (_controller is not null)
             {
+                _controller.ViewportFrameRequested -= ScheduleViewportFrame;
+                CompositionTarget.Rendering -= RenderViewportFrame;
+                _viewportFrameQueued = false;
                 _dotClock?.Dispose();
                 _dotClock = null;
                 foreach (var sample in _activePointers.Values) _controller.OnPointerCanceled(sample);
@@ -82,6 +113,8 @@ public sealed class InkSurface : UserControl, IDisposable
             if (_controller is not null)
             {
                 _dotClock = new DotAnimationClock(_controller, OnInvalidated);
+                _controller.ViewportReleaseMotionEnabled = ViewportReleaseMotionEnabled;
+                _controller.ViewportFrameRequested += ScheduleViewportFrame;
                 _controller.Invalidated += OnInvalidated;
                 _controller.EraserPreviewChanged += OnInvalidated;
                 _controller.Document.Changed += OnDocumentChanged;
@@ -112,7 +145,25 @@ public sealed class InkSurface : UserControl, IDisposable
     // surface can present — and Win2D coalesces repeated invalidations into one draw. There is
     // no dispatcher hop, no timer, and no redraw of an unchanged scene: CanvasControl only draws
     // when invalidated, never on a free-running loop.
-    private void OnInvalidated() { if (!IsRenderingSuspended) _canvas.Invalidate(); }
+    private void OnInvalidated() { if (!IsRenderingSuspended && !_presentationPaused) _canvas.Invalidate(); }
+
+    private void ScheduleViewportFrame()
+    {
+        if (_viewportFrameQueued || _disposed) return;
+        _viewportFrameQueued = true;
+        _viewportFrameTime = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += RenderViewportFrame;
+    }
+
+    private void RenderViewportFrame(object sender, object args)
+    {
+        CompositionTarget.Rendering -= RenderViewportFrame;
+        _viewportFrameQueued = false;
+        if (_controller is null || _disposed) return;
+        long now = Stopwatch.GetTimestamp();
+        float elapsed = (float)Math.Clamp(Stopwatch.GetElapsedTime(_viewportFrameTime, now).TotalSeconds, 0, .05);
+        if (_controller.AdvanceViewportFrame(elapsed)) ScheduleViewportFrame();
+    }
 
     public void SuspendRendering()
     {
@@ -130,7 +181,7 @@ public sealed class InkSurface : UserControl, IDisposable
 
     private void OnDraw(CanvasControl sender, CanvasDrawEventArgs args)
     {
-        if (_controller is null || _scene is null || IsRenderingSuspended) return;
+        if (_controller is null || _scene is null || IsRenderingSuspended || _presentationPaused) return;
         _controller.ViewCenter = new System.Numerics.Vector2(
             (float)ActualWidth / 2, (float)ActualHeight / 2);
         Microsoft.Graphics.Canvas.CanvasActiveLayer clip = null;
@@ -143,15 +194,28 @@ public sealed class InkSurface : UserControl, IDisposable
         using (clip)
         {
         _scene.ShowSelectionOutline = ContentBounds is null;
-        if (DrawCommitted) _committed.Draw(args.DrawingSession, _scene, _controller, (float)ActualWidth, (float)ActualHeight, sender.Dpi);
-        _scene.DrawLive(args.DrawingSession, _controller);
+        if (DrawCommitted && InkSceneRenderer.NeedsLayeredLiveInk(_controller))
+            _scene.DrawWithLayeredLiveInk(args.DrawingSession, _controller, _controller.ViewTransform, new(0, 0, (float)ActualWidth, (float)ActualHeight));
+        else
+        {
+            if (DrawCommitted) _committed.Draw(args.DrawingSession, _scene, _controller, (float)ActualWidth, (float)ActualHeight, sender.Dpi);
+            if (ShowLiveInk) _scene.DrawLive(args.DrawingSession, _controller);
+            else _scene.DrawAdornments(args.DrawingSession, _controller, _controller.ViewTransform);
+        }
         }
         if (ContentBounds is not null) _scene.DrawSelectionOverlay(args.DrawingSession, _controller);
+        FrameDrawn?.Invoke();
     }
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var sample = Translate(e);
+        if (_controller is not null && InterceptPointerPressed?.Invoke(sample) == true)
+        {
+            InputBegan?.Invoke();
+            e.Handled = true;
+            return;
+        }
         InputStarting?.Invoke(sample);
         if (_controller is null) return;
         InputBegan?.Invoke();
@@ -180,6 +244,8 @@ public sealed class InkSurface : UserControl, IDisposable
         // WinUI may coalesce several digitizer packets into one routed event.
         // Intermediate points are newest first. Preserve their original timestamps.
         var points = e.GetIntermediatePoints(this);
+        // Erase every sample, then update board layers once for the coalesced input packet.
+        using var eraseUpdate = _controller.Tool == InkTool.Eraser ? _controller.Document.DeferNotifications() : null;
         for (int i = points.Count - 1; i >= 0; i--)
         {
             var intermediate = Translate(e, points[i]);
@@ -251,6 +317,10 @@ public sealed class InkSurface : UserControl, IDisposable
             (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0)
         {
             HasPressure = hasPressure,
+            BarrelButton = kind == OverlayPointerKind.Pen && props.IsBarrelButtonPressed,
+            SecondaryBarrelButton = kind == OverlayPointerKind.Pen && props.IsMiddleButtonPressed,
+            Inverted = kind == OverlayPointerKind.Pen && props.IsInverted,
+            EraserButton = kind == OverlayPointerKind.Pen && props.IsEraser,
             TiltX = kind == OverlayPointerKind.Pen ? props.XTilt : 0,
             TiltY = kind == OverlayPointerKind.Pen ? props.YTilt : 0,
         };
@@ -264,6 +334,8 @@ public sealed class InkSurface : UserControl, IDisposable
         _dotClock = null;
         if (_controller is not null)
         {
+            _controller.ViewportFrameRequested -= ScheduleViewportFrame;
+            CompositionTarget.Rendering -= RenderViewportFrame;
             foreach (var sample in _activePointers.Values) _controller.OnPointerCanceled(sample);
             _controller.HideEraserPreview();
             _controller.Invalidated -= OnInvalidated;

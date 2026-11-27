@@ -116,7 +116,7 @@ public sealed class AiPasteMetadataTests
     }
 
     [Fact]
-    public void SaveLoadPackage_PreservesImageMetadata()
+    public void SaveLoadV3_PreservesImageMetadata()
     {
         var path = TempFile("board-v3.icink");
         string json = new AiPasteMetadata { Kind = AiPasteKind.Formula, Latex = "x^2" }.Serialize();
@@ -129,7 +129,10 @@ public sealed class AiPasteMetadataTests
 
             board.SaveBoard(path);
 
-            Assert.Contains("\"Version\": 4", File.ReadAllText(path));
+            using (var package = System.IO.Compression.ZipFile.OpenRead(path))
+            using (var manifest = package.GetEntry("board.json")!.Open())
+            using (var jsonDocument = System.Text.Json.JsonDocument.Parse(manifest))
+                Assert.Equal(3, jsonDocument.RootElement.GetProperty("Version").GetInt32());
 
             var loaded = new BoardService();
             loaded.LoadBoard(path);

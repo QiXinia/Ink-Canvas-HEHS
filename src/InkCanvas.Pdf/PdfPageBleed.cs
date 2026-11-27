@@ -9,7 +9,13 @@ public static class PdfPageBleed
     public static PdfPageGeometry IncludeInk(PdfPageGeometry page, IReadOnlyList<InkStroke> strokes)
     {
         var bounds = new Rect(0, 0, page.DipWidth, page.DipHeight);
-        foreach (var stroke in strokes) bounds = bounds.Union(stroke.Bounds);
+        foreach (var stroke in strokes)
+        {
+            // End caps at a clipped page edge must not grow the paper or move the next page.
+            if (stroke.Points.All(point => point.X >= -.001f && point.Y >= -.001f
+                && point.X <= page.DipWidth + .001f && point.Y <= page.DipHeight + .001f)) continue;
+            bounds = bounds.Union(stroke.Bounds);
+        }
         if (bounds.Left >= 0 && bounds.Top >= 0 && bounds.Right <= page.DipWidth && bounds.Bottom <= page.DipHeight) return page;
         const float padding = 4;
         float left = bounds.Left < 0 ? bounds.Left - padding : 0;

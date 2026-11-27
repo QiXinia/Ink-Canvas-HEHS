@@ -10,6 +10,21 @@ public sealed record PdfPageGeometry(double Left, double Bottom, double Right, d
     public double Height => Top - Bottom;
     public float DipWidth => (float)((NormalizedRotation is 90 or 270 ? Height : Width) * UserUnit * 96 / 72);
     public float DipHeight => (float)((NormalizedRotation is 90 or 270 ? Width : Height) * UserUnit * 96 / 72);
+    public Matrix3x2 TransformTo(PdfPageGeometry target)
+    {
+        if (Left == target.Left && Bottom == target.Bottom && Right == target.Right && Top == target.Top && UserUnit == target.UserUnit)
+            return ((target.NormalizedRotation - NormalizedRotation + 360) % 360) switch
+            {
+                90 => new(0, 1, -1, 0, DipHeight, 0),
+                180 => new(-1, 0, 0, -1, DipWidth, DipHeight),
+                270 => new(0, -1, 1, 0, 0, DipWidth),
+                _ => Matrix3x2.Identity,
+            };
+        var origin = target.FromPdf(ToPdf(Vector2.Zero));
+        var x = (target.FromPdf(ToPdf(new(DipWidth, 0))) - origin) / DipWidth;
+        var y = (target.FromPdf(ToPdf(new(0, DipHeight))) - origin) / DipHeight;
+        return new(x.X, x.Y, y.X, y.Y, origin.X, origin.Y);
+    }
     public Vector2 ToPdf(Vector2 point)
     {
         float factor = (float)(72 / (96 * UserUnit));

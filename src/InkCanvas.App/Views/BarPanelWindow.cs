@@ -45,11 +45,12 @@ internal sealed class BarPanelWindow : Window
         _bar = bar;
         _kind = kind;
         _isMore = kind == BarPanelKind.More;
-        Title = kind switch { BarPanelKind.More => "更多设置", BarPanelKind.Eraser => "橡皮", _ => "手势选项" };
+        Title = kind switch { BarPanelKind.More => "更多设置", BarPanelKind.Eraser => "橡皮", BarPanelKind.Selection => "选择选项", _ => "手势选项" };
         _content = kind switch
         {
             BarPanelKind.More => bar.CreateMorePanelContent(),
             BarPanelKind.Eraser => bar.CreateEraserPanelContent(),
+            BarPanelKind.Selection => bar.CreateSelectionPanelContent(),
             _ => bar.CreateGesturePanelContent(),
         };
         _title = new PopupHeader(Title, _bar.Theme);
@@ -85,7 +86,7 @@ internal sealed class BarPanelWindow : Window
         _bar.ThemeRefreshed += ApplyChrome;
         OptionPopupCoordinator.Attach(this, _title);
 
-        TransientWindowDismissal.Attach(this, () => WindowChrome.GetHwnd(_owner), () => !_title.IsPinned,
+        TransientWindowDismissal.Attach(this, () => WindowChrome.GetHwnd(_owner), () => !_title.IsPinned && _bar.ShouldAutoDismissPanel(_kind),
             () => WindowChrome.GetScreenBounds(_owner, _bar.GetPanelButton(_kind)),
             () => WindowChrome.GetScreenBounds(_owner, _bar));
         _host.KeyDown += (_, e) =>
@@ -95,6 +96,7 @@ internal sealed class BarPanelWindow : Window
         Closed += (_, _) =>
         {
             _closed = true;
+            FlushSettingsChanges();
             _detachAnchor?.Invoke(); _detachAnchor = null;
             if (_trackedRoot is not null) _trackedRoot.Changed -= OnXamlRootChanged;
             _bar.ThemeRefreshed -= ApplyChrome;
@@ -122,6 +124,7 @@ internal sealed class BarPanelWindow : Window
     }
 
     public bool IsMore => _isMore;
+    internal void FlushSettingsChanges() { if (_content is EraserPalette eraser) eraser.FlushSizeChanges(); }
     internal void Detach()
     {
         IsDetached = true; _title.IsPinned = true;
@@ -132,10 +135,11 @@ internal sealed class BarPanelWindow : Window
     private void ApplyChrome()
     {
         int theme = _bar.Theme;
-        Brush bg = _bar.ColorfulBackground ? PopupBrushes.FloatBarColorful() : PopupBrushes.FloatBarBackground(theme);
+        Brush bg = _bar.ColorfulBackground ? PopupBrushes.FloatBarColorful(theme) : PopupBrushes.FloatBarBackground(theme);
         _host.Background = bg;
         _host.BorderBrush = PopupBrushes.ToolPanelBorder(theme);
         _title.ApplyTheme(theme);
+        if (_content is EraserPalette eraser) eraser.ApplyTheme(theme);
         FloatingBarWindow.UpdateAcrylicTint(this, theme);
     }
 
@@ -168,8 +172,8 @@ internal sealed class BarPanelWindow : Window
             // buttons + title band; gesture panel = icon+label+toggle rows under its title.
             if (_designW < 50 || _designH < 50)
             {
-                _designW = _kind == BarPanelKind.Eraser ? 244 : _isMore ? 256 : 180;
-                _designH = _kind == BarPanelKind.Eraser ? 168 : _isMore ? 236 : 165;
+                _designW = _kind is BarPanelKind.Eraser or BarPanelKind.Selection ? 244 : _isMore ? 256 : 180;
+                _designH = _kind is BarPanelKind.Eraser or BarPanelKind.Selection ? 180 : _isMore ? 236 : 165;
             }
             _measured = true;
         }

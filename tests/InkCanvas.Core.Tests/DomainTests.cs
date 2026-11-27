@@ -189,6 +189,14 @@ public class InkDocumentTests
 public class SettingsTests
 {
     [Fact]
+    public void AutomaticShapeAlignmentDefaultsOffAndRespectsSavedOptIn()
+    {
+        Assert.False(new AppSettings().InkToShape.AutoAlign);
+        var settings = JsonSerializer.Deserialize<AppSettings>("""{"inkToShape":{"AutoAlign":true}}""");
+        Assert.True(settings.InkToShape.AutoAlign);
+    }
+
+    [Fact]
     public void RoundTripsThroughJson()
     {
         var s = new AppSettings();
@@ -225,5 +233,6 @@ public class SettingsTests
         Assert.Equal(45, s.Rand.PeopleCount);
         // Untouched sections keep their defaults.
         Assert.True(s.PowerPoint.PowerPointSupport);
+        Assert.False(s.PowerPoint.HideStrokesAfterLeavingAnnotation);
     }
 }

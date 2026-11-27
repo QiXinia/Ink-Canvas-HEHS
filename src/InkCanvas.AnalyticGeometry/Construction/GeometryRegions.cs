@@ -24,7 +24,8 @@ internal sealed partial class GeometryEvaluator
             });
         }
         var faces = new List<GeoTriangle>();
-        const int columns = 100, rows = 80;
+        int columns = _curveSamples < 512 ? 50 : 100;
+        int rows = _curveSamples < 512 ? 40 : 80;
         double dx = (view.XMax - view.XMin) / columns, dy = (view.YMax - view.YMin) / rows;
         var filled = new bool[columns, rows];
         for (int i = 0; i < columns; i++)

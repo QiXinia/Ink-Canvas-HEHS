@@ -13,10 +13,20 @@ public sealed class InkDocument
     public IReadOnlyList<InkStroke> Strokes => _strokes;
 
     public int Count => _strokes.Count;
+    public int InkLayerCount { get; private set; } = 1;
 
     public event Action Changed;
     private int _updateDepth;
     private bool _changedDuringUpdate;
+
+    public void RestoreInkLayers(int count)
+    {
+        count = Math.Clamp(count, 1, InkStroke.MaximumInkLayers);
+        foreach (var stroke in _strokes) count = Math.Max(count, stroke.InkLayerIndex + 1);
+        if (count == InkLayerCount) return;
+        InkLayerCount = count;
+        NotifyChanged();
+    }
 
     /// <summary>Observers see the final stroke set when a recognition replaces several source strokes.</summary>
     public IDisposable DeferNotifications()
@@ -49,6 +59,7 @@ public sealed class InkDocument
     {
         if (stroke is null) return;
         _strokes.Add(stroke);
+        IncludeInkLayer(stroke);
         NotifyChanged();
     }
 
@@ -59,6 +70,7 @@ public sealed class InkDocument
         {
             if (s is null) continue;
             _strokes.Add(s);
+            IncludeInkLayer(s);
             any = true;
         }
         if (any) NotifyChanged();
@@ -82,6 +94,7 @@ public sealed class InkDocument
     public void Insert(int index, InkStroke stroke)
     {
         _strokes.Insert(Math.Clamp(index, 0, _strokes.Count), stroke);
+        IncludeInkLayer(stroke);
         NotifyChanged();
     }
 
@@ -92,6 +105,7 @@ public sealed class InkDocument
         foreach (var (index, stroke) in strokes)
         {
             _strokes.Insert(Math.Clamp(index, 0, _strokes.Count), stroke);
+            IncludeInkLayer(stroke);
             any = true;
         }
         if (any) NotifyChanged();
@@ -104,6 +118,7 @@ public sealed class InkDocument
         if (index < 0) return false;
         _strokes.RemoveAt(index);
         _strokes.InsertRange(index, replacement);
+        foreach (var item in replacement) IncludeInkLayer(item);
         // Notify once, so renderers never observe a temporarily empty document mid-erase.
         NotifyChanged();
         return true;
@@ -122,8 +137,11 @@ public sealed class InkDocument
         var incoming = strokes.Where(stroke => stroke is not null).ToArray();
         _strokes.Clear();
         _strokes.AddRange(incoming);
+        foreach (var stroke in incoming) IncludeInkLayer(stroke);
         NotifyChanged();
     }
+
+    private void IncludeInkLayer(InkStroke stroke) => InkLayerCount = Math.Max(InkLayerCount, stroke.InkLayerIndex + 1);
 
     /// <summary>Notify that stroke geometry mutated in place (e.g. a transform).</summary>
     public void Touch() => NotifyChanged();
@@ -139,11 +157,14 @@ public sealed class InkDocument
     }
 
     /// <summary>Strokes whose centreline comes within <paramref name="radius"/> of a point.</summary>
-    public List<InkStroke> HitTest(Vector2 point, float radius)
+    public List<InkStroke> HitTest(Vector2 point, float radius) => HitTest(point, radius, null);
+
+    public List<InkStroke> HitTest(Vector2 point, float radius, int? inkLayer)
     {
         var hits = new List<InkStroke>();
         foreach (var s in _strokes)
         {
+            if (inkLayer.HasValue && s.InkLayerIndex != inkLayer.Value) continue;
             if (!s.Bounds.Inflate(radius).Contains(point)) continue;
             if (s.DistanceTo(point) <= radius + s.HitRadius) hits.Add(s);
         }
@@ -154,12 +175,15 @@ public sealed class InkDocument
     public List<InkStroke> HitTest(Rect rect) => HitTest(rect, Matrix3x2.Identity);
 
     /// <summary>Hit-test in view space, including a rotated or zoomed canvas.</summary>
-    public List<InkStroke> HitTest(Rect rect, Matrix3x2 worldToView)
+    public List<InkStroke> HitTest(Rect rect, Matrix3x2 worldToView) => HitTest(rect, worldToView, null);
+
+    public List<InkStroke> HitTest(Rect rect, Matrix3x2 worldToView, int? inkLayer)
     {
         var hits = new List<InkStroke>();
         Span<Vector2> corners = stackalloc Vector2[4];
         foreach (var s in _strokes)
         {
+            if (inkLayer.HasValue && s.InkLayerIndex != inkLayer.Value) continue;
             var bounds = s.Bounds;
             corners[0] = new Vector2(bounds.Left, bounds.Top); corners[1] = new Vector2(bounds.Right, bounds.Top);
             corners[2] = new Vector2(bounds.Right, bounds.Bottom); corners[3] = new Vector2(bounds.Left, bounds.Bottom);
@@ -173,19 +197,27 @@ public sealed class InkDocument
             var viewBounds = new Rect(left, top, right, bottom);
             if (!viewBounds.Intersects(rect)) continue;
             if (s.Count == 0) continue;
-            var previous = Vector2.Transform(s.Points[0].Position, worldToView);
-            bool hit = rect.Contains(previous);
-            for (int i = 1; !hit && i < s.Count; i++)
-            {
-                var current = Vector2.Transform(s.Points[i].Position, worldToView);
-                hit = SegmentIntersectsRect(previous, current, rect);
-                previous = current;
-            }
-            if (!hit && s.ShapeSource?.Geometry?.IsFill == true && Matrix3x2.Invert(worldToView, out var inverse))
-                hit = s.DistanceTo(Vector2.Transform(rect.Center, inverse)) == 0;
+            bool hit = s.ShapeSource?.Geometry?.IsFill == true
+                ? s.FillContours().Any(range => IntersectsContour(s, range.Start, range.Count, closed: true))
+                    || (Matrix3x2.Invert(worldToView, out var inverse) && s.DistanceTo(Vector2.Transform(rect.Center, inverse)) == 0)
+                : IntersectsContour(s, 0, s.Count, closed: false);
             if (hit) hits.Add(s);
         }
         return hits;
+
+        bool IntersectsContour(InkStroke stroke, int start, int count, bool closed)
+        {
+            var first = Vector2.Transform(stroke.Points[start].Position, worldToView);
+            if (rect.Contains(first)) return true;
+            var previous = first;
+            for (int i = start + 1; i < start + count; i++)
+            {
+                var current = Vector2.Transform(stroke.Points[i].Position, worldToView);
+                if (SegmentIntersectsRect(previous, current, rect)) return true;
+                previous = current;
+            }
+            return closed && SegmentIntersectsRect(previous, first, rect);
+        }
     }
 
     internal static bool SegmentIntersectsRect(Vector2 a, Vector2 b, Rect rect)
@@ -210,9 +242,11 @@ public sealed class InkDocument
     /// Erase by area: removes whole strokes touched by the eraser disc. Matches the
     /// original's stroke-level (not pixel-level) eraser behaviour.
     /// </summary>
-    public List<InkStroke> EraseAt(Vector2 point, float radius)
+    public List<InkStroke> EraseAt(Vector2 point, float radius) => EraseAt(point, radius, null);
+
+    public List<InkStroke> EraseAt(Vector2 point, float radius, int? inkLayer)
     {
-        var hits = HitTest(point, radius);
+        var hits = HitTest(point, radius, inkLayer);
         if (hits.Count > 0) RemoveAll(hits);
         return hits;
     }

@@ -24,7 +24,7 @@ internal sealed class ToolOptionsWindow : Window
     internal bool IsPinned => _header.IsPinned;
 
     internal ToolOptionsWindow(Window owner, FrameworkElement content, PopupHeader header,
-        Func<RectInt32> anchor, Func<double> scale, int theme, Func<RectInt32> interactionRegion = null)
+        Func<RectInt32> anchor, Func<double> scale, int theme, Func<RectInt32> interactionRegion = null, Func<bool> isEditing = null)
     {
         _content = content;
         _header = header;
@@ -43,13 +43,16 @@ internal sealed class ToolOptionsWindow : Window
         OptionPopupCoordinator.Attach(this, header);
         WindowChrome.EnableDragMove(this, header, Detach,
             onDragCompleted: Fit);
-        TransientWindowDismissal.Attach(this, () => WindowChrome.GetHwnd(owner), () => !header.IsPinned, anchor, interactionRegion);
+        TransientWindowDismissal.Attach(this, () => WindowChrome.GetHwnd(owner), () => !header.IsPinned && isEditing?.Invoke() != true, anchor, interactionRegion);
         _detachAnchor = WindowChrome.TrackAnchor(this, WindowChrome.GetHwnd(owner), () => { if (!IsDetached) Fit(); });
         content.Loaded += OnLoaded;
         content.SizeChanged += OnSizeChanged;
         Closed += (_, _) =>
         {
             _closed = true;
+            if (content is BoardPenPalette palette) palette.FlushSliderChanges();
+            if (content is Border { Child: StackPanel panel })
+                foreach (var eraser in panel.Children.OfType<EraserPalette>()) eraser.FlushSizeChanges();
             _detachAnchor?.Invoke(); _detachAnchor = null;
             header.CloseRequested -= Close;
             content.Loaded -= OnLoaded;

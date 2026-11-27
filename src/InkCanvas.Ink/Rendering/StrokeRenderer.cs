@@ -158,9 +158,12 @@ public sealed class StrokeRenderer : IDisposable
         builder.SetFilledRegionDetermination(CanvasFilledRegionDetermination.Winding);
         if (stroke.ShapeSource?.Geometry?.IsFill == true)
         {
-            builder.BeginFigure(stroke.Points[0].Position);
-            foreach (var point in stroke.Points.Skip(1)) builder.AddLine(point.Position);
-            builder.EndFigure(CanvasFigureLoop.Closed);
+            foreach (var (start, count) in stroke.FillContours())
+            {
+                builder.BeginFigure(stroke.Points[start].Position);
+                for (int i = start + 1; i < start + count; i++) builder.AddLine(stroke.Points[i].Position);
+                builder.EndFigure(CanvasFigureLoop.Closed);
+            }
             return CanvasGeometry.CreatePath(builder);
         }
         if (stroke.ShapeSource?.Geometry is { Construction: InkCanvas.Core.Shapes.ShapeConstruction.Connector,

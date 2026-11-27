@@ -1,5 +1,6 @@
 using System.Numerics;
 using InkCanvas.Core.Ink;
+using InkCanvas.Core.Shapes;
 using InkCanvas.Pdf;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
@@ -11,6 +12,163 @@ namespace InkCanvas.Core.Tests;
 
 public sealed class PdfDocumentTests
 {
+    [Fact]
+    public async Task OrganizingPagesPersistsNativeOrderRotationBookmarksAndEditableContent()
+    {
+        string root = Directory.CreateTempSubdirectory("inkcanvas-organize-pdf-").FullName;
+        try
+        {
+            string path = Path.Combine(root, "original.pdf"), saved = Path.Combine(root, "organized.pdf");
+            using (var pdf = new PdfDocument())
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    var page = pdf.AddPage();
+                    page.Width = XUnit.FromPoint(360 + i * 30);
+                    page.Height = XUnit.FromPoint(520);
+                    pdf.Outlines.Add("Page " + i, page, true);
+                }
+                pdf.Save(path);
+            }
+            using var file = await PdfAnnotationFile.OpenAsync(path);
+            var geometry = file.Pages[3];
+            var band = new PdfBlankBand(Guid.NewGuid(), null, null, geometry.DipHeight, 80);
+            var spacing = new PdfPageSpacing([], [band]);
+            var ink = new InkStroke(new() { TaperKind = TaperKind.None }) { InkLayerIndex = 2 };
+            ink.AddPoint(90, geometry.DipHeight + 15); ink.AddPoint(160, geometry.DipHeight + 35); ink.Complete();
+            var pages = new Dictionary<int, IReadOnlyList<InkStroke>> { [3] = new[] { ink }, [1] = new[] { Stroke() } };
+            await file.SaveAsync(saved, pages, new Dictionary<int, int> { [3] = 90 },
+                new Dictionary<int, PdfPageSpacing> { [3] = spacing }, pageOrder: [3, 0, 2]);
+            using (var standard = PdfReader.Open(saved, PdfDocumentOpenMode.Import))
+            {
+                Assert.Equal(3, standard.PageCount);
+                Assert.Equal(90, standard.Pages[0].Rotate);
+                Assert.Equal(360, standard.Pages[1].Width.Point, 3);
+                Assert.Equal(420, standard.Pages[2].Width.Point, 3);
+            }
+            using var reopened = await PdfAnnotationFile.OpenAsync(saved);
+            Assert.Equal(new[] { 1, 2, 0 }, reopened.Bookmarks.Select(bookmark => bookmark.PageIndex));
+            Assert.DoesNotContain(reopened.Bookmarks, bookmark => bookmark.Title == "Page 1");
+            Assert.Equal(band, Assert.Single(reopened.GetSpacing(0).Bands));
+            var restored = Assert.Single(reopened.GetInk(0));
+            Assert.Equal(ink.Id, restored.Id);
+            Assert.Equal(2, restored.InkLayerIndex);
+            Assert.Empty(reopened.GetInk(1));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task RoundedRectangleRingExportsAHollowFillAndKeepsItsControlPoints()
+    {
+        string root = Directory.CreateTempSubdirectory("inkcanvas-rounded-ring-").FullName;
+        try
+        {
+            string original = Path.Combine(root, "source.pdf"), exported = Path.Combine(root, "export.pdf");
+            CreateFixture(original, pages: 1);
+            var definition = new ShapeDefinition
+            {
+                Kind = ShapeKind.RoundedRectangleRing, Parameters = [20, 20, 220, 160, 25, 18], FillColor = 0xFF369AFF,
+            };
+            var strokes = definition.Generate(new(), Guid.NewGuid());
+            var fill = Assert.Single(strokes, stroke => stroke.ShapeSource.Geometry.IsFill);
+            Assert.Equal(2, fill.FillContours().Count());
+            Assert.InRange(fill.DistanceTo(new(120, 90)), 51.9f, 52.1f);
+            Assert.Equal(0, fill.DistanceTo(new(120, 29)));
+            Assert.True(StrokeEraser.EraseDisc(fill, new(120, 29), 4, out var clipped));
+            var erased = Assert.Single(clipped);
+            Assert.True(erased.DistanceTo(new(120, 29)) > 3.9f);
+            Assert.True(erased.DistanceTo(new(120, 90)) > 51);
+            using (var file = await PdfAnnotationFile.OpenAsync(original))
+                await file.SaveAsync(exported, new Dictionary<int, IReadOnlyList<InkStroke>> { [0] = strokes });
+            using (var pdf = PdfReader.Open(exported, PdfDocumentOpenMode.Import))
+            {
+                var annotation = Assert.Single(pdf.Pages[0].Annotations.Cast<PdfAnnotation>(),
+                    item => item.Elements.GetInteger("/InkCanvasVersion") == 1);
+                var appearance = annotation.Elements.GetDictionary("/AP").Elements.GetDictionary("/N").Stream;
+                string[] commands = System.Text.Encoding.ASCII.GetString(appearance.UnfilteredValue).Split('\n');
+                int firstFill = Array.IndexOf(commands, "f");
+                Assert.True(firstFill > 0);
+                Assert.Equal(2, commands.Take(firstFill).Count(line => line == "h"));
+            }
+            using var reopened = await PdfAnnotationFile.OpenAsync(exported);
+            var restored = Assert.Single(reopened.GetInk(0), stroke => stroke.ShapeSource.Geometry.IsFill);
+            Assert.Equal(definition.ControlPoints(), restored.ShapeSource.Geometry.ControlPoints());
+            Assert.Equal(fill.DistanceTo(new(120, 90)), restored.DistanceTo(new(120, 90)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task AreaErasedFillKeepsTheHoleInThePdfAppearanceAndEditableInk()
+    {
+        string root = Directory.CreateTempSubdirectory("inkcanvas-erased-fill-").FullName;
+        try
+        {
+            string original = Path.Combine(root, "source.pdf"), exported = Path.Combine(root, "export.pdf");
+            CreateFixture(original, pages: 1);
+            var shape = new ShapeDefinition
+            {
+                Kind = ShapeKind.Rectangle, Parameters = [20, 20, 180, 140],
+                Vertices = [20, 20, 180, 20, 180, 140, 20, 140], FillColor = 0xFF369AFF,
+            }.Generate(new StrokeAttributes { BaseWidth = 4 }, Guid.NewGuid());
+            var center = new Vector2(100, 80);
+            Assert.True(StrokeEraser.EraseDisc(shape[0], center, 25, out var clipped));
+            using (var file = await PdfAnnotationFile.OpenAsync(original))
+                await file.SaveAsync(exported, new Dictionary<int, IReadOnlyList<InkStroke>> { [0] = clipped });
+            using (var pdf = PdfReader.Open(exported, PdfDocumentOpenMode.Import))
+            {
+                var annotation = Assert.Single(pdf.Pages[0].Annotations.Cast<PdfAnnotation>(),
+                    item => item.Elements.GetInteger("/InkCanvasVersion") == 1);
+                var appearance = annotation.Elements.GetDictionary("/AP").Elements.GetDictionary("/N").Stream;
+                string[] commands = System.Text.Encoding.ASCII.GetString(appearance.UnfilteredValue).Split('\n');
+                Assert.Equal(2, commands.Count(line => line == "h"));
+                Assert.Single(commands, line => line == "f");
+            }
+            using var reopened = await PdfAnnotationFile.OpenAsync(exported);
+            var restored = Assert.Single(reopened.GetInk(0));
+            Assert.Equal(2, restored.FillContours().Count());
+            Assert.InRange(restored.DistanceTo(center), 24.5f, 25);
+            Assert.Equal(0, restored.DistanceTo(new Vector2(40, 80)));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async Task LayeredInkExportsAsOneAppearanceAndReopensWithItsLayerMembership()
+    {
+        string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            string original = Path.Combine(root, "source.pdf"), exported = Path.Combine(root, "export.pdf");
+            CreateFixture(original, pages: 1);
+            var bottom = Stroke();
+            bottom.LayerOrder = 90;
+            bottom.Attributes.Color = InkColor.Opaque(255, 0, 0);
+            var top = Stroke();
+            top.LayerOrder = 1;
+            top.InkLayerIndex = 2;
+            top.Attributes.Color = InkColor.Opaque(0, 0, 255);
+            using (var file = await PdfAnnotationFile.OpenAsync(original))
+                await file.SaveAsync(exported, new Dictionary<int, IReadOnlyList<InkStroke>> { [0] = new[] { bottom, top } });
+            using (var pdf = PdfReader.Open(exported, PdfDocumentOpenMode.Import))
+            {
+                var ink = Assert.Single(pdf.Pages[0].Annotations.Cast<PdfAnnotation>(),
+                    annotation => annotation.Elements.GetInteger("/InkCanvasVersion") == 1);
+                var appearance = ink.Elements.GetDictionary("/AP").Elements.GetDictionary("/N").Stream;
+                string content = System.Text.Encoding.ASCII.GetString(appearance.UnfilteredValue);
+                int red = content.IndexOf("1 0 0 rg", StringComparison.Ordinal);
+                int blue = content.IndexOf("0 0 1 rg", StringComparison.Ordinal);
+                Assert.True(red >= 0 && blue > red);
+            }
+            using var reopened = await PdfAnnotationFile.OpenAsync(exported);
+            Assert.Equal(new[] { bottom.Id, top.Id }, reopened.GetInk(0).Select(stroke => stroke.Id));
+            Assert.Equal(new[] { 0, 2 }, reopened.GetInk(0).Select(stroke => stroke.InkLayerIndex));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     private static InkStroke Stroke(float x = 100, bool highlighter = false, PenNib nib = PenNib.Round)
     {
         var stroke = new InkStroke(new StrokeAttributes { BaseWidth = 15, Color = InkColor.Red, IsHighlighter = highlighter, HighlighterAlpha = 93, Nib = nib, TaperKind = TaperKind.Tail });
@@ -165,6 +323,20 @@ public sealed class PdfDocumentTests
         Assert.Equal(original.Id, loaded.Id); Assert.Equal(original.Points, loaded.Points); Assert.Equal(original.Attributes.BaseWidth, loaded.Attributes.BaseWidth);
         Assert.Equal(original.Attributes.Nib, loaded.Attributes.Nib); Assert.Equal(original.Attributes.HighlighterAlpha, loaded.Attributes.HighlighterAlpha);
         Assert.Equal(StrokeGeometry.BuildOutline(original), StrokeGeometry.BuildOutline(loaded));
+    }
+
+    [Fact]
+    public void BatchedInkDecodePreservesTabletSamplesAcrossBlockBoundaries()
+    {
+        var stroke = new InkStroke(new() { TaperKind = TaperKind.None });
+        stroke.RestorePoints(Enumerable.Range(0, 513).Select(index => new InkPoint(index, 40, .6f, 2, index * 4)
+        {
+            HasPressure = index % 2 == 0, TiltX = index % 60, TiltY = -(index % 90),
+        }));
+        stroke.Complete();
+        var encoded = PdfInkCodec.Encode([stroke]);
+        Assert.Equal(stroke.Points, Assert.Single(PdfInkCodec.Decode(encoded)).Points);
+        Assert.Throws<OperationCanceledException>(() => PdfInkCodec.Decode(encoded, new CancellationToken(canceled: true)));
     }
 
     [Fact]

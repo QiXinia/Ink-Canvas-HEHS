@@ -7,7 +7,6 @@ using Xunit;
 
 namespace InkCanvas.Ai.Tests;
 
-[Collection("AiConfigEnvironment")]
 public sealed class AiOptimizationTests
 {
     // ---------- 局部纠错 ----------
@@ -327,6 +326,14 @@ public sealed class AiOptimizationTests
         Assert.True(root.TryGetProperty("viewport", out _));
         Assert.Equal(AiConfig.DefaultModel, root.GetProperty("model").GetString());
         Assert.Equal("withImage", root.GetProperty("stage").GetString());
+    }
+
+    [Fact]
+    public void Payload_ChatIncludesTheActualFollowUpQuestion()
+    {
+        var request = new AssistantRequest { Mode = AssistantMode.Chat, Question = "为什么可以分解成这两个因式？" };
+        using var document = JsonDocument.Parse(AiClient.BuildPayload(request, "m1"));
+        Assert.Equal(request.Question, document.RootElement.GetProperty("question").GetString());
     }
 
     // ---------- 超时选择 ----------

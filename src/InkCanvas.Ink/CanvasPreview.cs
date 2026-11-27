@@ -17,12 +17,12 @@ public sealed partial class InkController
         _previewOwner = null; ExtensionPreview = Array.Empty<InkStroke>(); Invalidated?.Invoke();
     }
     private IEnumerable<InkStroke> ShapeMembers(InkStroke stroke) => stroke.ShapeSource is { } source
-        ? Document.Strokes.Where(item => item.ShapeSource?.GroupId == source.GroupId) : new[] { stroke };
+        ? Document.Strokes.Where(item => item.InkLayerIndex == stroke.InkLayerIndex && item.ShapeSource?.GroupId == source.GroupId) : new[] { stroke };
     private void ExpandShapeSelection()
     {
         var groups = Selection.Where(stroke => stroke.ShapeSource is not null).Select(stroke => stroke.ShapeSource.GroupId).ToHashSet();
         if (groups.Count == 0) return;
         foreach (var stroke in Document.Strokes)
-            if (stroke.ShapeSource is { } source && groups.Contains(source.GroupId) && !Selection.Contains(stroke)) Selection.Add(stroke);
+            if (InActiveInkLayer(stroke) && stroke.ShapeSource is { } source && groups.Contains(source.GroupId) && !Selection.Contains(stroke)) Selection.Add(stroke);
     }
 }

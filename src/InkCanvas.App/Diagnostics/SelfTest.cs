@@ -550,9 +550,9 @@ public static class SelfTest
                     bool alphaUpdates = true;
                     if (highlighter)
                     {
-                        var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔透明度"));
-                        alpha.Value = 240;
-                        alphaUpdates = preview.Stroke.Attributes.EffectiveColor.A == 240 && preview.Stroke.Attributes.IsHighlighter;
+                        var alpha = Descendants(palette).OfType<Slider>().Single(slider => AutomationProperties.GetName(slider).StartsWith("荧光笔不透明度"));
+                        alpha.Value = 100;
+                        alphaUpdates = preview.Stroke.Attributes.EffectiveColor.A == 255 && preview.Stroke.Attributes.IsHighlighter;
                     }
                     bool sourceUntouched = previewController.Document.Count == 0 && previewController.History.UndoCount == 0;
                     allFit &= widthUpdates && nibUpdates && taperUpdates && alphaUpdates && sourceUntouched;

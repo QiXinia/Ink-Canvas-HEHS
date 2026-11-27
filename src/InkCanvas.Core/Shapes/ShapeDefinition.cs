@@ -4,11 +4,11 @@ using InkCanvas.Core.Ink;
 
 namespace InkCanvas.Core.Shapes;
 
-public enum ShapeConstruction { Bounds, Solid, Hyperbola, Connector }
+public enum ShapeConstruction { Bounds, Solid, Hyperbola, Connector, Contours }
 public enum ShapeLineStyle { Original, Solid, Dashed, Dotted }
 
 /// <summary>Editable construction data. Arrays are immutable snapshots in local coordinates.</summary>
-public sealed record ShapeDefinition
+public sealed partial record ShapeDefinition
 {
     public const string Provider = "inkcanvas.shape";
     public ShapeKind Kind { get; init; }
@@ -19,6 +19,8 @@ public sealed record ShapeDefinition
     public ShapeLineStyle LineStyle { get; init; }
     public uint? FillColor { get; init; }
     public bool IsFill { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int[] FillContourLengths { get; init; }
     public Guid? StartNode { get; init; }
     public Guid? EndNode { get; init; }
 
@@ -27,24 +29,34 @@ public sealed record ShapeDefinition
         && Parameters is { Length: >= 4 } && Parameters.All(float.IsFinite)
         && (Construction is not (ShapeConstruction.Solid or ShapeConstruction.Hyperbola) || Parameters.Length >= 6)
         && Vertices is not null && Vertices.Length % 2 == 0 && Vertices.All(float.IsFinite)
+        && (Kind != ShapeKind.Polygon || !IsEditable || Vertices.Length is >= 6 and <= PolygonGeometry.MaximumVertices * 2)
         && Transform is { Length: 6 } && Transform.All(float.IsFinite) && MathF.Abs(Matrix.GetDeterminant()) > 1e-8f;
     [JsonIgnore]
     public Matrix3x2 Matrix => new(Transform[0], Transform[1], Transform[2], Transform[3], Transform[4], Transform[5]);
     [JsonIgnore]
-    public bool CanFill => Vertices.Length >= 6 || Kind is ShapeKind.Circle or ShapeKind.CircleFromCenter
+    public bool IsEditable => Construction != ShapeConstruction.Contours;
+    [JsonIgnore]
+    public bool CanFill => IsEditable && (Vertices.Length >= 6 || Kind is ShapeKind.Circle or ShapeKind.CircleFromCenter
         or ShapeKind.DashedCircle or ShapeKind.DashedCircleFromCenter or ShapeKind.Ellipse or ShapeKind.EllipseFromCenter
         or ShapeKind.EllipseWithFoci or ShapeKind.EllipseWithFociFromCenter || Construction == ShapeConstruction.Solid
-        || Kind is ShapeKind.Cylinder or ShapeKind.Cone or ShapeKind.Sphere or ShapeKind.Hemisphere or ShapeKind.ConeFrustum or ShapeKind.Tetrahedron;
+        || Kind is ShapeKind.Cylinder or ShapeKind.Cone or ShapeKind.Sphere or ShapeKind.Hemisphere or ShapeKind.ConeFrustum or ShapeKind.Tetrahedron
+            or ShapeKind.Sector || ShapeGenerator.IsRoundedRectangle(Kind));
+
+    public ShapeDefinition AsContours(int[] fillContourLengths = null) => new()
+    {
+        Kind = Kind, Construction = ShapeConstruction.Contours, Parameters = new float[4],
+        IsFill = IsFill, FillContourLengths = fillContourLengths ?? FillContourLengths,
+    };
 
     public static float[] Write(Matrix3x2 m) => new[] { m.M11, m.M12, m.M21, m.M22, m.M31, m.M32 };
     public ShapeDefinition Transformed(Matrix3x2 m) => this with { Transform = Write(Matrix * m) };
 
     public Vector2[] ControlPoints()
     {
-        var points = Vertices.Length >= 6 ? Pairs(Vertices).ToArray()
+        var points = ParameterizedControls() ?? (Vertices.Length >= 6 ? Pairs(Vertices).ToArray()
             : Construction == ShapeConstruction.Solid ? new[] { Point(0), Point(2), Point(0) + Point(4) }
             : Construction == ShapeConstruction.Hyperbola ? new[] { Point(0), Point(2), Point(4) }
-            : new[] { Point(0), Point(2) };
+            : new[] { Point(0), Point(2) });
         return points.Select(point => Vector2.Transform(point, Matrix)).ToArray();
     }
 
@@ -52,9 +64,12 @@ public sealed record ShapeDefinition
     {
         if (!Matrix3x2.Invert(Matrix, out var inverse) || index < 0 || index >= ControlPoints().Length) return this;
         var local = Vector2.Transform(world, inverse);
+        if (!float.IsFinite(local.X) || !float.IsFinite(local.Y)) return this;
+        if (MoveParameterizedControl(index, local) is { } parameterized) return parameterized;
         var values = (Vertices.Length >= 6 ? Vertices : Parameters).ToArray();
         if (Vertices.Length < 6 && Construction == ShapeConstruction.Solid && index == 2) local -= Point(0);
         values[index * 2] = local.X; values[index * 2 + 1] = local.Y;
+        if (Kind == ShapeKind.Polygon && !PolygonGeometry.IsSimple(Pairs(values).ToArray())) return this;
         return Vertices.Length >= 6 ? this with { Vertices = values } : this with { Parameters = values };
     }
 
@@ -71,6 +86,13 @@ public sealed record ShapeDefinition
         return strokes;
     }
 
+    public static ShapeDefinition FromPolygon(ShapeKind kind, IReadOnlyList<Vector2> corners) => new()
+    {
+        Kind = kind,
+        Parameters = [corners[0].X, corners[0].Y, corners[2].X, corners[2].Y],
+        Vertices = corners.SelectMany(point => new[] { point.X, point.Y }).ToArray(),
+    };
+
     public static ShapeDefinition FromBounds(ShapeKind kind, Vector2 start, Vector2 end, IReadOnlyList<InkStroke> contours)
     {
         bool polygon = kind is ShapeKind.Rectangle or ShapeKind.RectangleFromCenter or ShapeKind.Square or ShapeKind.Triangle
@@ -84,11 +106,12 @@ public sealed record ShapeDefinition
 
     public List<InkStroke> Generate(StrokeAttributes attributes, Guid groupId)
     {
-        if (!IsValid) return new();
+        if (!IsEditable || !IsValid) return new();
         var a = attributes.Clone(); a.TaperKind = TaperKind.None;
         a.GeneratorSolidLines = LineStyle != ShapeLineStyle.Original;
         List<InkStroke> contours;
         if (Vertices.Length >= 6) contours = new() { Stroke(a, Pairs(Vertices).Append(new(Vertices[0], Vertices[1]))) };
+        else if (GenerateParameterized(a) is { } parameterized) contours = parameterized;
         else if (Construction == ShapeConstruction.Solid) contours = ShapeGenerator.GenerateSolidContours(Kind, Point(0), Point(2), Point(4), a);
         else if (Construction == ShapeConstruction.Hyperbola)
         {
@@ -99,21 +122,36 @@ public sealed record ShapeDefinition
         }
         else contours = ShapeGenerator.GenerateContours(Kind, Point(0), Point(2), a);
         List<Vector2> fill = null;
+        int[] fillContourLengths = null;
         if (FillColor.HasValue && CanFill)
         {
-            var closed = contours.FirstOrDefault(s => s.Count > 3 && Vector2.DistanceSquared(s.Points[0].Position, s.Points[^1].Position) < .01f);
-            fill = closed is not null && Construction != ShapeConstruction.Solid ? closed.Points.Select(p => p.Position).ToList()
-                : Hull(contours.SelectMany(s => s.Points).Select(p => p.Position));
+            if (Kind == ShapeKind.RoundedRectangleRing && contours.Count == 2)
+            {
+                fillContourLengths = contours.Select(stroke => stroke.Count - 1).ToArray();
+                fill = contours.SelectMany(stroke => stroke.Points.SkipLast(1)).Select(point => point.Position).ToList();
+            }
+            else
+            {
+                var closed = contours.FirstOrDefault(s => s.Count > 3 && Vector2.DistanceSquared(s.Points[0].Position, s.Points[^1].Position) < .01f);
+                fill = closed is not null && Construction != ShapeConstruction.Solid && Kind != ShapeKind.ConeFrustum
+                    ? closed.Points.Select(p => p.Position).ToList()
+                    : Hull(contours.SelectMany(s => s.Points).Select(p => p.Position));
+            }
         }
         if (Construction != ShapeConstruction.Connector && LineStyle is ShapeLineStyle.Dashed or ShapeLineStyle.Dotted)
             contours = Pattern(contours, a, LineStyle, MathF.Sqrt(MathF.Abs(Matrix.GetDeterminant())));
-        foreach (var stroke in contours) stroke.Transform(Matrix, scaleWidth: false);
+        foreach (var stroke in contours)
+        {
+            stroke.IsRecognizedShape = true;
+            stroke.Complete();
+            stroke.Transform(Matrix, scaleWidth: false);
+        }
         Attach(contours, this with { IsFill = false }, groupId);
         if (fill is { Count: >= 3 })
         {
             var fillAttributes = a.Clone(); fillAttributes.Color = InkColor.FromPackedArgb(FillColor.Value); fillAttributes.IsHighlighter = false;
             var stroke = Stroke(fillAttributes, fill); stroke.Transform(Matrix, scaleWidth: false);
-            stroke.ShapeSource = ShapeSource.FromGeometry(groupId, this with { IsFill = true });
+            stroke.ShapeSource = ShapeSource.FromGeometry(groupId, this with { IsFill = true, FillContourLengths = fillContourLengths });
             contours.Insert(0, stroke);
         }
         return contours;

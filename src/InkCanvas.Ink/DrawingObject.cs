@@ -8,6 +8,7 @@ public enum LayerAction { BringToFront, MoveForward, MoveBackward, SendToBack }
 public readonly record struct DrawingObject(InkStroke Stroke, ISelectionElement Element)
 {
     public Guid Id => Stroke?.Id ?? Element.Id;
+    public int InkLayerIndex => Stroke?.InkLayerIndex ?? 0;
     public long? LayerOrder
     {
         get => Stroke is not null ? Stroke.LayerOrder : Element.LayerOrder;

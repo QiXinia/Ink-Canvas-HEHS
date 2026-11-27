@@ -1,6 +1,5 @@
 using InkCanvas.Controls.Controls;
 using InkCanvas.App.Services;
-
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -32,7 +31,6 @@ public sealed class FloatingBarWindow : Window
     private double _lastDpiScale = 1;
     private XamlRoot _trackedXamlRoot;
     private readonly WindowIdleResources _idleResources;
-    private bool _closed;
 
     public FloatingBarWindow()
     {
@@ -93,7 +91,6 @@ public sealed class FloatingBarWindow : Window
         };
         Closed += (_, _) =>
         {
-            _closed = true;
             _bar.FinishMainCollapseAnimation();
             if (_trackedXamlRoot is not null) _trackedXamlRoot.Changed -= OnXamlRootChanged;
             _bar.LayoutUpdated -= OnBarLayoutUpdated;
@@ -106,31 +103,10 @@ public sealed class FloatingBarWindow : Window
     }
 
     internal double UserScale => Math.Clamp(_scalePercent, 50, 200) / 100.0;
-
-    /// <summary>
-    /// 浮条窗口是否仍可重排。关闭板会经 FloatingBar.set_Controller → LayoutChanged 重排浮条，
-    /// 若此时浮条已随应用退出而关闭，必须直接跳过，否则 Place 会拿到空的 AppWindow。
-    /// </summary>
-    private bool CanReposition()
-    {
-        if (_closed) return false;
-        try
-        {
-            if (AppWindow is null || WindowChrome.GetHwnd(this) == IntPtr.Zero) return false;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[FloatingBar] 跳过重排：窗口已关闭，{ex.GetType().Name}: {ex.Message}",
-                Core.Diagnostics.LogType.Trace);
-            return false;
-        }
-    }
+    internal double EffectiveScale => _scaledBar.Height > 0 ? _scaledBar.Height / _bar.ComputeLayoutSize().Height : UserScale;
 
     private void SwitchSide()
     {
-        if (!CanReposition()) return;
         var work = WindowChrome.GetWorkArea(this);
         var position = AppWindow.Position;
         int width = AppWindow.Size.Width;
@@ -151,7 +127,6 @@ public sealed class FloatingBarWindow : Window
 
     private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args)
     {
-        if (!CanReposition()) return;
         double newScale = WindowChrome.GetDpiScale(this);
         if (Math.Abs(newScale - _lastDpiScale) < 0.001) return;
         _lastDpiScale = newScale;
@@ -166,21 +141,8 @@ public sealed class FloatingBarWindow : Window
     public bool IsFolded => _isFolded;
     internal IReadOnlyList<FoldedBarHandleWindow> FoldHandles => _foldHandles;
 
-    /// <summary>Diagnostics only: the presentation state used to place the bar.</summary>
-    internal string DescribePlacement()
-    {
-        var area = GetPlacementArea();
-        var position = WindowChrome.GetClientPosition(this);
-        return $"mode={( _presentationMode ? "presentation" : "desktop")}" +
-            $" windowed={_windowedPresentation} placement=({area.X},{area.Y},{area.Width},{area.Height})" +
-            $" desktop=({_desktopPosition.X},{_desktopPosition.Y}) userPlaced={_userPlaced}" +
-            $" bottomMargin={_bottomMargin} scale={_scalePercent} client=({position.X},{position.Y})" +
-            $" size=({AppWindow.ClientSize.Width},{AppWindow.ClientSize.Height})";
-    }
-
     public void SetPresentationMode(bool active, nint window = default, bool windowed = false)
     {
-        if (!CanReposition()) return;
         if (!active)
         {
             if (!_presentationMode) return;
@@ -225,7 +187,7 @@ public sealed class FloatingBarWindow : Window
         CreateFoldHandles();
     }
 
-    private ScreenRect GetPlacementArea()
+    internal ScreenRect GetPlacementArea()
     {
         if (!_presentationMode)
         {
@@ -243,7 +205,7 @@ public sealed class FloatingBarWindow : Window
 
     public void SetFolded(bool folded)
     {
-        if (_closed || _isFolded == folded) return;
+        if (_isFolded == folded) return;
         _isFolded = folded;
         if (folded)
         {
@@ -277,7 +239,6 @@ public sealed class FloatingBarWindow : Window
 
     public void RefreshDisplayPlacement()
     {
-        if (!CanReposition()) return;
         Reposition(_bottomMargin, _scalePercent, recenter: false);
         if (_isFolded)
         {
@@ -299,23 +260,8 @@ public sealed class FloatingBarWindow : Window
         _bar.Build();
     }
 
-/// <summary>
-    /// Applies an explicit appearance theme to the window chrome and to the hosted bar.
-    /// 0 = follow system, 1 = light, 2 = dark.
-    /// </summary>
-    public void ApplyTheme(int theme)
-    {
-        WindowChrome.ApplyTheme(this, theme);
-        _bar.ApplyTheme(theme);
-    }
-
-    /// <summary>
-    /// Size the window to the bar's measured content and place it bottom-centre. Sizing to
-    /// content matters: any leftover window area is transparent but still hit-testable.
-    /// </summary>
     public void Reposition(double bottomMargin, double scalePercent, bool recenter = true)
     {
-        if (!CanReposition()) return;
         _bottomMargin = bottomMargin;
         _scalePercent = scalePercent;
         if (recenter) _userPlaced = false;
@@ -338,31 +284,19 @@ public sealed class FloatingBarWindow : Window
             _bar.Width = widthDip;
         }
         else _bar.Width = double.NaN;
-
-        // 启动阶段 WindowChrome.GetDpiScale 可能仍返回 1，而 XAML 内容已按真实 DPI 栅格化。
-        // 优先用 XamlRoot.RasterizationScale 换算物理像素，避免窗口偏小、右侧按钮被裁切。
-        double raster = _bar.XamlRoot?.RasterizationScale ?? dpiScale;
-        if (raster <= 0) raster = dpiScale > 0 ? dpiScale : 1;
-
         var work = GetPlacementArea();
-        // 工作区不足时只降低本次渲染比例（上限 150%），不改用户设置的原值 _scalePercent。
-        double maxScaleByWidth = work.Width / (expanded.Width * raster);
-        double maxScaleByHeight = work.Height / (heightDip * raster);
-        double effectiveScale = Math.Min(userScale, Math.Min(maxScaleByWidth, maxScaleByHeight));
-        effectiveScale = Math.Clamp(effectiveScale, 0.5, Math.Min(1.5, userScale));
-
+        userScale = Math.Min(userScale, Math.Min(work.Width / (expanded.Width * dpiScale), work.Height / (heightDip * dpiScale)));
         // Viewbox measures the design at its natural size before scaling. RenderTransform
         // scales after layout, so small windows clip the bar before the transform is applied.
-        _scaledBar.Width = widthDip * effectiveScale;
-        _scaledBar.Height = heightDip * effectiveScale;
-        int widthPx = (int)Math.Ceiling(widthDip * effectiveScale * raster);
-        int heightPx = (int)Math.Ceiling(heightDip * effectiveScale * raster);
+        _scaledBar.Width = widthDip * userScale;
+        _scaledBar.Height = heightDip * userScale;
+        int widthPx = (int)Math.Ceiling(widthDip * userScale * dpiScale);
+        int heightPx = (int)Math.Ceiling(heightDip * userScale * dpiScale);
         return (widthPx, heightPx, dpiScale);
     }
 
     private void PlaceBottomCentre(int width, int height, double dpiScale, bool keepPosition = false)
     {
-        if (!CanReposition()) return;
         var work = GetPlacementArea();
         bool keep = _presentationMode ? _userPlaced : keepPosition || _userPlaced || (_isFolded && _foldHandles.Count > 0);
         var current = WindowChrome.GetClientPosition(this);
@@ -379,7 +313,7 @@ public sealed class FloatingBarWindow : Window
 
     private void OnMainCollapseAnimationChanged()
     {
-        if (!CanReposition() || !_initialDpiPlacementDone) return;
+        if (!_initialDpiPlacementDone) return;
         double dpi = WindowChrome.GetDpiScale(this);
         var size = GetPhysicalSize(dpi);
         PlaceBottomCentre(size.Width, size.Height, dpi, keepPosition: true);
@@ -387,7 +321,7 @@ public sealed class FloatingBarWindow : Window
 
     private void OnBarLayoutUpdated(object sender, object e)
     {
-        if (!CanReposition() || !_initialDpiPlacementDone) return;
+        if (!_initialDpiPlacementDone) return;
         var (buttons, separators) = _bar.CountVisibleItems();
         bool expanded = _bar.IsExpanded;
         bool collapsed = _bar.IsMainCollapsed;
@@ -426,7 +360,6 @@ public sealed class FloatingBarWindow : Window
             panel = new BarPanelWindow(this, _bar, kind);
             _panels.Add(kind, panel);
         }
-        if (!CanReposition()) return;
         var position = AppWindow.Position;
         panel.ShowAboveBar(position.X, position.Y, AppWindow.Size.Width);
     }
@@ -454,12 +387,12 @@ public sealed class FloatingBarWindow : Window
 
     internal void DismissPanelsOnInput()
     {
-        foreach (var panel in _panels.Values.ToArray()) panel.DismissOnInput();
+        foreach (var (kind, panel) in _panels.ToArray())
+            if (_bar.ShouldAutoDismissPanel(kind)) panel.DismissOnInput();
     }
 
     private void ReanchorPanels()
     {
-        if (!CanReposition()) return;
         var position = AppWindow.Position;
         foreach (var panel in _panels.Values.ToArray())
             if (!panel.IsDetached) panel.PlaceAboveBar(position.X, position.Y, AppWindow.Size.Width);
@@ -469,6 +402,8 @@ public sealed class FloatingBarWindow : Window
 
     private DependencyObject _tapSource;
     private Windows.Foundation.Point _tapPos;
+
+    internal void CancelTap() => _tapSource = null;
 
     private void AttachTapRouting()
     {
@@ -487,6 +422,7 @@ public sealed class FloatingBarWindow : Window
                 _bar.TryHandleTap(source);
         };
         _root.PointerCanceled += (_, _) => _tapSource = null;
+        _root.PointerCaptureLost += (_, _) => _tapSource = null;
     }
 
     /// <summary>Use themed acrylic with an opaque card fallback when desktop composition is unavailable.</summary>

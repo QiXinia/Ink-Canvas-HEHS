@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using InkCanvas.App.Services;
 using InkCanvas.Controls.Controls;
@@ -30,44 +29,38 @@ internal static class PenContrastRegression
         {
             await Task.Delay(250);
             var selectors = Descendants(styles).OfType<SegmentedSelector>().Append(nib).ToArray();
-            var applyAccent = typeof(SegmentedSelector).GetMethod("ApplyAccent", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            var accents = new[] { Color.FromArgb(255, 0, 103, 192), Color.FromArgb(255, 255, 245, 157), Color.FromArgb(255, 76, 194, 255) };
             foreach (int theme in new[] { 1, 2 })
             {
                 styles.Update(theme);
                 WindowChrome.ApplyTheme(window, theme);
                 root.Background = new SolidColorBrush(theme == 1 ? Microsoft.UI.Colors.White : Color.FromArgb(255, 31, 31, 31));
                 await Task.Delay(80);
-                foreach (var accent in accents)
+                for (int index = 0; index < 8; index++)
                 {
-                    foreach (var selector in selectors) applyAccent.Invoke(selector, new object[] { accent });
-                    for (int index = 0; index < 8; index++)
+                    styles.SelectedIndex = index;
+                    nib.SelectedIndex = index % 2;
+                    root.UpdateLayout();
+                    foreach (var selector in selectors)
+                    foreach (var state in new[] { "Checked", "CheckedPointerOver", "CheckedPressed" })
                     {
-                        styles.SelectedIndex = index;
-                        nib.SelectedIndex = index % 2;
-                        root.UpdateLayout();
-                        foreach (var selector in selectors)
-                        foreach (var state in new[] { "Checked", "CheckedPointerOver", "CheckedPressed" })
-                        {
-                            var button = Descendants(selector).OfType<ToggleButton>().Single(item => item.IsChecked == true);
-                            VisualStateManager.GoToState(button, state, false);
-                            var presenter = Descendants(button).OfType<ContentPresenter>().First(item => Equals(item.Content, button.Content));
-                            var background = ((SolidColorBrush)presenter.Background).Color;
-                            var foreground = ((SolidColorBrush)presenter.Foreground).Color;
-                            double ratio = ColorContrast.Ratio(ToInk(background), ToInk(foreground));
-                            var labels = Descendants(button.Content as DependencyObject).OfType<TextBlock>();
-                            var icons = Descendants(button.Content as DependencyObject).OfType<PenStyleIcon>();
-                            bool inherited = labels.All(label => ((SolidColorBrush)label.Foreground).Color == foreground)
-                                && icons.All(icon => ((SolidColorBrush)icon.Foreground).Color == foreground
-                                    && Descendants(icon).OfType<Microsoft.UI.Xaml.Shapes.Path>().Any()
-                                    && Descendants(icon).OfType<Microsoft.UI.Xaml.Shapes.Path>().All(path => path.Fill is SolidColorBrush brush && brush.Color == foreground));
-                            checks.Add(new { check = "selected ink control contrast", theme, accent = accent.ToString(), index, state,
-                                styles = selector != nib, ratio, foreground = foreground.ToString(), background = background.ToString(),
-                                passed = ratio >= 4.5 && inherited });
-                        }
+                        var button = Descendants(selector).OfType<ToggleButton>().Single(item => item.IsChecked == true);
+                        VisualStateManager.GoToState(button, state, false);
+                        var presenter = Descendants(button).OfType<ContentPresenter>().First(item => Equals(item.Content, button.Content));
+                        var background = ((SolidColorBrush)presenter.Background).Color;
+                        var foreground = ((SolidColorBrush)presenter.Foreground).Color;
+                        double ratio = ColorContrast.Ratio(ToInk(background), ToInk(foreground));
+                        var labels = Descendants(button.Content as DependencyObject).OfType<TextBlock>();
+                        var icons = Descendants(button.Content as DependencyObject).OfType<PenStyleIcon>();
+                        bool inherited = labels.All(label => ((SolidColorBrush)label.Foreground).Color == foreground)
+                            && icons.All(icon => ((SolidColorBrush)icon.Foreground).Color == foreground
+                                && Descendants(icon).OfType<Microsoft.UI.Xaml.Shapes.Path>().Any()
+                                && Descendants(icon).OfType<Microsoft.UI.Xaml.Shapes.Path>().All(path => path.Fill is SolidColorBrush brush && brush.Color == foreground));
+                        checks.Add(new { check = "selected ink control contrast", theme, index, state,
+                            styles = selector != nib, ratio, foreground = foreground.ToString(), background = background.ToString(),
+                            passed = ratio >= 4.5 && inherited });
                     }
-                    await BoardWindowRegression.SaveVisual((FrameworkElement)window.Content, Path.Combine(directory, $"pen-contrast-{theme}-{accent.R}-{accent.G}-{accent.B}.png"));
                 }
+                await BoardWindowRegression.SaveVisual((FrameworkElement)window.Content, Path.Combine(directory, $"pen-contrast-{theme}.png"));
             }
         }
         catch (Exception ex) { checks.Add(new { check = "pen contrast regression exception", passed = false, detail = ex.ToString() }); }

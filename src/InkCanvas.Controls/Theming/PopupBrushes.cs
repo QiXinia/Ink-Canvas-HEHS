@@ -12,13 +12,14 @@ namespace InkCanvas.Controls.Theming;
 /// (light iff whiteboard in board mode). WPF also fixes the theme at window open, so brushes
 /// captured here at construction match the original behaviour.
 /// </para>
-/// 0 = follow system (treated as light, like the WPF default), 1 = light, 2 = dark.
+/// 0 = follow the application/system theme, 1 = light, 2 = dark.
 /// </summary>
 public static class PopupBrushes
 {
     public static SolidColorBrush ToolPanelBorder(int theme) => new(IsDark(theme)
         ? Color.FromArgb(40, 255, 255, 255) : Color.FromArgb(32, 0, 0, 0));
-    public static bool IsDark(int theme) => theme == 2;
+    public static bool IsDark(int theme) => theme == 2 || theme == 0
+        && Microsoft.UI.Xaml.Application.Current?.RequestedTheme == Microsoft.UI.Xaml.ApplicationTheme.Dark;
 
     /// <summary>PopupWindowBackground: #F0F3F9 @0.95 light / #1f1f1f @0.95 dark.</summary>
     public static SolidColorBrush Surface(int theme) => new(SurfaceColor(theme, 242));
@@ -95,29 +96,32 @@ public static class PopupBrushes
         ? new SolidColorBrush(Color.FromArgb(128, 33, 86, 201))
         : new SolidColorBrush(Color.FromArgb(64, 88, 139, 252));
 
-    /// <summary>FloatBarButtonBackgroundPointerOverKey: #66FFFFFF light / #2200CDCD dark.</summary>
+    /// <summary>Neutral Fluent hover surface.</summary>
     public static SolidColorBrush FloatBarButtonHover(int theme) => IsDark(theme)
-        ? new SolidColorBrush(Color.FromArgb(34, 0, 205, 205))
-        : new SolidColorBrush(Color.FromArgb(102, 255, 255, 255));
+        ? new SolidColorBrush(Color.FromArgb(24, 255, 255, 255))
+        : new SolidColorBrush(Color.FromArgb(14, 0, 0, 0));
 
-    /// <summary>FloatBarButtonButtonBackgroundPressedKey: #99FFFFFF light / #4400CDCD dark.</summary>
+    /// <summary>Neutral Fluent pressed surface.</summary>
     public static SolidColorBrush FloatBarButtonPressed(int theme) => IsDark(theme)
-        ? new SolidColorBrush(Color.FromArgb(68, 0, 205, 205))
-        : new SolidColorBrush(Color.FromArgb(153, 255, 255, 255));
+        ? new SolidColorBrush(Color.FromArgb(16, 255, 255, 255))
+        : new SolidColorBrush(Color.FromArgb(24, 0, 0, 0));
 
-    /// <summary>Selected tool: check-box-background.png #1296DB at Opacity 0.5 (both themes).</summary>
-    public static SolidColorBrush FloatBarSelected() => new(Color.FromArgb(128, 18, 150, 219));
+    /// <summary>Neutral surface used by compatible module selection properties.</summary>
+    public static SolidColorBrush FloatBarSelected() => new(Color.FromArgb(20, 128, 128, 128));
 
-    /// <summary>IsColorfulViewboxFloatingBar gradient: #9580B0FF → #95C0FFC0, (0,0)→(1,1).</summary>
-    public static LinearGradientBrush FloatBarColorful()
+    /// <summary>Colourful surfaces retain text contrast over both light and dark desktop content.</summary>
+    public static LinearGradientBrush FloatBarColorful() => FloatBarColorful(1);
+
+    public static LinearGradientBrush FloatBarColorful(int theme)
     {
         var brush = new LinearGradientBrush
         {
             StartPoint = new Windows.Foundation.Point(0, 0),
             EndPoint = new Windows.Foundation.Point(1, 1),
         };
-        brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(149, 128, 176, 255), Offset = 0 });
-        brush.GradientStops.Add(new GradientStop { Color = Color.FromArgb(149, 192, 255, 192), Offset = 1 });
+        bool dark = IsDark(theme);
+        brush.GradientStops.Add(new GradientStop { Color = dark ? Color.FromArgb(217, 25, 48, 83) : Color.FromArgb(191, 128, 176, 255), Offset = 0 });
+        brush.GradientStops.Add(new GradientStop { Color = dark ? Color.FromArgb(217, 21, 60, 44) : Color.FromArgb(191, 192, 255, 192), Offset = 1 });
         return brush;
     }
 }

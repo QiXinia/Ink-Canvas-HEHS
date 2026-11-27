@@ -65,10 +65,10 @@ public static partial class ShapeRecognizer
         return true;
     }
 
-    // Uniform arc sampling prevents endpoint dwell and hardware packet rate from biasing fits.
-    private static List<Vector2> Resample(List<Vector2> points, float spacing)
+    /// <summary>Uniform arc sampling prevents endpoint dwell and hardware packet rate from biasing fits.</summary>
+    public static List<Vector2> Resample(List<Vector2> points, float spacing)
     {
-        if (points.Count < 2) return points;
+        if (points.Count < 2 || !float.IsFinite(spacing) || spacing <= 0) return points;
         var result = new List<Vector2> { points[0] };
         float remaining = spacing;
         for (int i = 1; i < points.Count; i++)

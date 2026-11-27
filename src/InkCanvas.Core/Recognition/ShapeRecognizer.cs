@@ -3,7 +3,7 @@ using System.Numerics;
 
 namespace InkCanvas.Core.Recognition;
 
-public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle, Parallelogram, Cube, CoordinateAxes }
+public enum RecognizedShape { None, Line, Circle, Ellipse, Triangle, Rectangle, Parallelogram, Cube, CoordinateAxes, Polygon }
 
 public readonly record struct RecognitionResult(
     RecognizedShape Shape,
@@ -222,7 +222,7 @@ public static partial class ShapeRecognizer
     }
 
     /// <summary>Ramer–Douglas–Peucker polyline simplification.</summary>
-    private static List<Vector2> Simplify(List<Vector2> pts, float epsilon)
+    public static List<Vector2> Simplify(List<Vector2> pts, float epsilon)
     {
         if (pts.Count < 3) return new List<Vector2>(pts);
         var keep = new bool[pts.Count];

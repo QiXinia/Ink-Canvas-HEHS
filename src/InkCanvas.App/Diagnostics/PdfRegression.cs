@@ -17,7 +17,7 @@ namespace InkCanvas.App.Diagnostics;
 
 internal static class PdfRegression
 {
-    public static async Task Run(string directory)
+    public static async Task Run(string directory, bool lifetimeOnly = false, bool pageEditingOnly = false)
     {
         directory = Path.GetFullPath(directory); Directory.CreateDirectory(directory);
         using var services = new AppServices(Path.Combine(directory, "settings"));
@@ -29,8 +29,10 @@ internal static class PdfRegression
         {
             await Task.Delay(300);
             var module = services.Modules.GetExport<IPdfWorkspaceService>() ?? throw new InvalidOperationException("PDF module did not start. " + string.Join(" / ", services.Modules.Status.Select(status => status.Id + " " + status.State + " " + status.Error)));
-            var method = module.GetType().Assembly.GetType("InkCanvas.Modules.Pdf.PdfDiagnostics", true)!.GetMethod("RunAsync", BindingFlags.Public | BindingFlags.Static)!;
+            string diagnostic = pageEditingOnly ? "PdfPageEditingDiagnostics" : lifetimeOnly ? "PdfRasterizerDiagnostics" : "PdfDiagnostics";
+            var method = module.GetType().Assembly.GetType("InkCanvas.Modules.Pdf." + diagnostic, true)!.GetMethod("RunAsync", BindingFlags.Public | BindingFlags.Static)!;
             await (Task)method.Invoke(null, new object[] { shell.WorkspaceHost, directory });
+            if (lifetimeOnly || pageEditingOnly) return;
             string source = Path.Combine(directory, "classroom.pdf");
             await module.OpenAsync(source); await Task.Delay(250);
             var workspace = shell.OpenWindows.OfType<IDocumentWorkspace>().Single();
@@ -75,9 +77,10 @@ internal static class PdfRegression
             var canceled = module.ImportToBoardAsync(source);
             dialog = await FindDialogAsync(shell, "导入 PDF 到新画板页"); Invoke(dialog, "取消"); await canceled;
             Check("canceling PDF import preserves board pages", services.Board.PageCount == 3);
-            shell.OpenWindows.OfType<BoardWindow>().Single().Close();
-            await workspace.CloseAsync();
-            Check("closing PDF restores desktop controller", ReferenceEquals(bar.Bar.Controller, services.OverlayInk));
+            bool boardClosed = await shell.OpenWindows.OfType<BoardWindow>().Single().CloseWithArchiveAsync();
+            bool pdfClosed = await workspace.CloseAsync();
+            Check("closing PDF restores desktop controller", boardClosed && pdfClosed && ReferenceEquals(bar.Bar.Controller, services.OverlayInk),
+                new { boardClosed, pdfClosed });
         }
         catch (Exception ex) { await File.WriteAllTextAsync(Path.Combine(directory, "pdf-error.txt"), ex.ToString()); }
         finally
