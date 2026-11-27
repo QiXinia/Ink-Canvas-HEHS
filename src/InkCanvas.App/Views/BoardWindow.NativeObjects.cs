@@ -86,6 +86,7 @@ public sealed partial class BoardWindow
                 DefaultButton = ContentDialogButton.Primary,
             };
             using var registration = cancellationToken.Register(() => DispatcherQueue.TryEnqueue(() => dialog.Hide()));
+            Activate();
             var decision = await dialog.ShowAsync();
             cancellationToken.ThrowIfCancellationRequested();
             if (decision == ContentDialogResult.None) return "已取消板书写入。";
