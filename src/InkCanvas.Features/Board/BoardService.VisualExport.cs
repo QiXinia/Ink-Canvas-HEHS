@@ -22,7 +22,7 @@ public sealed partial class BoardService
                 if (zip is not null)
                 {
                     long bytes = 0;
-                    foreach (var blob in model.Blobs.Where(blob => blob.Page == index && blob.Kind != "video"))
+                    foreach (var blob in model.Blobs.Where(blob => blob.Scope != "side" && blob.Page == index && blob.Kind != "video"))
                     {
                         var entry = zip.GetEntry(blob.Entry) ?? throw new InvalidDataException("页面媒体缺失。");
                         if ((bytes += entry.Length) > 192L * 1024 * 1024) throw new InvalidDataException("单页图像数据超过 192 MB，请拆分页面后重试。");

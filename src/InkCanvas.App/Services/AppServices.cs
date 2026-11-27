@@ -264,7 +264,7 @@ public sealed class AppServices : IDisposable
     public IEnumerable<InkController> AllControllers()
     {
         yield return OverlayInk;
-        foreach (var page in Board.Pages) yield return page;
+        foreach (var page in Board.DocumentPages) yield return page;
     }
 
     public void SaveSettings() { Store.Save(Settings); _cloudSync?.NotifyPreferencesSaved(); }
@@ -304,6 +304,6 @@ public sealed class AppServices : IDisposable
         _cloudSync.Dispose();
         ScreenImages.ImagePlacementChanged -= OnScreenImagePlacementChanged;
         OverlayInk.Dispose();
-        foreach (var page in Board.Pages) page.Dispose();
+        foreach (var page in Board.DocumentPages) page.Dispose();
     }
 }

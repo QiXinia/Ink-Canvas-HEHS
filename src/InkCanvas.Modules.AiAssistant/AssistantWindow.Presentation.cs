@@ -132,6 +132,14 @@ public sealed partial class AssistantWindow
         Motion.PlayEntrance(_root, 0);
     }
 
+    internal void SetCanvasVisible(bool visible)
+    {
+        var window = _collapsed ? _edgeHandle : this;
+        if (window is null || _closed) return;
+        if (visible) window.AppWindow.Show(activateWindow: false);
+        else window.AppWindow.Hide();
+    }
+
     private void CloseEdgeHandle()
     { var handle = _edgeHandle; _edgeHandle = null; handle?.Close(); }
 

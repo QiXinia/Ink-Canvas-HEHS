@@ -185,6 +185,7 @@ public sealed class PptNavigationWindow : Window
 
     public void Update(PptSnapshot snapshot, bool panelVisible, bool counterVisible)
     {
+        if (_closed) return;
         if (PreviewOpen && (!panelVisible || !counterVisible || snapshot?.IsSlideShowRunning != true)) SetPreviewOpen(false);
         _snapshot = snapshot;
         _preview?.Update(snapshot);

@@ -22,6 +22,35 @@ public sealed class BoardStorageTests : IDisposable
     }
 
     [Fact]
+    public async Task SideBoardSurvivesRecoveryWithSharedMediaAndClearsOnVersionThreeOpen()
+    {
+        var board = Board();
+        var image = new BoardImageAsset { Data = new byte[] { 1, 2, 3 }, Width = 120, Height = 90 };
+        board.AddImage(image);
+        var side = board.EnableSideBoard();
+        side.InsertPageAfterCurrent();
+        side.AddImage(image.Copy(preserveId: false, copyData: false));
+
+        string package = FilePath();
+        await board.SaveRecoveryAsync(package);
+        using (var zip = ZipFile.OpenRead(package))
+            Assert.Single(zip.Entries, entry => entry.FullName.StartsWith("media/"));
+
+        var restored = Board();
+        await restored.LoadBoardAsync(package);
+        var restoredSide = restored.SideBoard;
+        Assert.Equal(1, restoredSide.CurrentIndex);
+        Assert.Same(restored.CurrentImages.Single().Data, restoredSide.CurrentImages.Single().Data);
+
+        string oldPackage = FilePath("board-v3.icink");
+        await Board().SaveRecoveryAsync(oldPackage);
+        await restored.LoadBoardAsync(oldPackage);
+        Assert.Same(restoredSide, restored.SideBoard);
+        Assert.False(restoredSide.HasContent);
+        Assert.Equal(1, restoredSide.PageCount);
+    }
+
+    [Fact]
     public async Task PackageStoresBinaryMediaOnceAndPreservesAllPagesAndStrokeAppearance()
     {
         var board = Board();
@@ -209,7 +238,7 @@ public sealed class BoardStorageTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var board in _boards) foreach (var page in board.Pages) page.Dispose();
+        foreach (var board in _boards) foreach (var page in board.DocumentPages) page.Dispose();
         Directory.Delete(_directory, true);
     }
 }

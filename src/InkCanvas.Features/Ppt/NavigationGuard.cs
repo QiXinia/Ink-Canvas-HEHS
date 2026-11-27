@@ -26,12 +26,19 @@ public sealed class NavigationGuard
         get { lock (_sync) return _lastExitMs; }
     }
 
-    public bool TryEnter(long nowMs)
+    public bool TryEnter(long nowMs) => TryEnter(nowMs, out _);
+
+    public bool TryEnter(long nowMs, out long retryAfter)
     {
         lock (_sync)
         {
+            retryAfter = 0;
             if (_held) return false;
-            if (_lastEnterMs != long.MinValue && nowMs - _lastEnterMs < _minIntervalMs) return false;
+            if (_lastEnterMs != long.MinValue)
+            {
+                retryAfter = Math.Max(0, _minIntervalMs - (nowMs - _lastEnterMs));
+                if (retryAfter > 0) return false;
+            }
             _held = true;
             _lastEnterMs = nowMs;
             return true;

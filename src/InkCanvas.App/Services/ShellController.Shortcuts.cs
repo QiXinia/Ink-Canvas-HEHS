@@ -18,7 +18,7 @@ public sealed partial class ShellController
     internal bool IsCanvasShortcutContext(nint foreground, bool allowPan = false)
     {
         if (_disposed || _exiting || _imagePicking || _settingsOpening || _exitPromptOpen || !allowPan && ActiveController.Tool == InkTool.Pan) return false;
-        Window canvas = (Window)_board ?? (DocumentActive ? _documentWorkspace.Window : null);
+        Window canvas = (Window)ActiveBoardWindow ?? (DocumentActive ? _documentWorkspace.Window : null);
         if (canvas is not null)
         {
             if (!canvas.AppWindow.IsVisible || canvas.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter
@@ -27,7 +27,7 @@ public sealed partial class ShellController
         else if (Overlay.ClickThrough || !Overlay.Window.IsVisible || !Overlay.Presenter.InkVisible || _bar?.IsFolded == true) return false;
         if (foreground == 0) return false;
         if (foreground == Overlay.Window.Handle) return canvas is null;
-        var chrome = OpenWindows.Concat(_board?.ToolPanels ?? Enumerable.Empty<Window>())
+        var chrome = OpenWindows.Concat(ActiveBoardWindow?.ToolPanels ?? Enumerable.Empty<Window>())
             .FirstOrDefault(window => WindowChrome.GetHwnd(window) == foreground);
         if (chrome is not null)
             return (ReferenceEquals(chrome, canvas) || chrome is FloatingBarWindow or SelectionToolbarWindow or PenPaletteWindow or ShapePickerWindow or ToolOptionsWindow)

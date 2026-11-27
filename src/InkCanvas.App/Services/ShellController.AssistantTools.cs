@@ -18,12 +18,14 @@ public sealed partial class ShellController
         Add("read_workspace", "读取当前白板页、画布对象、选区、课件文本和可用插件工具。坐标为画布坐标。", empty, _ =>
         {
             var controller = ActiveController;
-            var source = new AssistantHost(this).Source;
+            var host = new AssistantHost(this);
+            var source = host.Source;
+            var board = host.CaptureBoard;
             return new(JsonSerializer.Serialize(new
             {
                 kind = new CanvasToolsHost(this).CaptureTarget().Kind,
-                page = Services.Board.CurrentIndex + 1,
-                pages = Enumerable.Range(0, Services.Board.PageCount).Select(index => new { page = index + 1, name = Services.Board.PageName(index) }),
+                page = board.CurrentIndex + 1,
+                pages = Enumerable.Range(0, board.PageCount).Select(index => new { page = index + 1, name = board.PageName(index) }),
                 strokes = controller.Document.Strokes.Take(500).Select(stroke => new { stroke.Id, stroke.Bounds, selected = controller.Selection.Contains(stroke) }),
                 objects = (controller.GetSelectableElements?.Invoke() ?? Array.Empty<ISelectionElement>()).Select(element => new { element.Id, element.Bounds }),
                 course = BuildSlideContext(source.SlideId, source.SlideIndex),
@@ -37,7 +39,7 @@ public sealed partial class ShellController
             """, args =>
         {
             if (_board is null) ToggleBoard();
-            var board = Services.Board;
+            var board = new AssistantHost(this).CaptureBoard;
             int page = args.TryGetProperty("page", out var index) ? index.GetInt32() - 1 : board.CurrentIndex;
             if (page < 0 || page >= board.PageCount) throw new ArgumentException("页码不存在。");
             bool success = true;
@@ -117,7 +119,15 @@ public sealed partial class ShellController
             return new("已调用工具入口。请在打开的工具中继续操作。");
         });
         registry.Register(new("capture_canvas", "获取当前白板页面的图像，供识别板书或查看布局。", empty) { ReadOnly = true }, async (_, token) =>
-            new AssistantToolResult("当前白板页面截图。", await BoardPreview.RenderAsync(Services.Board, token: token)));
+            {
+                var host = new CanvasToolsHost(this);
+                var target = host.CaptureTarget();
+                var board = new AssistantHost(this).CaptureBoard;
+                int index = board.CurrentIndex;
+                var png = await BoardPreview.RenderAsync(board, index, token);
+                return host.IsCurrent(target) ? new("当前白板页面截图。", png)
+                    : new("画布或页面已切换，请重新截图。") { IsError = true };
+            });
         registry.Register(new("invoke_plugin_command", "调用 read_workspace 返回的可用插件命令。需使用实际的 plugin 和 command 标识。可打开文稿库、PDF、解析几何及其他已安装插件。", """
             {"type":"object","properties":{"plugin":{"type":"string"},"command":{"type":"string"}},"required":["plugin","command"],"additionalProperties":false}
             """) { ChangesTarget = true }, async (args, token) =>

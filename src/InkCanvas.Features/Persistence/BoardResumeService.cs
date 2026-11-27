@@ -23,6 +23,7 @@ public sealed class BoardResumeService : IDisposable
         _board = board; _behavior = behavior; Store = new(dataDirectory, "board");
         board.PageChanged += PagesChanged; board.BackgroundChanged += Changed; board.ImagesChanged += Changed;
         board.ExtensionsChanged += Changed; board.ImagePlacementChanged += ImageChanged; board.MediaPlacementChanged += MediaChanged;
+        _board.SideBoardChanged += Changed;
         PagesChanged();
     }
 
@@ -36,7 +37,7 @@ public sealed class BoardResumeService : IDisposable
             {
                 await Store.ClearAsync(); _last = null; _savedRevision = -1; return;
             }
-            if (_board.Pages.Any(page => page.HasActiveInteraction || page.Playback is not null)) return;
+            if (_board.DocumentPages.Any(page => page.HasActiveInteraction || page.Playback is not null)) return;
             long revision = _revision;
             if (revision == _savedRevision && _last?.PageIndex == _board.CurrentIndex) return;
             IsSaving = true;
@@ -52,7 +53,7 @@ public sealed class BoardResumeService : IDisposable
     {
         long revision = _revision;
         var apply = await _board.PrepareOpenAsync(Store.ResolveSnapshot(entry), true);
-        if (_revision != revision || _board.Pages.Any(page => page.HasActiveInteraction))
+        if (_revision != revision || _board.DocumentPages.Any(page => page.HasActiveInteraction))
             throw new InvalidOperationException("白板已有新的编辑，请保存当前内容后再恢复。");
         apply();
         _board.GoTo(Math.Clamp(entry.PageIndex, 0, _board.PageCount - 1));
@@ -81,6 +82,7 @@ public sealed class BoardResumeService : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _board.SideBoardChanged -= Changed;
         _board.PageChanged -= PagesChanged; _board.BackgroundChanged -= Changed; _board.ImagesChanged -= Changed;
         _board.ExtensionsChanged -= Changed; _board.ImagePlacementChanged -= ImageChanged; _board.MediaPlacementChanged -= MediaChanged;
         foreach (var page in _observed) Observe(page, false);

@@ -43,6 +43,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private SpotlightWindow _spotlight;
     private MagnifierWindow _magnifier;
     private readonly NavigationGuard _pptGuard = new();
+    private DispatcherQueueTimer _pptNavigationRetry;
+    private Action _pendingPptNavigation;
     private readonly SlideSwitchGate _pptGate = new();
     private readonly Dictionary<PptNavigationPlacement, PptNavigationWindow> _pptNavigations = new();
     private SlideNavigatorWindow _slideNav;
@@ -237,10 +239,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
             foreach (var palette in _detachedPalettes) palette.RefreshDisplayPlacement();
             _shapePicker?.RefreshDisplayPlacement();
             if (_board is not null) foreach (var panel in _board.ToolPanels) panel.Fit();
+            if (_sideBoard is not null) foreach (var panel in _sideBoard.ToolPanels) panel.Fit();
             _replay?.RefreshDisplayPlacement();
             foreach (var window in OpenWindows)
                 if (window is SettingsWindow or CountdownWindow or LotteryWindow or InfoWindow or ReplayWindow or NoticeWindow or UpdateWindow
-                    || _documentWindows.Contains(window))
+                    || ReferenceEquals(window, _sideBoard) || _documentWindows.Contains(window))
                     WindowChrome.KeepVisible(window);
             QueueDesktopSelection();
             Services.Modules.Invoke<IScreenTrackingService>(tracking => tracking.Refresh());
@@ -262,6 +265,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
             foreach (var navigation in _pptNavigations.Values) yield return navigation;
             if (_selectionToolbar is not null) yield return _selectionToolbar;
             if (_board is not null) yield return _board;
+            if (_sideBoard is not null) yield return _sideBoard;
             if (_documentWorkspace is not null) yield return _documentWorkspace.Window;
             foreach (var window in _documentWindows) if (!ReferenceEquals(window, _documentWorkspace?.Window)) yield return window;
             if (_settings is not null) yield return _settings;
@@ -429,8 +433,8 @@ public sealed partial class ShellController : IShellActions, IDisposable
         }
     }
 
-    private InkController ActiveController => _board is not null
-        ? Services.Board.Current
+    private InkController ActiveController => ActiveBoardWindow is { } board
+        ? board.CurrentController
         : DocumentActive ? _documentWorkspace.Controller : Services.OverlayInk;
 
     /// <summary>
@@ -947,6 +951,10 @@ public sealed partial class ShellController : IShellActions, IDisposable
                 NotifyWindowOpened(_board);
                 var boardWindow = _board;
                 _board.Closed += (_, _) => OnBoardClosed(boardWindow);
+                _board.Activated += (_, args) =>
+                {
+                    if (args.WindowActivationState != WindowActivationState.Deactivated) SetSideBoardTarget(false);
+                };
             }
             _board.CanvasInputBegan += OnBoardInputBegan;
             _board.CurrentPageChanged += OnBoardPageChanged;
@@ -983,6 +991,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         if (_board is null || _bar is null) return;
         BindToolbar(_board.CurrentController);
         BindBoardController(_board.CurrentController);
+        CanvasToolTargetChanged?.Invoke();
         _palette?.Close();
         _palette = null;
         _shapePicker?.Close(); _shapePicker = null;
@@ -1000,6 +1009,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     {
         if (board.IsClosed && ReferenceEquals(_cachedBoard, board)) _cachedBoard = null;
         if (!ReferenceEquals(_board, board)) return;
+        CloseSideBoard();
         _board = null;
         Services.BoardModeActive = false;
         Services.ConfigureController(Services.OverlayInk);
@@ -1132,6 +1142,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
         foreach (var palette in _detachedPalettes) palette.ApplyScale(menuScale);
         _shapePicker?.ApplyScale(menuScale);
         _board?.RefreshUiScale();
+        _sideBoard?.RefreshUiScale();
         _bar?.Bar.RefreshSettingsVisuals();
         if (_lastSlideShowState) UpdatePptNavigation(_pptSession.Snapshot);
         ApplyEdgeGestureSetting();
@@ -1142,6 +1153,7 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void RefreshPaletteNibModes()
     {
         _board?.RefreshToolSettings();
+        _sideBoard?.RefreshToolSettings();
         _bar?.Bar.RefreshSelection();
         if (_palette is not null) { ConfigurePaletteNibMode(_palette); _palette.RefreshFromController(Services.Settings.Canvas); }
         foreach (var palette in _detachedPalettes) { ConfigurePaletteNibMode(palette); palette.RefreshFromController(Services.Settings.Canvas); }
@@ -1719,11 +1731,12 @@ public sealed partial class ShellController : IShellActions, IDisposable
         NotifyWindowOpened(_shapePicker);
         var openedPicker = _shapePicker;
         _shapePicker.Closed += (_, _) => { if (ReferenceEquals(_shapePicker, openedPicker)) _shapePicker = null; };
-        if (_board is not null || _bar is not null)
+        var board = ActiveBoardWindow;
+        if (board is not null || _bar is not null)
         {
-            _shapePicker.PlaceAboveBar(() => _board is not null ? _board.GetToolAnchor(InkTool.Shape) : _bar.GetToolAnchor(InkTool.Shape),
-                WindowChrome.GetHwnd((Window)_board ?? _bar),
-                () => _board is not null ? _board.GetToolbarBounds() : WindowChrome.GetScreenBounds(_bar, _bar.Bar));
+            _shapePicker.PlaceAboveBar(() => board is not null ? board.GetToolAnchor(InkTool.Shape) : _bar.GetToolAnchor(InkTool.Shape),
+                WindowChrome.GetHwnd((Window)board ?? _bar),
+                () => board is not null ? board.GetToolbarBounds() : WindowChrome.GetScreenBounds(_bar, _bar.Bar));
         }
         WindowChrome.ShowWithoutActivation(_shapePicker);
         WindowChrome.EnsureAbove(_shapePicker);
@@ -1852,7 +1865,13 @@ public sealed partial class ShellController : IShellActions, IDisposable
     private void NavigatePpt(bool next)
     {
         long now = Environment.TickCount64;
-        if (!_pptGuard.TryEnter(now)) return;
+        if (!_pptGuard.TryEnter(now, out long retryAfter))
+        {
+            if (retryAfter > 0) SchedulePptNavigationRetry(next, retryAfter);
+            return;
+        }
+        _pptNavigationRetry?.Stop();
+        _pendingPptNavigation = null;
         try
         {
             // The generation guards the screenshot request raised synchronously by the session.
@@ -1877,6 +1896,33 @@ public sealed partial class ShellController : IShellActions, IDisposable
         {
             _pptGuard.Exit(now);
         }
+    }
+
+    private void SchedulePptNavigationRetry(bool next, long delay)
+    {
+        if (_pptNavigationRetry is null)
+        {
+            _pptNavigationRetry = _dispatcher.CreateTimer();
+            _pptNavigationRetry.IsRepeating = false;
+            _pptNavigationRetry.Tick += (_, _) =>
+            {
+                var pending = _pendingPptNavigation;
+                _pendingPptNavigation = null;
+                pending?.Invoke();
+            };
+        }
+        int showSession = _pptGate.Session;
+        bool isShow = _lastSlideShowState;
+        string presentation = _pptSession.Snapshot.Presentation?.Identity;
+        _pendingPptNavigation = () =>
+        {
+            if (!_disposed && !_exiting && showSession == _pptGate.Session && isShow == _lastSlideShowState
+                && presentation == _pptSession.Snapshot.Presentation?.Identity)
+                NavigatePpt(next);
+        };
+        _pptNavigationRetry.Stop();
+        _pptNavigationRetry.Interval = TimeSpan.FromMilliseconds(delay + 1);
+        _pptNavigationRetry.Start();
     }
 
     /// <summary>
@@ -2309,8 +2355,11 @@ public sealed partial class ShellController : IShellActions, IDisposable
         foreach (var palette in _detachedPalettes.ToArray()) palette.FlushSliderChanges();
         _bar?.GetOpenPanel(BarPanelKind.Eraser)?.FlushSettingsChanges();
         _resumeTimer?.Stop();
+        _pptNavigationRetry?.Stop();
+        _pendingPptNavigation = null;
         foreach (var reminder in _resumeReminders.ToArray()) reminder.Close();
         _pptPreviewSource?.Dispose();
+        CloseSideBoard();
         _board?.CloseForShutdown();
         _cachedBoard?.CloseForShutdown();
         _cachedBoard = null;

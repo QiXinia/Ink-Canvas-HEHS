@@ -20,6 +20,7 @@
     <Project Path="src/InkCanvas.Pdf/InkCanvas.Pdf.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.AiAssistant/InkCanvas.Modules.AiAssistant.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.Library/InkCanvas.Modules.Library.csproj"><Platform Project="x64" /></Project>
+    <Project Path="src/InkCanvas.Modules.CloudSync/InkCanvas.Modules.CloudSync.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.Pdf/InkCanvas.Modules.Pdf.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.AnalyticGeometry/InkCanvas.AnalyticGeometry.csproj"><Platform Project="x64" /></Project>
     <Project Path="src/InkCanvas.Modules.AnalyticGeometry/InkCanvas.Modules.AnalyticGeometry.csproj"><Platform Project="x64" /></Project>

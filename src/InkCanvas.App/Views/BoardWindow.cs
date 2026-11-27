@@ -63,6 +63,7 @@ public sealed partial class BoardWindow : Window
     private readonly AppServices _services;
     private readonly BoardService _board;
     private readonly IShellActions _shell;
+    private readonly bool _isSideBoard;
     private readonly InkSurface _surface = new();
     private readonly BoardImageLayer _images = new();
     private bool _editingAiCard;
@@ -154,11 +155,15 @@ public sealed partial class BoardWindow : Window
     public event Action CurrentPageChanged;
 
     public BoardWindow(AppServices services, IShellActions shell = null, Window owner = null)
+        : this(services, shell, owner, null) { }
+
+    internal BoardWindow(AppServices services, IShellActions shell, Window owner, BoardService sideBoard)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
-        _board = services.Board;
+        _board = sideBoard ?? services.Board;
+        _isSideBoard = sideBoard is not null;
         _shell = shell;
-        Title = "Ink Canvas 画板";
+        Title = _isSideBoard ? "板中板" : "Ink Canvas 画板";
 
         _background = new Border();
         _paper = new CanvasControl { ClearColor = Windows.UI.Color.FromArgb(0, 0, 0, 0) };
@@ -244,7 +249,8 @@ public sealed partial class BoardWindow : Window
         });
         // No contact rings / press-and-hold dots while touch-writing on the board (same set as the overlay).
         WindowChrome.SuppressTouchFeedback(this);
-        _windowedContent = WindowChrome.AddTitleBar(this, Title, _contentRoot, closeButton: true, minMax: true);
+        _windowedContent = WindowChrome.AddTitleBar(this, Title, _contentRoot, closeButton: !_isSideBoard, minMax: !_isSideBoard,
+            onDragCompleted: _isSideBoard ? () => WindowChrome.KeepVisible(this) : null);
 
         PageNavigator = new BoardPageNavigator(_board,
             () => new Vector2(Math.Max(1, (float)_surfaceHost.ActualWidth), Math.Max(1, (float)_surfaceHost.ActualHeight)),
@@ -276,7 +282,8 @@ public sealed partial class BoardWindow : Window
         _board.ImagePlacementChanged += _images.UpdateElement;
         _board.MediaPlacementChanged += _media.UpdateElement;
         Closed += OnClosed;
-        AppWindow.Closing += OnArchiveClosing;
+        if (_isSideBoard) AppWindow.Closing += OnSideBoardClosing;
+        else AppWindow.Closing += OnArchiveClosing;
         Activated += (_, _) => OnActivated();
 
         BindPage();
@@ -286,7 +293,13 @@ public sealed partial class BoardWindow : Window
         // WPF board mode is the maximized borderless main window covering the monitor.
         if (owner is not null)
             WindowChrome.MoveToMonitor(this, Platform.System.ScreenService.FromWindow(WindowChrome.GetHwnd(owner)));
-        SetFullscreen(true);
+        if (_isSideBoard)
+        {
+            Content = _windowedContent;
+            WindowChrome.SetOwner(this, owner);
+            if (owner is not null) PlaceSideBoard(owner);
+        }
+        else SetFullscreen(true);
     }
 
     // ---- strip construction -------------------------------------------------
@@ -309,7 +322,7 @@ public sealed partial class BoardWindow : Window
         };
         _prevL = MakeCell(GlyphPrev, "上一页", NavigatePrevious, 60, 24, firstBorder, firstCorner);
         _nextL = MakeCell(GlyphNext, "下一页", NavigateNext, 60, 24, lastBorder, lastCorner);
-        var exitL = MakeCell(GlyphExit, "退出", ExitBoard, 55, 24, new Thickness(1), new CornerRadius(5));
+        var exitL = MakeCell(GlyphExit, _isSideBoard ? "收回" : "退出", ExitBoard, 55, 24, new Thickness(1), new CornerRadius(5));
         exitL.Button.Margin = new Thickness(5, 0, 0, 0);
         left.Children.Add(_prevL.Button);
         left.Children.Add(MakeIndicator(_pageTextL, midBorder));
@@ -343,8 +356,11 @@ public sealed partial class BoardWindow : Window
         _undoCell = MakeCell(GlyphUndo, "撤销", () => _board.Current.Undo(), 60, 22, midBorder);
         _redoCell = MakeCell(GlyphRedo, "重做", () => _board.Current.Redo(), 60, 22, midBorder);
         _moreCell = MakeCell(GlyphMore, "更多", ShowMoreFlyout, 60, 24, midBorder);
-        var exitC = MakeCell(GlyphExit, "退出", ExitBoard, 60, 24, lastBorder, lastCorner);
-        foreach (var cell in new[] { _gestureCell, canvas, _selectCell, _penCell, _eraserCell, clear, _shapeCell, image, _undoCell, _redoCell, _moreCell, exitC })
+        var exitC = MakeCell(GlyphExit, _isSideBoard ? "收回" : "退出", ExitBoard, 60, 24, lastBorder, lastCorner);
+        var centerCells = _isSideBoard
+            ? new[] { _gestureCell, _selectCell, _penCell, _eraserCell, _shapeCell, _undoCell, _redoCell, _moreCell }
+            : new[] { _gestureCell, canvas, _selectCell, _penCell, _eraserCell, clear, _shapeCell, image, _undoCell, _redoCell, _moreCell, exitC };
+        foreach (var cell in centerCells)
             center.Children.Add(cell.Button);
 
         _toolCells.Add((_selectCell, () => _board.Current.Tool == InkTool.Select));
@@ -819,7 +835,8 @@ public sealed partial class BoardWindow : Window
         else if (control && key == Windows.System.VirtualKey.Y) CurrentController.Redo();
         else if (control && key == Windows.System.VirtualKey.E)
         {
-            if (_shell is not null) _shell.ClearCanvas();
+            if (!_isSideBoard && _shell is not null) _shell.ClearCanvas();
+            else if (CurrentController.HasSelection) DeleteSelection();
             else ClearCurrentPage();
         }
         else if (control && key == Windows.System.VirtualKey.A) CurrentController.SelectAll();
@@ -965,6 +982,8 @@ public sealed partial class BoardWindow : Window
     /// <summary>Classroom and canvas tools precede file and application actions.</summary>
     private Flyout BuildMoreFlyout()
     {
+        if (_isSideBoard) return BuildSideBoardFlyout();
+
         var flyout = new Flyout { Placement = FlyoutPlacementMode.Top };
         StyleBoardFlyout(flyout);
 
@@ -1073,6 +1092,8 @@ public sealed partial class BoardWindow : Window
             HideBoardFlyout(flyout); CurrentController.ViewTransform = Matrix3x2.Identity; CurrentController.Document.Touch();
         }));
         panel.Children.Add(navigation);
+        if (_shell is ShellController shell)
+            panel.Children.Add(MakeExtraButton(Glyphs.Board, "板中板", () => { HideBoardFlyout(flyout); shell.ToggleSideBoard(); }));
         panel.Children.Add(MakeExtraButton("\uF379", "页面管理", () => { HideBoardFlyout(flyout); SetPagePaneOpen(true); }));
         if (_shell is not null)
         foreach (var commands in _shell.ExtensionCommands.Where(command => command.PluginId != "inkcanvas.library"
@@ -1638,7 +1659,7 @@ public sealed partial class BoardWindow : Window
         var automation = _services.Settings.Automation;
         if (!automation.IsAutoSaveStrokesAtClear) return;
         if (_board.Current.Document.Count <= automation.MinimumAutomationStrokeNumber) return;
-        if (reason == "board-clear" && _shell is not null) _ = _shell.ScreenshotAsync();
+        if (!_isSideBoard && reason == "board-clear" && _shell is not null) _ = _shell.ScreenshotAsync();
         _ = _services.AutoSave.SaveSnapshotAsync(_board.Current.Document.Strokes, reason);
     }
 
@@ -2209,7 +2230,8 @@ public sealed partial class BoardWindow : Window
 
     private void ExitBoard()
     {
-        if (_shell is not null) _shell.ToggleBoard();
+        if (_isSideBoard) ((ShellController)_shell).HideSideBoard();
+        else if (_shell is not null) _shell.ToggleBoard();
         else Close();
     }
 

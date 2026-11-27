@@ -49,21 +49,47 @@ public static class BoardPreview
         }, token);
     }
 
-    public static async Task<byte[]> RenderAsync(BoardService board, int index = 0, CancellationToken token = default)
+    public static Task<byte[]> RenderAsync(BoardService board, int index = 0, CancellationToken token = default)
     {
-        const int width = 768, height = 432;
         var page = board.GetPageInfo(index);
+        var bounds = ContentBounds(page);
+        var area = bounds.IsEmpty ? new Rect(0, 0, 1920, 1080) : bounds.Inflate(32);
+        return RenderPageAsync(board, page, area, 768, 432, true, token);
+    }
+
+    public static async Task<(byte[] Png, Rect Bounds)> RenderContentAsync(BoardService board, int index, CancellationToken token = default)
+    {
+        var page = board.GetPageInfo(index);
+        var area = ContentBounds(page);
+        if (area.IsEmpty) return (null, area);
+        area = area.Inflate(2);
+        float scale = Math.Min(2, 4096 / Math.Max(area.Width, area.Height));
+        int width = Math.Max(1, (int)Math.Ceiling(area.Width * scale));
+        int height = Math.Max(1, (int)Math.Ceiling(area.Height * scale));
+        return (await RenderPageAsync(board, page, area, width, height, false, token), area);
+    }
+
+    private static Rect ContentBounds(BoardPageInfo page)
+    {
+        Rect bounds = Rect.Empty;
+        foreach (var item in page.Controller.DrawingObjects)
+        {
+            Rect rect = item.Stroke?.Bounds ?? item.Element?.Bounds ?? Rect.Empty;
+            if (!rect.IsEmpty && float.IsFinite(rect.Left) && float.IsFinite(rect.Top)
+                && float.IsFinite(rect.Right) && float.IsFinite(rect.Bottom))
+                bounds = bounds.Union(rect);
+        }
+        return bounds;
+    }
+
+    private static async Task<byte[]> RenderPageAsync(BoardService board, BoardPageInfo page, Rect area,
+        int width, int height, bool cover, CancellationToken token)
+    {
         var objects = page.Controller.DrawingObjects.ToArray();
-        var bounds = page.Controller.Document.Strokes.Select(stroke => stroke.Bounds)
-            .Concat(page.Images.Select(image => BoardElementMath.TransformedBounds(image.Left, image.Top, image.Width, image.Height, image.Transform)))
-            .Concat(page.Media.Select(media => BoardElementMath.TransformedBounds(media.Left, media.Top, media.Width, media.Height, media.Transform)))
-            .Where(rect => !rect.IsEmpty && float.IsFinite(rect.Left) && float.IsFinite(rect.Top) && float.IsFinite(rect.Right) && float.IsFinite(rect.Bottom)).ToArray();
-        var area = bounds.Length == 0 ? new Rect(0, 0, 1920, 1080)
-            : new Rect(bounds.Min(rect => rect.Left), bounds.Min(rect => rect.Top), bounds.Max(rect => rect.Right), bounds.Max(rect => rect.Bottom)).Inflate(32);
         float scale = Math.Min(width / Math.Max(1, area.Width), height / Math.Max(1, area.Height));
         var view = Matrix3x2.CreateTranslation(-area.Left, -area.Top) * Matrix3x2.CreateScale(scale)
             * Matrix3x2.CreateTranslation((width - area.Width * scale) / 2, (height - area.Height * scale) / 2);
-        using var scene = new InkSceneRenderer(width);
+        using var scene = new InkSceneRenderer((uint)width);
         var posters = page.Media.Where(media => media.PosterData is { Length: > 0 }).ToDictionary(media => media.Id, media =>
             new BoardSelectionElement(board, new BoardImageAsset { Data = media.PosterData, Left = media.Left, Top = media.Top,
                 Width = media.Width, Height = media.Height, Transform = media.Transform }, page.Controller));
@@ -72,14 +98,14 @@ public static class BoardPreview
         token.ThrowIfCancellationRequested();
         using (var draw = target.CreateDrawingSession())
         {
-            draw.Clear(page.Background switch
+            draw.Clear(!cover ? Microsoft.UI.Colors.Transparent : page.Background switch
             {
                 BoardBackground.Black => Windows.UI.Color.FromArgb(255, 31, 31, 31),
                 BoardBackground.Green => Windows.UI.Color.FromArgb(255, 30, 59, 47),
                 BoardBackground.Cream => Windows.UI.Color.FromArgb(255, 245, 239, 220),
                 _ => Windows.UI.Color.FromArgb(255, 255, 255, 255),
             });
-            if (page.Background is BoardBackground.Grid or BoardBackground.Lined or BoardBackground.Coordinate)
+            if (cover && page.Background is BoardBackground.Grid or BoardBackground.Lined or BoardBackground.Coordinate)
             {
                 // Keep grid work proportional to preview pixels, even for a very large canvas.
                 float step = Math.Max(8, page.GridSpacing * scale);
@@ -106,7 +132,7 @@ public static class BoardPreview
         }
         using var output = new InMemoryRandomAccessStream();
         await target.SaveAsync(output, CanvasBitmapFileFormat.Png);
-        if (output.Size > MaximumCoverBytes) throw new InvalidDataException("预览图超过大小限制。");
+        if (cover && output.Size > MaximumCoverBytes) throw new InvalidDataException("预览图超过大小限制。");
         output.Seek(0);
         using var reader = new DataReader(output);
         await reader.LoadAsync((uint)output.Size);

@@ -160,7 +160,7 @@ public static class BoardElementMath
 public sealed partial class BoardService
 {
     private const string BoardFormat = "inkcanvas-board";
-    private const int BoardFormatVersion = 3;
+    private const int BoardFormatVersion = 4;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -251,7 +251,7 @@ public sealed partial class BoardService
     /// <summary>Only the runtime collection capacity limits page creation.</summary>
     public bool CanAddPages(int count = 1) => count > 0 && count <= Array.MaxLength - PageCount;
 
-    public bool HasContent => _extensions.Count > 0 || _pages.Any(page => page.Document.Count > 0)
+    public bool HasContent => SideBoard?.HasContent == true || _extensions.Count > 0 || _pages.Any(page => page.Document.Count > 0)
         || _images.Any(images => images.Count > 0)
         || _media.Any(media => media.Count > 0);
 
@@ -762,7 +762,7 @@ public sealed partial class BoardService
         media.Transform = snapshot.Transform?.ToArray();
     }
 
-    private void ApplyBoard(IReadOnlyList<PreparedPage> loadedPages)
+    private void ApplyBoard(IReadOnlyList<PreparedPage> loadedPages, int pageIndex = 0)
     {
         foreach (var page in _pages) page.Dispose();
         _pages.Clear();
@@ -787,7 +787,7 @@ public sealed partial class BoardService
             _images.Add(page.Images);
             _media.Add(page.Media);
         }
-        CurrentIndex = 0;
+        CurrentIndex = Math.Clamp(pageIndex, 0, loadedPages.Count - 1);
         PageStructureVersion++;
         PageChanged?.Invoke();
         ImagesChanged?.Invoke();
@@ -940,6 +940,7 @@ public sealed partial class BoardService
         public string Background { get; set; }
         public float GridSpacing { get; set; }
         public List<BoardPageFile> Pages { get; set; } = new();
+        public SideBoardFile SideBoard { get; set; }
         public List<BoardBlobReference> Blobs { get; set; } = new();
         public List<StrokeFile> Strokes { get; set; }
     }

@@ -18,6 +18,14 @@ public static class WindowChrome
 {
     public static IntPtr GetHwnd(Window window) => WindowNative.GetWindowHandle(window);
 
+    internal static void SetOwner(Window window, Window owner)
+    {
+        if (owner is not null) SetWindowLongPtr(GetHwnd(window), -8 /* GWLP_HWNDPARENT */, GetHwnd(owner));
+    }
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    private static extern nint SetWindowLongPtr(nint window, int index, nint value);
+
     private sealed class Placement
     {
         public int Kind; // 0 = physical px, 1 = DIP rect, 2 = DIP centre-on-primary
@@ -609,7 +617,7 @@ public static class WindowChrome
     /// (minimize/maximize only where the original allowed resizing, close always).
     /// </summary>
     public static Grid AddTitleBar(Window window, string title, FrameworkElement content, bool closeButton = true, bool minMax = false,
-        Microsoft.UI.Xaml.Media.Brush background = null)
+        Microsoft.UI.Xaml.Media.Brush background = null, Action onDragCompleted = null)
     {
         var root = new Grid
         {
@@ -734,7 +742,7 @@ public static class WindowChrome
             buttons.Children.Add(close);
         }
 
-        EnableDragMove(window, header);
+        EnableDragMove(window, header, onDragCompleted: onDragCompleted);
 
         Grid.SetRow(header, 0);
         Grid.SetRow(content, 1);

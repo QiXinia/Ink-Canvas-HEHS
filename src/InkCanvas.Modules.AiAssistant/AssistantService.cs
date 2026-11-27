@@ -131,6 +131,7 @@ internal sealed partial class AssistantService : IAiAssistantService, IAiConnect
         CancelActive();
     }
     public void NotifyBoardChanged() => OnTargetChanged();
+    public void SetCanvasVisible(bool visible) => _window?.SetCanvasVisible(visible);
     public void NotifySlideChanged(int slideId, int slideIndex, int animationStep)
     {
         var source = (slideId, slideIndex, animationStep);
@@ -171,9 +172,15 @@ internal sealed partial class AssistantService : IAiAssistantService, IAiConnect
         var chat = _workspace.Active;
         try
         {
-            var png = await Features.Board.BoardPreview.RenderAsync(_host.Board);
-            var attachment = await AssistantAttachments.FromImageAsync(png, "白板第 " + (_host.Board.CurrentIndex + 1) + " 页");
-            if (!_disposed && ReferenceEquals(chat, _workspace.Active)) _window?.AddAttachment(attachment);
+            var board = _host.CaptureBoard;
+            var target = _canvasHost.CaptureTarget();
+            int index = board.CurrentIndex;
+            int generation = _generation;
+            var png = await Features.Board.BoardPreview.RenderAsync(board, index);
+            string label = ReferenceEquals(board, _host.Board) ? "白板" : "板中板";
+            var attachment = await AssistantAttachments.FromImageAsync(png, $"{label}第 {index + 1} 页");
+            if (!_disposed && generation == _generation && _canvasHost.IsCurrent(target)
+                && ReferenceEquals(chat, _workspace.Active)) _window?.AddAttachment(attachment);
         }
         catch (Exception exception) { _window?.ReportError("获取画布失败。" + exception.Message); }
     }

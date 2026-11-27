@@ -15,6 +15,7 @@ public interface IAiAssistantHost
     AppSettings Settings { get; }
     InkController ActiveController { get; }
     BoardService Board { get; }
+    BoardService CaptureBoard => Board;
     bool BoardOpen { get; }
     double DpiScale { get; }
     ScreenRect OverlayBounds { get; }
@@ -38,4 +39,5 @@ public interface IAiAssistantService
     void Review(int slideId, int slideIndex, int animationStep, string text);
     void NotifySlideChanged(int slideId, int slideIndex, int animationStep);
     void NotifyBoardChanged();
+    void SetCanvasVisible(bool visible) { }
 }

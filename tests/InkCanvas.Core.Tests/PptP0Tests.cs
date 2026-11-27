@@ -193,6 +193,19 @@ public sealed class PptP0Tests : IDisposable
     }
 
     [Fact]
+    public void NavigationGuardReportsDelayForALaterFlipWithoutReenteringTheActiveCall()
+    {
+        var guard = new NavigationGuard(180, 350);
+        Assert.True(guard.TryEnter(100));
+        Assert.False(guard.TryEnter(120, out long busy));
+        Assert.Equal(0, busy);
+        guard.Exit(135);
+        Assert.False(guard.TryEnter(160, out long delay));
+        Assert.Equal(120, delay);
+        Assert.True(guard.TryEnter(160 + delay));
+    }
+
+    [Fact]
     public void Guard_RejectsWithinInterval_AllowsAfter()
     {
         var guard = new NavigationGuard(180, 350);

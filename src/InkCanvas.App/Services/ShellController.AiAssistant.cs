@@ -64,6 +64,7 @@ public sealed partial class ShellController
         public AppSettings Settings => shell.Services.Settings;
         public InkController ActiveController => shell.ActiveController;
         public BoardService Board => shell.Services.Board;
+        public BoardService CaptureBoard => shell._sideBoardTarget ? shell.Services.Board.SideBoard : Board;
         public bool BoardOpen => shell._board is not null;
         public double DpiScale => shell.CurrentDpi();
         public ScreenRect OverlayBounds => new(shell.Overlay.Window.X, shell.Overlay.Window.Y,
@@ -72,7 +73,7 @@ public sealed partial class ShellController
         {
             get
             {
-                Window owner = (Window)shell._board ?? (shell.DocumentActive ? shell._documentWorkspace.Window : null);
+                Window owner = (Window)shell.ActiveBoardWindow ?? (shell.DocumentActive ? shell._documentWorkspace.Window : null);
                 return owner is null ? null : WindowChrome.GetClientBounds(WindowChrome.GetHwnd(owner));
             }
         }
@@ -86,6 +87,15 @@ public sealed partial class ShellController
         {
             new CanvasToolsHost(shell).ConfigureWindow(window, 380, 760);
             TrackTheme(window);
+            if (shell.ActiveBoardWindow is { } board)
+            {
+                WindowChrome.CenterOnOwner(window, board);
+                window.Activated += (_, args) =>
+                {
+                    if (args.WindowActivationState != WindowActivationState.Deactivated && shell.ActiveBoardWindow is { } active)
+                        WindowChrome.EnsureAbove(window, WindowChrome.GetHwnd(active));
+                };
+            }
         }
         public void ConfigureEdgeHandle(Window window, bool topmost)
         {

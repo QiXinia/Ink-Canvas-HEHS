@@ -8,8 +8,8 @@ namespace InkCanvas.Features.Board;
 
 public sealed partial class BoardService
 {
-    private sealed record BoardSnapshot(List<PreparedPage> Pages, BoardArchiveMetadata Metadata, Dictionary<string, byte[]> Extensions);
-    private sealed record BoardBlobReference(int Page, int Index, string Kind, string Entry, long Length);
+    private sealed record BoardSnapshot(List<PreparedPage> Pages, BoardArchiveMetadata Metadata, Dictionary<string, byte[]> Extensions, SideBoardSnapshot SideBoard);
+    private sealed record BoardBlobReference(int Page, int Index, string Kind, string Entry, long Length, string Scope = null);
     private static readonly JsonSerializerOptions PackageJsonOptions = CreatePackageJsonOptions();
     private static readonly SemaphoreSlim PackageCommitGate = new(1, 1);
     private Task _saveQueue = Task.CompletedTask;
@@ -45,10 +45,10 @@ public sealed partial class BoardService
     public Task SaveBoardAsync(string path, CancellationToken cancellationToken = default) => SaveBoardArchiveAsync(path, null, cancellationToken: cancellationToken);
 
     public Task SaveBoardArchiveAsync(string path, BoardArchiveMetadata metadata, bool overwrite = true, CancellationToken cancellationToken = default) =>
-        QueueSave(path, CaptureSnapshot(Enumerable.Range(0, PageCount), metadata), overwrite, cancellationToken);
+        QueueSave(path, CaptureSnapshot(Enumerable.Range(0, PageCount), metadata, includeSideBoard: true), overwrite, cancellationToken);
 
     public Task SaveRecoveryAsync(string path, bool currentPageOnly = false, CancellationToken cancellationToken = default) =>
-        QueueSave(path, CaptureSnapshot(currentPageOnly ? new[] { CurrentIndex } : Enumerable.Range(0, PageCount), null), true, cancellationToken, includePreview: false);
+        QueueSave(path, CaptureSnapshot(currentPageOnly ? new[] { CurrentIndex } : Enumerable.Range(0, PageCount), null, includeSideBoard: !currentPageOnly), true, cancellationToken, includePreview: false);
 
     private Task QueueSave(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken, bool includePreview = true)
     {
@@ -64,10 +64,17 @@ public sealed partial class BoardService
         }
     }
 
-    private BoardSnapshot CaptureSnapshot(IEnumerable<int> indices, BoardArchiveMetadata metadata)
+    private BoardSnapshot CaptureSnapshot(IEnumerable<int> indices, BoardArchiveMetadata metadata, bool includeSideBoard = false)
     {
         FlushExtensions();
         return new(
+        CapturePages(indices), metadata ?? ArchiveMetadata,
+            new Dictionary<string, byte[]>(_extensions, StringComparer.Ordinal),
+            includeSideBoard && SideBoard is { } side
+                ? new SideBoardSnapshot(side.CurrentIndex, side.CapturePages(Enumerable.Range(0, side.PageCount))) : null);
+    }
+
+    private List<PreparedPage> CapturePages(IEnumerable<int> indices) =>
         indices.Select(index => new PreparedPage(
             _pages[index].Document.Strokes.Select(stroke => stroke.Clone()).ToList(),
             _images[index].Select(image => image.Copy(copyData: false)).ToList(),
@@ -75,9 +82,17 @@ public sealed partial class BoardService
             {
                 Viewport = new[] { _pages[index].ViewCenter.X * 2, _pages[index].ViewCenter.Y * 2 },
                 InkLayerCount = _pages[index].Document.InkLayerCount,
-            }).ToList(), metadata ?? ArchiveMetadata,
-        new Dictionary<string, byte[]>(_extensions, StringComparer.Ordinal));
-    }
+            }).ToList();
+
+    private static List<BoardPageFile> SerializePages(List<PreparedPage> pages) => pages.Select(page => new BoardPageFile
+    {
+        Background = page.Paper.Background.ToString(), GridSpacing = page.Paper.GridSpacing,
+        Name = page.Paper.Name,
+        ViewTransform = new[] { page.View.M11, page.View.M12, page.View.M21, page.View.M22, page.View.M31, page.View.M32 },
+        Viewport = page.Viewport,
+        InkLayerCount = page.InkLayerCount > 1 ? page.InkLayerCount : 0,
+        Strokes = page.Strokes.Select(ToStrokeFile).ToList(), Images = page.Images, Media = page.Media,
+    }).ToList();
 
     private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken, bool includePreview = true) => Task.Run(async () =>
     {
@@ -89,16 +104,13 @@ public sealed partial class BoardService
         {
             var model = new BoardFile
             {
-                Format = BoardFormat, Version = BoardFormatVersion,
-                Pages = snapshot.Pages.Select(page => new BoardPageFile
+                Format = BoardFormat, Version = snapshot.SideBoard is null ? 3 : BoardFormatVersion,
+                Pages = SerializePages(snapshot.Pages),
+                SideBoard = snapshot.SideBoard is null ? null : new SideBoardFile
                 {
-                    Background = page.Paper.Background.ToString(), GridSpacing = page.Paper.GridSpacing,
-                    Name = page.Paper.Name,
-                    ViewTransform = new[] { page.View.M11, page.View.M12, page.View.M21, page.View.M22, page.View.M31, page.View.M32 },
-                    Viewport = page.Viewport,
-                    InkLayerCount = page.InkLayerCount > 1 ? page.InkLayerCount : 0,
-                    Strokes = page.Strokes.Select(ToStrokeFile).ToList(), Images = page.Images, Media = page.Media,
-                }).ToList(),
+                    Version = 1, PageIndex = snapshot.SideBoard.PageIndex,
+                    Pages = SerializePages(snapshot.SideBoard.Pages),
+                },
             };
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536,
                 FileOptions.Asynchronous | FileOptions.SequentialScan))
@@ -124,15 +136,21 @@ public sealed partial class BoardService
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     { Core.Diagnostics.FileLog.WriteLogToFile("白板封面生成失败 " + ex.Message); }
                     var blobs = new Dictionary<byte[], string>(ReferenceEqualityComparer.Instance);
-                    for (int pageIndex = 0; pageIndex < model.Pages.Count; pageIndex++)
+                    await WritePages(model.Pages, null);
+                    if (model.SideBoard is { } side) await WritePages(side.Pages, "side");
+
+                    async Task WritePages(List<BoardPageFile> pages, string scope)
                     {
-                        var page = model.Pages[pageIndex];
-                        for (int index = 0; index < page.Images.Count; index++)
-                            await WriteBlob(pageIndex, index, "image", page.Images[index].Data);
-                        for (int index = 0; index < page.Media.Count; index++)
+                        for (int pageIndex = 0; pageIndex < pages.Count; pageIndex++)
                         {
-                            await WriteBlob(pageIndex, index, "video", page.Media[index].Data);
-                            await WriteBlob(pageIndex, index, "poster", page.Media[index].PosterData);
+                            var page = pages[pageIndex];
+                            for (int index = 0; index < page.Images.Count; index++)
+                                await WriteBlob(scope, pageIndex, index, "image", page.Images[index].Data);
+                            for (int index = 0; index < page.Media.Count; index++)
+                            {
+                                await WriteBlob(scope, pageIndex, index, "video", page.Media[index].Data);
+                                await WriteBlob(scope, pageIndex, index, "poster", page.Media[index].PosterData);
+                            }
                         }
                     }
                     foreach (var extension in snapshot.Extensions)
@@ -151,7 +169,7 @@ public sealed partial class BoardService
                         await JsonSerializer.SerializeAsync(details, snapshot.Metadata with { PageCount = snapshot.Pages.Count }, cancellationToken: cancellationToken).ConfigureAwait(false);
                     }
 
-                    async Task WriteBlob(int page, int index, string kind, byte[] data)
+                    async Task WriteBlob(string scope, int page, int index, string kind, byte[] data)
                     {
                         if (data is not { Length: > 0 }) return;
                         if (!blobs.TryGetValue(data, out string name))
@@ -169,7 +187,7 @@ public sealed partial class BoardService
                                 offset += count;
                             }
                         }
-                        model.Blobs.Add(new(page, index, kind, name, data.LongLength));
+                        model.Blobs.Add(new(page, index, kind, name, data.LongLength, scope));
                     }
                 }
                 await output.FlushAsync(cancellationToken).ConfigureAwait(false);
@@ -201,11 +219,19 @@ public sealed partial class BoardService
             if (!entireBoard) pages = new() { pages.FirstOrDefault() ?? new() };
             var fallback = ReadPaper(model.Background, model.GridSpacing, paper);
             var prepared = pages.Select(page => PreparePage(page, fallback)).ToList();
+            var sidePages = entireBoard ? model.SideBoard?.Pages.Select(page => PreparePage(page, fallback)).ToList() : null;
             cancellationToken.ThrowIfCancellationRequested();
             return (Action)(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (entireBoard) { ApplyBoard(prepared); ArchiveMetadata = model.Archive; ReplaceExtensions(model.Extensions); }
+                if (entireBoard)
+                {
+                    if (sidePages is not null) EnableSideBoard().ApplyBoard(sidePages, model.SideBoard.PageIndex);
+                    else if (SideBoard is { } side) side.ApplyBoard(new[] { PreparePage(new(), fallback) });
+                    ApplyBoard(prepared);
+                    ArchiveMetadata = model.Archive;
+                    ReplaceExtensions(model.Extensions);
+                }
                 else
                 {
                     int index = _pages.IndexOf(target);
@@ -243,7 +269,12 @@ public sealed partial class BoardService
             return (Action)(() =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (entireBoard) { ApplyBoard(new[] { page }); ReplaceExtensions(model.Extensions); }
+                if (entireBoard)
+                {
+                    if (SideBoard is { } side) side.ApplyBoard(new[] { PreparePage(new(), page.Paper) });
+                    ApplyBoard(new[] { page });
+                    ReplaceExtensions(model.Extensions);
+                }
                 else
                 {
                     int index = _pages.IndexOf(target);
@@ -297,7 +328,7 @@ public sealed partial class BoardService
             else model = await JsonSerializer.DeserializeAsync<BoardFile>(metadata, PackageJsonOptions, cancellationToken).ConfigureAwait(false);
             if (model is null) throw new InvalidDataException("画板清单为空。");
         }
-        if (model.Format != BoardFormat || model.Version is not (2 or BoardFormatVersion)) throw new InvalidDataException("不支持的画板包格式或版本。");
+        if (model.Format != BoardFormat || model.Version is not (2 or 3 or BoardFormatVersion)) throw new InvalidDataException("不支持的画板包格式或版本。");
         ValidatePages(model, requireSinglePage);
         if (previewPage.HasValue && (previewPage < 0 || previewPage >= model.Pages.Count)) throw new ArgumentOutOfRangeException(nameof(previewPage));
         long previewBytes = 0;
@@ -315,23 +346,26 @@ public sealed partial class BoardService
                 await content.ReadExactlyAsync(data, cancellationToken).ConfigureAwait(false);
                 model.Extensions[id] = data;
             }
-        var assigned = new HashSet<(int Page, int Index, string Kind)>();
+        var assigned = new HashSet<(bool Side, int Page, int Index, string Kind)>();
         foreach (var reference in model.Blobs ?? new())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (reference.Page < 0 || reference.Page >= model.Pages.Count || reference.Index < 0
+            bool side = reference.Scope == "side";
+            var pages = side ? model.SideBoard?.Pages : model.Pages;
+            if (reference.Scope is not (null or "" or "main" or "side") || pages is null
+                || reference.Page < 0 || reference.Page >= pages.Count || reference.Index < 0
                 || reference.Entry is null || !reference.Entry.StartsWith("media/", StringComparison.Ordinal)
-                || !assigned.Add((reference.Page, reference.Index, reference.Kind)))
+                || !assigned.Add((side, reference.Page, reference.Index, reference.Kind)))
                 throw new InvalidDataException("画板媒体引用无效。");
-            var page = model.Pages[reference.Page];
+            var page = pages[reference.Page];
             if (reference.Kind == "image" ? reference.Index >= page.Images.Count
                 : reference.Kind is not ("video" or "poster") || reference.Index >= page.Media.Count)
                 throw new InvalidDataException("画板媒体对象不存在。");
             if (!entries.TryGetValue(reference.Entry, out var entry) || reference.Length != entry.Length
                 || entry.Length <= 0 || entry.Length > Array.MaxLength)
                 throw new InvalidDataException("画板媒体缺失或长度无效。");
-            if (firstPageOnly && reference.Page != 0) continue;
-            if (visualMetadataOnly || previewPage.HasValue && (reference.Page != previewPage || reference.Kind == "video")) continue;
+            if (firstPageOnly && (side || reference.Page != 0)) continue;
+            if (visualMetadataOnly || previewPage.HasValue && (side || reference.Page != previewPage || reference.Kind == "video")) continue;
             if (previewPage.HasValue && (previewBytes += entry.Length) > 64L * 1024 * 1024) throw new InvalidDataException("页面媒体较大，请打开文件查看。");
             if (!loaded.TryGetValue(reference.Entry, out var bytes))
             {
@@ -348,7 +382,8 @@ public sealed partial class BoardService
             }
         }
         if (firstPageOnly) model.Pages = new() { model.Pages[0] };
-        foreach (var page in previewPage.HasValue || visualMetadataOnly ? Enumerable.Empty<BoardPageFile>() : model.Pages)
+        var validatedPages = firstPageOnly || model.SideBoard is null ? model.Pages : model.Pages.Concat(model.SideBoard.Pages);
+        foreach (var page in previewPage.HasValue || visualMetadataOnly ? Enumerable.Empty<BoardPageFile>() : validatedPages)
             if (page.Images.Any(image => !IsValidImage(image)) || page.Media.Any(media => !IsValidMedia(media)))
                 throw new InvalidDataException("画板包中的媒体数据不完整。");
         return model;
@@ -398,12 +433,23 @@ public sealed partial class BoardService
         if (requireSinglePage && (model.Format != BoardFormat || model.Pages is not { Count: 1 }))
             throw new InvalidDataException("文件导入插件未返回有效的单页画板。");
         model.Pages ??= new();
-        if (model.Pages.Count == 0) model.Pages.Add(new());
-        if (model.Pages.Any(page => page is null))
-            throw new InvalidDataException("画板页面无效。");
-        foreach (var page in model.Pages)
+        Validate(model.Pages);
+        if (model.SideBoard is not { } side) return;
+        if (side.Version != 1 || requireSinglePage)
+            throw new InvalidDataException("板中板格式无效。");
+        side.Pages ??= new();
+        Validate(side.Pages);
+
+        static void Validate(List<BoardPageFile> pages)
         {
-            page.Images ??= new(); page.Media ??= new();
+            if (pages.Count == 0) pages.Add(new());
+            if (pages.Any(page => page is null))
+                throw new InvalidDataException("画板页面无效。");
+            foreach (var page in pages)
+            {
+                page.Images ??= new();
+                page.Media ??= new();
+            }
         }
     }
 }
