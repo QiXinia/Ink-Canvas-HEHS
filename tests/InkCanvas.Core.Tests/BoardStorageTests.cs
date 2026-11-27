@@ -34,7 +34,7 @@ public sealed class BoardStorageTests : IDisposable
         string package = FilePath();
         await board.SaveRecoveryAsync(package);
         using (var zip = ZipFile.OpenRead(package))
-            Assert.Single(zip.Entries.Where(entry => entry.FullName.StartsWith("media/")));
+            Assert.Single(zip.Entries, entry => entry.FullName.StartsWith("media/"));
 
         var restored = Board();
         await restored.LoadBoardAsync(package);
