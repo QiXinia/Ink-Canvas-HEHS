@@ -1,6 +1,7 @@
 # 构建环境（最小化）
 
 本分支已从 WPF / .NET Framework 4.7.2 迁移到 **WinUI 3（Windows App SDK）**。
+使用环境与一键安装脚本见 [作品说明](docs/PROJECT-DESCRIPTION.md)，MSI 与便携版安装见 [安装说明](docs/INSTALLATION.md)。
 下面记录实测可用的最小工具链，以及刻意**不装**的东西。
 
 ## 必需
@@ -35,13 +36,13 @@ NuGet 缓存约 **1.28 GB**（含 monolith 试装阶段的残留；仅子包时�
 
 | 方式 | 体积 | 前提 |
 |---|---|---|
-| 默认：自包含 + 裁剪 | **约 94 MB** | 无，拷过去就能跑 |
-| `-FrameworkDependent` | **约 40.6 MB** | 目标机需先装 Windows App SDK 运行时 |
+| 默认：Windows App SDK 自包含 + 裁剪 | 以当前发布附件为准 | 目标机需先装 .NET 10 x64 Runtime |
+| `-FrameworkDependent` | 按所选模块与运行时载荷变化 | 目标机需先装 .NET 10 x64 Runtime 和匹配的 Windows App SDK 运行时 |
 | 未裁剪的自包含（对照） | 约 140 MB | — |
 
 ```powershell
-.\build.ps1 publish                      # 94 MB，自包含
-.\build.ps1 publish -FrameworkDependent   # 40.6 MB，需运行时
+.\build.ps1 publish                      # 携带 Windows App SDK，仍需 .NET 10 x64 Runtime
+.\build.ps1 publish -FrameworkDependent   # 另需匹配的 Windows App SDK 运行时
 ```
 
 裁剪掉的是**本应用用不到的** Windows App SDK 自带载荷：Windows AI / ML

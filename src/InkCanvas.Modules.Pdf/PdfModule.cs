@@ -1,8 +1,10 @@
 using InkCanvas.Extensibility;
 using InkCanvas.Host.Contracts;
 using InkCanvas.Pdf;
+using Microsoft.Graphics.Canvas;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Windows.Storage.Streams;
 
 namespace InkCanvas.Modules.Pdf;
 
@@ -12,13 +14,39 @@ public sealed class PdfModule : IApplicationModule
     public void Start(IModuleContext context)
     {
         _service = new PdfWorkspaceService(context.GetService<IDocumentWorkspaceHost>());
+        _service.ConfigureReadingProgress();
         context.RegisterCleanup(_service.Dispose);
         context.Export<IPdfWorkspaceService>(_service);
+        context.Export<IPdfResumeService>(_service);
+        var workspace = context.GetService<IDocumentWorkspaceHost>();
+        context.RegisterCleanup(context.GetService<IModuleSettingsRegistry>().Register(new(
+            "inkcanvas.pdf.settings", "PDF 阅读与批注", "\uF3AD", "PDF 继续 阅读 页码 上次 进度 自动 恢复 提醒",
+            builder =>
+            {
+                builder.AddSection("阅读进度");
+                builder.AddView("PDF 续接方式", () =>
+                {
+                    var combo = new ComboBox { Header = "重新打开 PDF 时", HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 40 };
+                    foreach (string option in new[] { "从第一页开始", "自动回到上次阅读页", "快速提醒" }) combo.Items.Add(option);
+                    combo.SelectedIndex = (int)(workspace.Settings.Resume?.Pdf ?? Core.Settings.ResumeBehavior.Reminder);
+                    combo.SelectionChanged += (_, _) =>
+                    {
+                        if (combo.SelectedIndex < 0) return;
+                        workspace.Settings.Resume ??= new();
+                        workspace.Settings.Resume.Pdf = (Core.Settings.ResumeBehavior)combo.SelectedIndex;
+                        workspace.SavePreferences();
+                        _ = _service.SaveReadingProgressSafelyAsync();
+                    };
+                    return combo;
+                }, "上次阅读页 自动恢复 中断 重启");
+                builder.AddInfo("每份 PDF 分别记忆页码。重启电脑后可自动打开上次文档，或显示 8 秒的继续提醒。忽略或超时后删除对应进度记录。文件被替换或修改时从第一页开始。");
+            })).Dispose);
+        _service.RegisterAssistant(context);
     }
     public void Stop() { _service?.Dispose(); _service = null; }
 }
 
-internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWorkspaceService, IDisposable
+internal sealed partial class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWorkspaceService, IDisposable
 {
     private PdfWindow _window;
     private bool _busy, _disposed;
@@ -54,6 +82,10 @@ internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWor
             window.Closed += (_, _) => { if (ReferenceEquals(_window, window)) _window = null; };
             host.Attach(window);
             window.Activate();
+            window.ReadingProgressChanged += OnReadingProgressChanged;
+            window.Closed += (_, _) => { window.ReadingProgressChanged -= OnReadingProgressChanged; _readingTimer?.Stop(); };
+            window.ClosingForResume = SaveReadingProgressSafelyAsync;
+            await ApplyReadingProgressAsync(window);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (!_disposed) await NoticeAsync("打开 PDF 失败", ex.GetBaseException().Message); }
@@ -165,9 +197,13 @@ internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWor
                 foreach (int index in indices)
                 {
                     cancel.Token.ThrowIfCancellationRequested();
-                    var page = file.Pages[index]; double scale = quality.SelectedIndex == 1 ? 2 : 1.5;
-                    scale = Math.Min(scale, Math.Sqrt(6_000_000 / ((double)page.DipWidth * page.DipHeight)));
-                    byte[] png = await renderer.RenderAsync(index, page, new Windows.Foundation.Rect(0, 0, page.DipWidth, page.DipHeight), scale, cancel.Token);
+                    var page = file.Pages[index];
+                    var spacing = file.GetSpacing(index);
+                    var expanded = spacing.Expand(page);
+                    var display = expanded with { Rotation = expanded.Rotation + file.GetDisplayRotation(index) };
+                    double scale = Math.Min(quality.SelectedIndex == 1 ? 2 : 1.5,
+                        Math.Min(8192d / Math.Max(display.DipWidth, display.DipHeight), Math.Sqrt(6_000_000 / ((double)display.DipWidth * display.DipHeight))));
+                    byte[] png = await RenderImportPageAsync(renderer, index, page, expanded, display, spacing, scale, cancel.Token);
                     if ((totalBytes += png.LongLength) > 256L * 1024 * 1024) throw new IOException("所选页面图像总量超过 256 MB，请分批导入。");
                     string output = Path.Combine(staging, index + ".png"); await File.WriteAllBytesAsync(output, png, cancel.Token);
                     prepared.Add((index, output)); progress.Value = prepared.Count; label.Text = "已准备 " + prepared.Count + " / " + indices.Count + " 页";
@@ -178,7 +214,8 @@ internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWor
                 var images = new List<Features.Board.BoardImageAsset>();
                 foreach (var item in prepared)
                 {
-                    var page = file.Pages[item.Index];
+                    var page = file.GetSpacing(item.Index).Expand(file.Pages[item.Index]);
+                    page = page with { Rotation = page.Rotation + file.GetDisplayRotation(item.Index) };
                     images.Add(new Features.Board.BoardImageAsset { Name = Path.GetFileNameWithoutExtension(path) + " · 第 " + (item.Index + 1) + " 页",
                         Data = await File.ReadAllBytesAsync(item.Path, cancel.Token), Width = page.DipWidth, Height = page.DipHeight });
                 }
@@ -195,7 +232,14 @@ internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWor
                         imported.Add((controller, new[] { images[i] }));
                         host.ConfigureController(controller);
                         images[i].LayerOrder = 0;
-                        var ink = Core.Ink.InkStroke.CloneObjects(file.GetInk(prepared[i].Index).OrderBy(stroke => stroke.LayerOrder ?? long.MaxValue)).ToArray();
+                        var ink = Core.Ink.InkStroke.CloneObjects(Core.Ink.InkStroke.InDrawingOrder(file.GetInk(prepared[i].Index))).ToArray();
+                        int index = prepared[i].Index;
+                        var expanded = file.GetSpacing(index).Expand(file.Pages[index]);
+                        if (file.GetDisplayRotation(index) is var rotation && rotation != 0)
+                        {
+                            var transform = expanded.TransformTo(expanded with { Rotation = expanded.Rotation + rotation });
+                            foreach (var stroke in ink) stroke.Transform(transform, scaleWidth: false);
+                        }
                         for (int layer = 0; layer < ink.Length; layer++) ink[layer].LayerOrder = layer + 1;
                         controller.Document.AddRange(ink);
                         float scale = Math.Min((width - 32) / images[i].Width, (height - 32) / images[i].Height);
@@ -220,9 +264,34 @@ internal sealed class PdfWorkspaceService(IDocumentWorkspaceHost host) : IPdfWor
             _busy = false;
         }
     }
+    private static async Task<byte[]> RenderImportPageAsync(PdfRasterizer renderer, int index, PdfPageGeometry source,
+        PdfPageGeometry expanded, PdfPageGeometry display, PdfPageSpacing spacing, double scale, CancellationToken token)
+    {
+        var bounds = new Windows.Foundation.Rect(0, 0, source.DipWidth, source.DipHeight);
+        if (source == display) return await renderer.RenderAsync(index, source, bounds, scale, token);
+        using var bitmap = await renderer.RenderBitmapAsync(index, source, bounds, scale, token);
+        using var target = new CanvasRenderTarget(bitmap.Device, (float)(display.DipWidth * scale), (float)(display.DipHeight * scale), 96);
+        using (var draw = target.CreateDrawingSession())
+        {
+            draw.Clear(Microsoft.UI.Colors.White);
+            draw.Transform = expanded.TransformTo(display) * System.Numerics.Matrix3x2.CreateScale((float)scale);
+            PdfWindow.DrawSpacingBitmap(draw, bitmap, bounds, source, spacing.Lanes(source));
+        }
+        using var output = new InMemoryRandomAccessStream();
+        await target.SaveAsync(output, CanvasBitmapFileFormat.Png).AsTask(token);
+        output.Seek(0);
+        using var reader = new DataReader(output);
+        uint count = checked((uint)output.Size);
+        await reader.LoadAsync(count).AsTask(token);
+        var bytes = new byte[count];
+        reader.ReadBytes(bytes);
+        return bytes;
+    }
+
     public void Dispose()
     {
         if (_disposed) return; _disposed = true;
+        _readingTimer?.Stop();
         _lifetime.Cancel(); CloseOperationWindow(); _window?.ForceClose(); _window = null;
     }
 }

@@ -3,65 +3,44 @@ using InkCanvas.Core.Ink;
 
 namespace InkCanvas.Core.Selection;
 
-/// <summary>
-/// Places a floating selection toolbar outside the selected object.
-/// Preference order is above → below → right → left → work-area corners.
-/// Every candidate is clamped to <paramref name="work"/>; candidates that overlap the selection
-/// (or the given obstacle, e.g. the dock) are rejected before any distance scoring, so a toolbar
-/// is never positioned inside the selection when an outside slot exists.
-/// </summary>
 public static class FloatingToolbarLayout
 {
-    public static Rect Place(Rect work, Rect selection, Rect obstacle, Vector2 size, float gap = 10)
+    /// <summary>Constant-size candidate search in one coordinate space, including negative monitor origins.</summary>
+    public static Rect Place(Rect work, Rect selection, Rect obstacle, Vector2 size, float gap = 10,
+        Vector2? firstReference = null, Vector2? secondReference = null)
     {
-        if (work.IsEmpty || size.X <= 0 || size.Y <= 0) return Rect.Empty;
-
-        float width = Math.Min(size.X, work.Width);
-        float height = Math.Min(size.Y, work.Height);
-        if (width <= 0 || height <= 0) return Rect.Empty;
-
-        Vector2 center = selection.IsEmpty ? work.Center : selection.Center;
-        float x = center.X - width / 2;
-        float y = center.Y - height / 2;
-        float gapValue = MathF.Max(0, gap);
-
+        float width = Math.Min(size.X, work.Width), height = Math.Min(size.Y, work.Height);
+        float x = selection.Center.X - width / 2;
+        var firstHandle = ReferenceBounds(firstReference, gap * 1.6f);
+        var secondHandle = ReferenceBounds(secondReference, gap * 1.6f);
         Span<Vector2> candidates = stackalloc Vector2[]
         {
-            new(x, selection.Top - height - gapValue),                 // above (preferred)
-            new(x, selection.Bottom + gapValue),                       // below
-            new(selection.Right + gapValue, y),                        // right
-            new(selection.Left - width - gapValue, y),                 // left
-            new(work.Left + gapValue, work.Top + gapValue),            // work corners (fallbacks)
-            new(work.Right - width - gapValue, work.Top + gapValue),
-            new(work.Left + gapValue, work.Bottom - height - gapValue),
-            new(work.Right - width - gapValue, work.Bottom - height - gapValue),
+            new(x, selection.Bottom + gap), new(x, selection.Top - height - gap),
+            new(selection.Right + gap, selection.Center.Y - height / 2),
+            new(selection.Left - width - gap, selection.Center.Y - height / 2),
+            new(x, obstacle.Top - height - gap), new(x, obstacle.Bottom + gap),
+            new(work.Left + gap, work.Top + gap), new(work.Right - width - gap, work.Top + gap),
+            new(work.Left + gap, work.Bottom - height - gap), new(work.Right - width - gap, work.Bottom - height - gap),
         };
-
-        // Keep a small breathing gap around the selection; touching the inflated edge is acceptable.
-        Rect avoidSelection = selection.IsEmpty ? Rect.Empty : selection.Inflate(gapValue * 0.5f);
-        Rect avoidObstacle = obstacle.IsEmpty ? Rect.Empty : obstacle;
-
         Rect best = Rect.Empty;
         double bestScore = double.MaxValue;
-        for (int index = 0; index < candidates.Length; index++)
+        for (int i = 0; i < candidates.Length; i++)
         {
-            float left = Math.Clamp(candidates[index].X, work.Left, work.Right - width);
-            float top = Math.Clamp(candidates[index].Y, work.Top, work.Bottom - height);
+            float left = Math.Clamp(candidates[i].X, work.Left, work.Right - width);
+            float top = Math.Clamp(candidates[i].Y, work.Top, work.Bottom - height);
             var rect = new Rect(left, top, left + width, top + height);
-
-            float selectionOverlap = Overlap(rect, avoidSelection);
-            float obstacleOverlap = Overlap(rect, avoidObstacle);
-            if (selectionOverlap <= 0 && obstacleOverlap <= 0)
-                return rect;
-
-            double score = selectionOverlap * 10000f
-                + obstacleOverlap * 10000f
-                + Vector2.DistanceSquared(rect.Center, center) * .001f
-                + index * .01f;
+            double score = Overlap(rect, obstacle.IsEmpty ? Rect.Empty : obstacle.Inflate(gap)) * 10000
+                + (Overlap(rect, firstHandle) + Overlap(rect, secondHandle)) * 1000
+                + Overlap(rect, selection.Inflate(gap)) * 100
+                + Vector2.DistanceSquared(rect.Center, selection.Center) * .001 + i * .01;
             if (score < bestScore) { bestScore = score; best = rect; }
         }
         return best;
     }
+
+    private static Rect ReferenceBounds(Vector2? reference, float radius) => reference is { } point
+        ? new Rect(point.X - radius, point.Y - radius, point.X + radius, point.Y + radius)
+        : Rect.Empty;
 
     private static float Overlap(Rect a, Rect b) => b.IsEmpty ? 0 :
         Math.Max(0, Math.Min(a.Right, b.Right) - Math.Max(a.Left, b.Left))

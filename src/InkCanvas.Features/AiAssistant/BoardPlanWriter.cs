@@ -1,5 +1,5 @@
 using InkCanvas.Core.AiAssistant;
-using InkCanvas.Core.Diagnostics;
+using InkCanvas.Ink;
 using InkCanvas.Features.Board.AiObjects;
 
 namespace InkCanvas.Features.AiAssistant;
@@ -12,6 +12,8 @@ public sealed class BoardPlanNativeResult
     public IReadOnlyList<BoardTextObject> Texts { get; init; } = Array.Empty<BoardTextObject>();
 
     public IReadOnlyList<BoardFormulaObject> Formulas { get; init; } = Array.Empty<BoardFormulaObject>();
+
+    public IReadOnlyList<ISelectionElement> OrderedElements { get; init; } = Array.Empty<ISelectionElement>();
 
     public string Error { get; init; } = "";
 
@@ -46,6 +48,7 @@ public static class BoardPlanWriter
         long createdAt = nowMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var texts = new List<BoardTextObject>(plan.Blocks.Count);
         var formulas = new List<BoardFormulaObject>();
+        var ordered = new List<ISelectionElement>();
 
         for (int index = 0; index < plan.Blocks.Count; index++)
         {
@@ -57,28 +60,26 @@ public static class BoardPlanWriter
                 if (string.IsNullOrWhiteSpace(block.Latex))
                     return new BoardPlanNativeResult { Error = $"第 {index + 1} 块（公式）LaTeX 为空" };
 
-                formulas.Add(CreateFormula(block, kind, instruction, createdAt));
+                var formula = CreateFormula(block, kind, instruction, createdAt);
+                formulas.Add(formula);
+                ordered.Add(formula);
                 continue;
             }
 
-            BoardTextObject? text = CreateText(block, kind, instruction, createdAt, index);
+            BoardTextObject text = CreateText(block, kind, instruction, createdAt, index);
             if (text is null)
                 return new BoardPlanNativeResult { Error = $"第 {index + 1} 块（{KindLabel(kind)}）内容为空" };
             texts.Add(text);
+            ordered.Add(text);
         }
 
         if (texts.Count + formulas.Count == 0)
             return new BoardPlanNativeResult { Error = "板书计划没有可写入的对象" };
 
-        FileLog.WriteLogToFile(
-            $"[AI] 板书原生对象：texts={texts.Count}，formulas={formulas.Count}，images=0，"
-            + $"instruction={Shorten(instruction, 60)}",
-            LogType.Event);
-
-        return new BoardPlanNativeResult { Texts = texts, Formulas = formulas };
+        return new BoardPlanNativeResult { Texts = texts, Formulas = formulas, OrderedElements = ordered };
     }
 
-    private static BoardTextObject? CreateText(
+    private static BoardTextObject CreateText(
         AssistantBoardBlock block,
         string kind,
         string instruction,
@@ -219,7 +220,7 @@ public static class BoardPlanWriter
         return width;
     }
 
-    private static string NormalizeKind(string? kind) => (kind ?? "").Trim().ToLowerInvariant() switch
+    private static string NormalizeKind(string kind) => (kind ?? "").Trim().ToLowerInvariant() switch
     {
         "formula" => "formula",
         "wordlist" => "wordList",
@@ -228,7 +229,7 @@ public static class BoardPlanWriter
         _ => "text",
     };
 
-    private static string NormalizeAlign(string? align, string kind)
+    private static string NormalizeAlign(string align, string kind)
         => (align ?? "").Trim().ToLowerInvariant() switch
         {
             "center" => "center",
@@ -241,7 +242,7 @@ public static class BoardPlanWriter
     private static double Clamp(double value, double min, double max)
         => !double.IsFinite(value) ? min : Math.Clamp(value, min, max);
 
-    private static string Shorten(string? text, int max)
+    private static string Shorten(string text, int max)
     {
         string value = (text ?? "").ReplaceLineEndings(" ");
         return value.Length <= max ? value : value[..max] + "…";

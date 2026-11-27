@@ -6,14 +6,14 @@ public static class PlotSampler
     public const double Width = 640, Height = 480;
     public const int MaximumPoints = 32000;
     public const int MaximumEvaluations = 220000;
-    public static PlotMesh Sample(CompiledPlot compiled, PlotDefinition definition, CancellationToken token = default)
+    public static PlotMesh Sample(CompiledPlot compiled, PlotDefinition definition, CancellationToken token = default, bool interactive = false)
     {
         definition.Validate();
-        return new Sampler(compiled, definition, token).Run();
+        return new Sampler(compiled, definition, token, interactive).Run();
     }
     private sealed class BudgetExceededException : Exception;
     private readonly record struct Segment(PlotPoint First, PlotPoint Last);
-    private sealed class Sampler(CompiledPlot compiled, PlotDefinition definition, CancellationToken token)
+    private sealed class Sampler(CompiledPlot compiled, PlotDefinition definition, CancellationToken token, bool interactive)
     {
         private readonly List<PlotPoint[]> _paths = new();
         private readonly List<PlotPoint> _current = new();
@@ -129,7 +129,7 @@ public static class PlotSampler
 
         private void Implicit()
         {
-            const int columns = 256, rows = 192;
+            int columns = interactive ? 128 : 256, rows = interactive ? 96 : 192;
             var previous = new double[columns + 1]; var next = new double[columns + 1];
             Span<PlotPoint> corners = stackalloc PlotPoint[4];
             Span<double> values = stackalloc double[4];

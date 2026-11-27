@@ -29,12 +29,15 @@ public static class NativeMethods
 
     // ---- messages ----
     public const int WM_DESTROY = 0x0002;
+    public const int WM_SETCURSOR = 0x0020;
     public const int WM_MOUSEACTIVATE = 0x0021;
     public const int WM_POINTERACTIVATE = 0x024B;
     public const int MA_NOACTIVATE = 3;
     public const int PA_NOACTIVATE = 3;
     public const int WM_NCLBUTTONDOWN = 0x00A1;
     public const int HTCAPTION = 2;
+    public const int HTCLIENT = 1;
+    public const int IDC_ARROW = 32512;
     public const int WM_MOUSEMOVE = 0x0200;
     public const int WM_LBUTTONDOWN = 0x0201;
     public const int WM_LBUTTONUP = 0x0202;
@@ -44,6 +47,7 @@ public static class NativeMethods
     public const int WM_POINTERCAPTURECHANGED = 0x024F;
     public const int WM_HOTKEY = 0x0312;
     public const int WM_DISPLAYCHANGE = 0x007E;
+    public const int WM_POWERBROADCAST = 0x0218;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT { public int X, Y; }
@@ -151,7 +155,10 @@ public static class NativeMethods
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
     [DllImport("user32.dll")] public static extern IntPtr GetCapture();
     [DllImport("user32.dll")] public static extern short GetKeyState(int key);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT pt);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr LoadCursorW(IntPtr instance, IntPtr cursorName);
+    [DllImport("user32.dll")] public static extern IntPtr SetCursor(IntPtr cursor);
 
     // ---- window management ----
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]

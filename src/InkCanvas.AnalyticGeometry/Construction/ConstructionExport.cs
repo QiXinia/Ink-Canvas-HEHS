@@ -47,10 +47,16 @@ public static class ConstructionExport
     {
         var projection = new GeometryProjection(state, Width, Height);
         var text = new StringBuilder($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{Width}\" height=\"{Height}\" viewBox=\"0 0 {Width} {Height}\"><defs><clipPath id=\"view\"><rect width=\"1000\" height=\"750\"/></clipPath></defs><g clip-path=\"url(#view)\" stroke-linecap=\"round\" stroke-linejoin=\"round\">");
-        foreach (var item in state.Objects.Where(item => item.Visible))
+        foreach (var item in state.Objects.Where(evaluation.IsVisible))
         {
             if (!evaluation.Values.TryGetValue(item.Label, out var value) || !value.Defined) continue;
             string color = "#" + (item.Color & 0xFFFFFF).ToString("X6");
+            if (value.TextAnchor is { } anchor)
+            {
+                var position = projection.Project(anchor);
+                text.Append($"<text x=\"{N(position.X)}\" y=\"{N(position.Y + 14)}\" font-family=\"Segoe UI\" font-size=\"14\" fill=\"{color}\">{SecurityElement.Escape(value.Display)}</text>");
+                continue;
+            }
             var fill = new StringBuilder();
             foreach (var face in value.Faces)
             {
@@ -82,7 +88,7 @@ public static class ConstructionExport
     {
         var text = new StringBuilder("solid InkCanvas\n");
         int facets = 0;
-        foreach (var item in state.Objects.Where(item => item.Visible))
+        foreach (var item in state.Objects.Where(evaluation.IsVisible))
         {
             if (!evaluation.Values.TryGetValue(item.Label, out var value) || !value.Defined) continue;
             foreach (var face in value.Faces)
@@ -104,14 +110,70 @@ public static class ConstructionExport
     {
         var projection = new GeometryProjection(state, Width, Height);
         var text = new StringBuilder("\\begin{tikzpicture}[x=0.01cm,y=-0.01cm,line cap=round,line join=round]\n\\clip (0,0) rectangle (1000,750);\n");
-        foreach (var item in state.Objects.Where(item => item.Visible))
+        foreach (var item in state.Objects.Where(evaluation.IsVisible))
         {
             if (!evaluation.Values.TryGetValue(item.Label, out var value) || !value.Defined) continue;
             string color = "c" + item.Id.ToString("N");
             text.Append($"\\definecolor{{{color}}}{{HTML}}{{{item.Color & 0xFFFFFF:X6}}}\n");
+            if (value.TextAnchor is { } anchor)
+                text.Append($"\\node[anchor=north west,text={color}] at ({XY(projection.Project(anchor))}) {{{EscapeLatex(value.Display)}}};\n");
             foreach (var path in projection.Paths(value))
                 text.Append($"\\draw[color={color},line width={N(item.LineWidth * .6)}pt] {string.Join(" -- ", path.Select(point => "(" + XY(point) + ")"))};\n");
         }
         return text.Append("\\end{tikzpicture}\n").ToString();
+    }
+
+    public static string Pstricks(ConstructionSnapshot state, ConstructionEvaluation evaluation)
+    {
+        var projection = new GeometryProjection(state, Width, Height);
+        var text = new StringBuilder("% Requires pstricks and xcolor. Coordinates are in centimeters.\n\\begin{pspicture}(0,-7.5)(10,0)\n\\psclip{\\psframe(0,-7.5)(10,0)}\n");
+        static string Point(Vector2 point) => "(" + N(point.X / 100) + "," + N(-point.Y / 100) + ")";
+        foreach (var item in state.Objects.Where(evaluation.IsVisible))
+        {
+            if (!evaluation.Values.TryGetValue(item.Label, out var value) || !value.Defined) continue;
+            string color = "c" + item.Id.ToString("N");
+            text.Append($"\\definecolor{{{color}}}{{HTML}}{{{item.Color & 0xFFFFFF:X6}}}\n");
+            foreach (var face in value.Faces)
+            {
+                var points = new[] { projection.Project(face.A), projection.Project(face.B), projection.Project(face.C) };
+                text.Append($"\\pspolygon[fillstyle=solid,fillcolor={color},linecolor={color}] {string.Join(" ", points.Select(Point))}\n");
+            }
+            if (value.Kind == GeometryKind.Region)
+                foreach (var path in projection.Paths(value))
+                    if (path.Length > 2) text.Append($"\\pspolygon[fillstyle=solid,fillcolor={color},linecolor={color}] {string.Join(" ", path.Select(Point))}\n");
+            foreach (var path in projection.Paths(value))
+                if (path.Length > 1) text.Append($"\\psline[linecolor={color},linewidth={N(item.LineWidth)}pt] {string.Join(" ", path.Select(Point))}\n");
+            foreach (var point in value.Points)
+                text.Append($"\\psdots[dotsize=4pt,dotstyle=*,linecolor={color},fillcolor={color}] {Point(projection.Project(point))}\n");
+            if (value.TextAnchor is { } anchor)
+                text.Append($"\\rput[tl]{Point(projection.Project(anchor))}{{\\textcolor{{{color}}}{{{EscapeLatex(value.Display)}}}}}\n");
+            if (item.ShowLabel && value.Points.Count > 0)
+            {
+                var position = projection.Project(value.Points[0]) + new Vector2(8, -8);
+                text.Append($"\\rput{Point(position)}{{\\textsf{{{EscapeLatex(item.Label)}}}}}\n");
+            }
+        }
+        return text.Append("\\endpsclip\n\\end{pspicture}\n").ToString();
+    }
+
+    private static string EscapeLatex(string value)
+    {
+        var escaped = new StringBuilder(value.Length);
+        foreach (char character in value)
+        {
+            escaped.Append(character switch
+            {
+                '\\' => "\\textbackslash{}",
+                '{' => "\\{",
+                '}' => "\\}",
+                '%' => "\\%",
+                '&' => "\\&",
+                '_' => "\\_",
+                '#' => "\\#",
+                '$' => "\\$",
+                _ => character.ToString(),
+            });
+        }
+        return escaped.ToString();
     }
 }

@@ -4,7 +4,7 @@ namespace InkCanvas.Ink;
 public interface IGroupedSelectionElement : ISelectionElement
 {
     /// <summary>Empty means the element is independent; non-empty elements share selection gestures.</summary>
-    string SelectionGroupId { get; }
+    string SelectionGroupId { get; set; }
 }
 
 /// <summary>Render contract for a native, editable board text object (never a baked bitmap).</summary>

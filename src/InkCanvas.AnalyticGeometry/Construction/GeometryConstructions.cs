@@ -105,8 +105,7 @@ internal sealed partial class GeometryEvaluator
         int free = Enumerable.Range(0, 6).Single(column => !pivots.Contains(column));
         var coefficients = new double[6]; coefficients[free] = 1;
         for (int i = 0; i < 5; i++) coefficients[pivots[i]] = -matrix[i, free];
-        string[] monomials = { "x^2", "x*y", "y^2", "x", "y", "1" };
-        string equation = string.Join('+', coefficients.Select((coefficient, index) => "(" + ComputerAlgebra.Number(coefficient) + ")*" + monomials[index])) + "=0";
-        return Implicit(equation) with { Display = "过五点圆锥曲线 · " + equation };
+        return ConicFromCoefficients(new(coefficients[0], coefficients[1] / 2, coefficients[2],
+            coefficients[3] / 2, coefficients[4] / 2, coefficients[5]));
     }
 }

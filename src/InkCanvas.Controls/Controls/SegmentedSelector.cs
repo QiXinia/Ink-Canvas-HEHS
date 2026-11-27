@@ -3,10 +3,6 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
-using InkCanvas.Core.Ink;
-using InkCanvas.Core.Theming;
-using Windows.UI;
-using Windows.UI.ViewManagement;
 
 namespace InkCanvas.Controls.Controls;
 
@@ -15,12 +11,6 @@ public sealed class SegmentedSelector : UserControl
 {
     private readonly List<ToggleButton> _buttons = new();
     private int _selectedIndex = -1;
-    private readonly UISettings _systemColors = new();
-    private readonly AccessibilitySettings _accessibility = new();
-    private readonly SolidColorBrush _checkedBackground = new(), _checkedForeground = new();
-    private static readonly string[] CheckedStates = { "Checked", "CheckedPointerOver", "CheckedPressed" };
-    private bool _observingColors;
-
     public SegmentedSelector(IReadOnlyList<string> options, int columns = 0)
     {
         columns = columns > 0 ? columns : options.Count;
@@ -52,47 +42,6 @@ public sealed class SegmentedSelector : UserControl
             _buttons.Add(button);
         }
         Content = row;
-        ActualThemeChanged += (_, _) => RefreshAccent();
-        Loaded += (_, _) =>
-        {
-            if (!_observingColors) { _systemColors.ColorValuesChanged += OnColorsChanged; _observingColors = true; }
-            RefreshAccent();
-        };
-        Unloaded += (_, _) =>
-        {
-            if (_observingColors) _systemColors.ColorValuesChanged -= OnColorsChanged;
-            _observingColors = false;
-        };
-        RefreshAccent();
-    }
-
-    private void OnColorsChanged(UISettings sender, object args) => DispatcherQueue.TryEnqueue(() => { if (IsLoaded) RefreshAccent(); });
-
-    private void RefreshAccent()
-    {
-        if (_accessibility.HighContrast)
-        {
-            foreach (var state in CheckedStates)
-            {
-                Resources.Remove("ToggleButtonBackground" + state);
-                Resources.Remove("ToggleButtonForeground" + state);
-            }
-            return;
-        }
-        ApplyAccent(_systemColors.GetColorValue(ActualTheme == ElementTheme.Dark ? UIColorType.AccentLight2 : UIColorType.Accent));
-    }
-
-    private void ApplyAccent(Color color)
-    {
-        color.A = 255;
-        _checkedBackground.Color = color;
-        var foreground = ColorContrast.Foreground(new InkColor(255, color.R, color.G, color.B));
-        _checkedForeground.Color = Color.FromArgb(255, foreground.R, foreground.G, foreground.B);
-        foreach (var state in CheckedStates)
-        {
-            Resources["ToggleButtonBackground" + state] = _checkedBackground;
-            Resources["ToggleButtonForeground" + state] = _checkedForeground;
-        }
     }
 
     public void SetOptionContent(int index, UIElement content, double minHeight = 0)

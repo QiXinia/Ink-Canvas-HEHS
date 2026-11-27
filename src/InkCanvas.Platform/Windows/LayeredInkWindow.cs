@@ -23,6 +23,10 @@ public readonly record struct OverlayPointer(
     public float TiltX { get; init; }
     public float TiltY { get; init; }
     public bool IsIntermediate { get; init; }
+    public bool BarrelButton { get; init; }
+    public bool SecondaryBarrelButton { get; init; }
+    public bool Inverted { get; init; }
+    public bool EraserButton { get; init; }
 }
 
 /// <summary>
@@ -42,9 +46,8 @@ public readonly record struct OverlayPointer(
 public sealed class LayeredInkWindow : IDisposable
 {
     private const string ClassName = "InkCanvasOverlayWindow";
-    private const uint SWP_NOZORDER = 0x0004;
-    private const uint SWP_NOACTIVATE = 0x0010;
-    private const uint SWP_NOOWNERZORDER = 0x0200;
+    // Shared system cursor follows the user's cursor scheme and is owned by Windows.
+    private static readonly IntPtr ArrowCursor = NativeMethods.LoadCursorW(IntPtr.Zero, new IntPtr(NativeMethods.IDC_ARROW));
     private static bool _classRegistered;
     private static bool _mouseInPointerEnabled;
     private static bool _mouseAsPointer;
@@ -138,7 +141,7 @@ public sealed class LayeredInkWindow : IDisposable
                     lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc),
                     hInstance = Marshal.GetHINSTANCE(typeof(LayeredInkWindow).Module),
                     lpszClassName = ClassName,
-                    hCursor = IntPtr.Zero,
+                    hCursor = ArrowCursor,
                     hbrBackground = IntPtr.Zero,
                 };
                 if (NativeMethods.RegisterClassW(ref wc) == 0)
@@ -246,8 +249,8 @@ public sealed class LayeredInkWindow : IDisposable
     public int Width { get; private set; }
     public int Height { get; private set; }
 
-    /// <summary>Logical DIPs per physical screen pixel on the monitor this overlay covers.</summary>
-    public float DpiScale { get; private set; } = 1f;
+    /// <summary>Stable physical pixels per canvas unit, shared across the desktop viewport.</summary>
+    public float DpiScale { get; } = 1f;
 
     /// <summary>Writable premultiplied-BGRA surface, <c>Width*Height*4</c> bytes, top-down.</summary>
     public IntPtr PixelBuffer => _bits;
@@ -319,6 +322,7 @@ public sealed class LayeredInkWindow : IDisposable
     public event Action<int> HotkeyPressed;
 
     public event Action DisplaySettingsChanged;
+    public event Action PowerStateChanged;
 
     public void CancelInput()
     {
@@ -363,6 +367,19 @@ public sealed class LayeredInkWindow : IDisposable
     public bool AllowsInput(float screenX, float screenY) => _inputAreas is null || _inputAreas.Any(area =>
         screenX >= area.X && screenY >= area.Y && screenX < area.X + area.Width && screenY < area.Y + area.Height);
 
+    /// <summary>Resize the physical viewport while retaining its coordinate scale for existing ink.</summary>
+    public void SetBounds(int x, int y, int width, int height)
+    {
+        if (_disposed || (X == x && Y == y && Width == width && Height == height)) return;
+        if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
+        _ = checked(width * height * 4);
+        CancelInput();
+        if (_dib != IntPtr.Zero) CreatePixelBuffer(width, height);
+        X = x; Y = y; Width = width; Height = height;
+        if (_inputAreas is not null) SetInputAreas(_inputAreas, force: true);
+        NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, x, y, width, height,
+            NativeMethods.SWP_NOACTIVATE | 0x0004 /* SWP_NOZORDER */);
+    }
 
     public void Show()
     {
@@ -377,84 +394,6 @@ public sealed class LayeredInkWindow : IDisposable
         if (!IsVisible) return;
         NativeMethods.ShowWindow(_hwnd, NativeMethods.SW_HIDE);
         IsVisible = false;
-    }
-
-    /// <summary>
-    /// Repositions and/or resizes the overlay without touching click-through, topmost or
-    /// visibility. The DIB surface is only reallocated when the size actually changes, and
-    /// <see cref="PixelBuffer"/> always points at the current allocation afterwards.
-    /// </summary>
-    public void SetBounds(int x, int y, int width, int height)
-    {
-        if (_disposed || _hwnd == IntPtr.Zero) return;
-        if (width <= 0 || height <= 0) return;
-        _ = checked(width * height * 4);
-
-        bool sizeChanged = width != Width || height != Height;
-        if (sizeChanged && !RebuildSurface(width, height)) return;
-
-        bool boundsChanged = x != X || y != Y || sizeChanged;
-        if (boundsChanged)
-        {
-            CancelInput();
-            X = x; Y = y; Width = width; Height = height;
-            if (_inputAreas is not null) SetInputAreas(_inputAreas, force: true);
-            NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, x, y, width, height,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-        }
-
-        uint dpi = NativeMethods.GetDpiForWindow(_hwnd);
-        DpiScale = dpi == 0 ? 1.0f : dpi / 96.0f;
-    }
-
-    /// <summary>Replaces the bitmap-backed drawing surface; leaves state untouched on failure.</summary>
-    private bool RebuildSurface(int width, int height)
-    {
-        IntPtr screen = NativeMethods.GetDC(IntPtr.Zero);
-        try
-        {
-            if (_memDc == IntPtr.Zero)
-                _memDc = NativeMethods.CreateCompatibleDC(screen);
-
-            if (_memDc == IntPtr.Zero) return false;
-
-            var bi = new NativeMethods.BITMAPINFO
-            {
-                biSize = Marshal.SizeOf<NativeMethods.BITMAPINFO>(),
-                biWidth = width,
-                biHeight = -height,   // top-down
-                biPlanes = 1,
-                biBitCount = 32,
-                biCompression = 0,
-            };
-
-            // Allocate the replacement first so a failure keeps the current surface usable.
-            IntPtr newDib = NativeMethods.CreateDIBSection(screen, ref bi, 0, out IntPtr newBits, IntPtr.Zero, 0);
-            if (newDib == IntPtr.Zero || newBits == IntPtr.Zero)
-            {
-                if (newDib != IntPtr.Zero) NativeMethods.DeleteObject(newDib);
-                return false;
-            }
-
-            if (_oldBitmap != IntPtr.Zero)
-                NativeMethods.SelectObject(_memDc, _oldBitmap);
-            if (_dib != IntPtr.Zero)
-                NativeMethods.DeleteObject(_dib);
-
-            _dib = newDib;
-            _bits = newBits;
-            IntPtr previous = NativeMethods.SelectObject(_memDc, _dib);
-            if (previous != IntPtr.Zero) _oldBitmap = previous;
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
-        {
-            NativeMethods.ReleaseDC(IntPtr.Zero, screen);
-        }
     }
 
     /// <summary>Push the current pixel buffer to the screen with per-pixel alpha.</summary>
@@ -484,10 +423,24 @@ public sealed class LayeredInkWindow : IDisposable
     {
         switch (msg)
         {
+            case NativeMethods.WM_SETCURSOR when (l.ToInt64() & 0xFFFF) == NativeMethods.HTCLIENT && !ClickThrough:
+                // A no-activate overlay must replace the cursor inherited from the window
+                // beneath it, which may still be displaying an application-starting spinner.
+                NativeMethods.SetCursor(ArrowCursor);
+                return new IntPtr(1);
             case NativeMethods.WM_DISPLAYCHANGE:
             case 0x02E0: // WM_DPICHANGED. The shared ink viewport deliberately keeps a stable scale.
             case 0x001A: // WM_SETTINGCHANGE, including taskbar / work-area changes.
             case 0x0219 when w.ToInt64() is 0x0007 or 0x0018: // WM_DEVICECHANGE, device nodes / dock configuration.
+                DisplaySettingsChanged?.Invoke();
+                break;
+            case NativeMethods.WM_POWERBROADCAST when w.ToInt64() == 0x0004: // PBT_APMSUSPEND
+                CancelInput();
+                PowerStateChanged?.Invoke();
+                break;
+            case NativeMethods.WM_POWERBROADCAST when w.ToInt64() is 0x0006 or 0x0007 or 0x0012: // Resume
+                CancelInput();
+                PowerStateChanged?.Invoke();
                 DisplaySettingsChanged?.Invoke();
                 break;
             case NativeMethods.WM_MOUSEACTIVATE:
@@ -656,6 +609,10 @@ public sealed class LayeredInkWindow : IDisposable
                         HasPressure = (pen.penMask & 1) != 0,
                         TiltX = (pen.penMask & 4) != 0 ? Math.Clamp(pen.tiltX, -89, 89) : 0,
                         TiltY = (pen.penMask & 8) != 0 ? Math.Clamp(pen.tiltY, -89, 89) : 0,
+                        BarrelButton = (pen.penFlags & 1) != 0,
+                        SecondaryBarrelButton = (pen.pointerInfo.pointerFlags & 0x0040) != 0,
+                        Inverted = (pen.penFlags & 2) != 0,
+                        EraserButton = (pen.penFlags & 4) != 0,
                     };
                     PointerMove?.Invoke(point);
                 }
@@ -723,7 +680,7 @@ public sealed class LayeredInkWindow : IDisposable
         var screen = ScreenAt(info.ptPixelLocation.X, info.ptPixelLocation.Y);
 
         float pressure = 0.5f, cw = 0, ch = 0, tiltX = 0, tiltY = 0;
-        bool hasPressure = false;
+        bool hasPressure = false, barrel = false, inverted = false, eraser = false;
         var kind = OverlayPointerKind.Mouse;
 
         if (info.pointerType == NativeMethods.POINTER_INPUT_TYPE_PEN)
@@ -732,6 +689,9 @@ public sealed class LayeredInkWindow : IDisposable
             if (NativeMethods.GetPointerPenInfo(id, out var pen))
             {
                 hasPressure = (pen.penMask & 1) != 0;
+                barrel = (pen.penFlags & 1) != 0;
+                inverted = (pen.penFlags & 2) != 0;
+                eraser = (pen.penFlags & 4) != 0;
                 pressure = hasPressure ? Math.Clamp(pen.pressure / 1024f, 0f, 1f) : .5f;
                 if ((pen.penMask & 4) != 0) tiltX = Math.Clamp(pen.tiltX, -89, 89);
                 if ((pen.penMask & 8) != 0) tiltY = Math.Clamp(pen.tiltY, -89, 89);
@@ -751,7 +711,9 @@ public sealed class LayeredInkWindow : IDisposable
         var pt = info.ptPixelLocation;
         sample = new OverlayPointer(id, (pt.X - X) / DpiScale, (pt.Y - Y) / DpiScale,
             pressure, cw, ch, kind, info.dwTime, NativeMethods.GetKeyState(0x10) < 0, NativeMethods.GetKeyState(0x11) < 0)
-            { InputSurface = screen.Handle.ToInt64(), HasPressure = hasPressure, TiltX = tiltX, TiltY = tiltY };
+            { InputSurface = screen.Handle.ToInt64(), HasPressure = hasPressure, TiltX = tiltX, TiltY = tiltY,
+                BarrelButton = barrel, SecondaryBarrelButton = (info.pointerFlags & 0x0040) != 0,
+                Inverted = inverted, EraserButton = eraser };
         return true;
     }
 

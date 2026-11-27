@@ -1,4 +1,4 @@
-using InkCanvas.Controls.Theming;
+﻿using InkCanvas.Controls.Theming;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -29,7 +29,7 @@ public sealed class PopupHeader : Grid
         _pin = new ToggleButton { Width = 36, Height = 36, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0),
             BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4), Visibility = canPin ? Visibility.Visible : Visibility.Collapsed };
         _close = new Button { Width = 36, Height = 36, MinWidth = 0, MinHeight = 0, Padding = new Thickness(0),
-            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4), Content = Icon("\uE8BB") };
+            BorderThickness = new Thickness(0), CornerRadius = new CornerRadius(4), Content = Icon("\uF36A") };
         AutomationProperties.SetName(_pin, "固定面板");
         AutomationProperties.SetName(_close, "关闭面板");
         ToolTipService.SetToolTip(_close, "关闭");
@@ -38,6 +38,7 @@ public sealed class PopupHeader : Grid
         _close.Click += (_, _) => CloseRequested?.Invoke();
         SetColumn(_pin, 1); SetColumn(_close, 2);
         Children.Add(_title); Children.Add(_pin); Children.Add(_close);
+        ActualThemeChanged += (_, _) => _title.Foreground = ThemeBrushes.Resolve(this, "IcTextPrimaryBrush");
         ApplyTheme(theme);
         RefreshPin();
     }
@@ -46,18 +47,18 @@ public sealed class PopupHeader : Grid
 
     public void ApplyTheme(int theme)
     {
-        RequestedTheme = theme == 2 ? ElementTheme.Dark : ElementTheme.Light;
-        _title.Foreground = _pin.Foreground = _close.Foreground = PopupBrushes.Foreground(theme);
+        RequestedTheme = theme switch { 1 => ElementTheme.Light, 2 => ElementTheme.Dark, _ => ElementTheme.Default };
+        _title.Foreground = ThemeBrushes.Resolve(this, "IcTextPrimaryBrush");
         _pin.Background = _close.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
     }
 
     private void OnPinChanged() { RefreshPin(); PinChanged?.Invoke(); }
     private void RefreshPin()
     {
-        _pin.Content = Icon(IsPinned ? "\uE77A" : "\uE718");
+        _pin.Content = Icon(IsPinned ? "\uF60E" : "\uF60C");
         ToolTipService.SetToolTip(_pin, IsPinned ? "取消固定，点击外部自动收起" : "固定面板");
         AutomationProperties.SetItemStatus(_pin, IsPinned ? "已固定" : "自动收起");
     }
     private static FontIcon Icon(string glyph) => new() { Glyph = glyph, FontSize = 14,
-        FontFamily = new FontFamily("ms-appx:///Assets/SegoeFluentIcons.ttf#Segoe Fluent Icons") };
+        FontFamily = IconFontStyle.Font };
 }

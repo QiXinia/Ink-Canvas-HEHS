@@ -12,7 +12,8 @@ public sealed partial class ShellController
     private event Action CanvasToolTargetChanged;
     private sealed class CanvasToolsHost(ShellController shell) : ICanvasToolsHost
     {
-        public CanvasToolTarget CaptureTarget() => new(shell.ActiveController, shell.DocumentActive ? "document" : shell._board is null ? "screen" : "board", !shell.DocumentActive || shell._documentWorkspace.CanEdit);
+        public IAiDocumentBridge DocumentAi => shell._documentAi;
+        public CanvasToolTarget CaptureTarget() => new(shell.ActiveController, shell.DocumentActive ? "document" : shell._sideBoardTarget ? "sideboard" : shell._board is null ? "screen" : "board", !shell.DocumentActive || shell._documentWorkspace.CanEdit);
         public bool IsCurrent(CanvasToolTarget target) => !shell._disposed && !shell._exiting && ReferenceEquals(target.Controller, shell.ActiveController);
         public event Action TargetChanged { add => shell.CanvasToolTargetChanged += value; remove => shell.CanvasToolTargetChanged -= value; }
         public void ConfigureWindow(Window window, int width = 1180, int height = 880) => new DocumentHost(shell).ConfigureWindow(window, width, height);
@@ -27,11 +28,12 @@ public sealed partial class ShellController
             if (!IsCurrent(target) || !target.CanEdit || strokes.Count == 0 || target.Controller.HasActiveInteraction || target.Controller.Playback is not null) return false;
             var controller = target.Controller;
             var old = (replaced ?? Array.Empty<InkStroke>()).ToArray();
-            if (old.Any(stroke => !controller.Document.Strokes.Contains(stroke))) return false;
+            int inkLayer = controller.ActiveInkLayer;
+            if (old.Any(stroke => stroke.InkLayerIndex != inkLayer || !controller.Document.Strokes.Contains(stroke))) return false;
             var oldSet = old.ToHashSet();
             var indices = controller.Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke)).Where(item => oldSet.Contains(item.Stroke)).ToArray();
             long layer = old.Length > 0 ? old.Min(stroke => stroke.LayerOrder ?? 0) : controller.NextLayerOrder();
-            foreach (var stroke in strokes) stroke.LayerOrder = layer;
+            foreach (var stroke in strokes) { stroke.InkLayerIndex = inkLayer; stroke.LayerOrder = layer; }
             Apply();
             controller.History.Push(new DelegateAction(old.Length > 0 ? "修改解析几何" : "插入解析几何", Apply, () =>
             {
@@ -41,7 +43,9 @@ public sealed partial class ShellController
             void Apply()
             {
                 controller.ClearSelection(); controller.Document.RemoveAll(old); controller.Document.AddRange(strokes);
-                controller.Tool = InkTool.Select; controller.Selection.AddRange(strokes); controller.NotifyElementsChanged();
+                controller.Tool = InkTool.Select;
+                if (controller.ActiveInkLayer == inkLayer) controller.Selection.AddRange(strokes);
+                controller.NotifyElementsChanged();
             }
         }
     }

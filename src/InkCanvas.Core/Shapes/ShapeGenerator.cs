@@ -65,6 +65,15 @@ public enum ShapeKind
     ConeFrustum,
     /// <summary>Pointer down sets the origin, pointer up sets the two axis extents.</summary>
     CoordinateTwoPoint,
+    Polygon,
+    Sector,
+    SquareFrustum,
+    RoundedRectangle,
+    SuperRoundedRectangle,
+    RoundedRectangleRing,
+    TriangularFrustum,
+    PentagonalFrustum,
+    HexagonalFrustum,
 }
 
 /// <summary>
@@ -81,6 +90,8 @@ public static partial class ShapeGenerator
         or ShapeKind.HyperbolaWithAsymptotes or ShapeKind.HyperbolaWithFociAndAsymptotes;
     public static bool HasHyperbolaFoci(ShapeKind kind) => kind is ShapeKind.HyperbolaWithFoci or ShapeKind.HyperbolaWithFociAndAsymptotes;
     public static bool HasHyperbolaAsymptotes(ShapeKind kind) => kind is ShapeKind.HyperbolaWithAsymptotes or ShapeKind.HyperbolaWithFociAndAsymptotes;
+    public static bool IsRoundedRectangle(ShapeKind kind) => kind is ShapeKind.RoundedRectangle
+        or ShapeKind.SuperRoundedRectangle or ShapeKind.RoundedRectangleRing;
     /// <summary>Full-ellipse sampling density kept from the verified port (sub-pixel chord error).</summary>
     private const int FullEllipseSegments = 72;
 
@@ -101,8 +112,27 @@ public static partial class ShapeGenerator
 
     public static List<InkStroke> Generate(ShapeKind kind, Vector2 start, Vector2 end, StrokeAttributes attrs)
     {
+        if (kind == ShapeKind.Polygon) return GeneratePolygon(5, start, end, attrs);
+        if (kind == ShapeKind.Sector || IsRoundedRectangle(kind))
+            return ShapeDefinition.FromBounds(kind, start, end, []).Generate(attrs ?? new(), Guid.NewGuid());
         var contours = GenerateContours(kind, start, end, attrs);
         return ShapeDefinition.Attach(contours, ShapeDefinition.FromBounds(kind, start, end, contours));
+    }
+
+    public static List<InkStroke> GeneratePolygon(int count, Vector2 start, Vector2 end, StrokeAttributes attrs)
+    {
+        var radius = Vector2.Abs(end - start) / 2;
+        if (radius.X < .01f || radius.Y < .01f) return new();
+        var center = (start + end) / 2;
+        count = Math.Clamp(count, 3, PolygonGeometry.MaximumVertices);
+        var vertices = new Vector2[count];
+        float phase = count == 4 ? -3 * MathF.PI / 4 : -MathF.PI / 2;
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            var (sin, cos) = MathF.SinCos(phase + MathF.Tau * i / vertices.Length);
+            vertices[i] = center + new Vector2(cos, sin) * radius;
+        }
+        return ShapeDefinition.FromPolygon(ShapeKind.Polygon, vertices).Generate(attrs, Guid.NewGuid());
     }
 
     internal static List<InkStroke> GenerateContours(ShapeKind kind, Vector2 start, Vector2 end, StrokeAttributes attrs)
@@ -120,6 +150,10 @@ public static partial class ShapeGenerator
             case ShapeKind.PentagonalPrism:
             case ShapeKind.HexagonalPrism:
             case ShapeKind.SquarePyramid:
+            case ShapeKind.SquareFrustum:
+            case ShapeKind.TriangularFrustum:
+            case ShapeKind.PentagonalFrustum:
+            case ShapeKind.HexagonalFrustum:
                 result = GenerateSolidBase(kind, start, end, a);
                 break;
             case ShapeKind.Sphere:

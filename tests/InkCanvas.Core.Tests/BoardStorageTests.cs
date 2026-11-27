@@ -2,11 +2,16 @@ using System.IO.Compression;
 using System.Numerics;
 using System.Text.Json;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Features.Board;
 using Xunit;
 
 namespace InkCanvas.Core.Tests;
 
+[CollectionDefinition("Archive memory accounting", DisableParallelization = true)]
+public sealed class ArchiveMemoryAccountingCollection { }
+
+[Collection("Archive memory accounting")]
 public sealed class BoardStorageTests : IDisposable
 {
     private readonly string _directory = Directory.CreateTempSubdirectory("inkcanvas-board-storage-").FullName;
@@ -15,6 +20,74 @@ public sealed class BoardStorageTests : IDisposable
     private BoardService Board()
     {
         var board = new BoardService(); _boards.Add(board); return board;
+    }
+
+    [Fact]
+    public async Task NativeTextAndFormulaReplaceInkAtomicallyAndRoundTripOnSideBoard()
+    {
+        var board = Board();
+        var side = board.EnableSideBoard();
+        var stroke = new InkStroke(new StrokeAttributes());
+        stroke.AddPoint(20, 30); stroke.AddPoint(100, 110); stroke.Complete();
+        side.Current.Document.Add(stroke);
+        var text = new BoardTextObject { Content = "面积", GroupId = "lesson" };
+        var formula = new BoardFormulaObject { Latex = @"\frac{1}{2}bh", GroupId = "lesson" };
+
+        Assert.True(side.WriteNativeBoardObjects(new[] { text }, new[] { formula }, new[] { stroke }));
+        Assert.Equal(2, side.Current.SelectedElements.Count);
+        Assert.Empty(side.CurrentImages);
+        Assert.Empty(side.Current.Document.Strokes);
+        Assert.True(side.Current.History.Undo());
+        Assert.Same(stroke, Assert.Single(side.Current.Document.Strokes));
+        Assert.Empty(side.CurrentTextObjects);
+        Assert.Empty(side.CurrentFormulaObjects);
+        Assert.True(side.Current.History.Redo());
+
+        string path = FilePath();
+        await board.SaveRecoveryAsync(path);
+        var restored = Board();
+        await restored.LoadBoardAsync(path);
+        var savedSide = restored.SideBoard;
+        Assert.Equal(text.Id, Assert.Single(savedSide.CurrentTextObjects).Id);
+        var savedFormula = Assert.Single(savedSide.CurrentFormulaObjects);
+        Assert.Equal(formula.Id, savedFormula.Id);
+        Assert.Equal(formula.Latex, savedFormula.Latex);
+        Assert.Equal(text.GroupId, savedFormula.GroupId);
+        Assert.Empty(savedSide.CurrentImages);
+
+        Assert.True(savedSide.DuplicateCurrentPage());
+        Assert.NotEqual(text.Id, Assert.Single(savedSide.CurrentTextObjects).Id);
+        Assert.NotEqual(text.GroupId, Assert.Single(savedSide.CurrentFormulaObjects).GroupId);
+        Assert.Equal(savedSide.CurrentTextObjects[0].GroupId, savedSide.CurrentFormulaObjects[0].GroupId);
+    }
+
+    [Fact]
+    public async Task SideBoardSurvivesRecoveryWithSharedMediaAndClearsOnVersionThreeOpen()
+    {
+        var board = Board();
+        var image = new BoardImageAsset { Data = new byte[] { 1, 2, 3 }, Width = 120, Height = 90 };
+        board.AddImage(image);
+        var side = board.EnableSideBoard();
+        side.InsertPageAfterCurrent();
+        side.AddImage(image.Copy(preserveId: false, copyData: false));
+
+        string package = FilePath();
+        await board.SaveRecoveryAsync(package);
+        using (var zip = ZipFile.OpenRead(package))
+            Assert.Single(zip.Entries.Where(entry => entry.FullName.StartsWith("media/")));
+
+        var restored = Board();
+        await restored.LoadBoardAsync(package);
+        var restoredSide = restored.SideBoard;
+        Assert.Equal(1, restoredSide.CurrentIndex);
+        Assert.Same(restored.CurrentImages.Single().Data, restoredSide.CurrentImages.Single().Data);
+
+        string oldPackage = FilePath("board-v3.icink");
+        await Board().SaveRecoveryAsync(oldPackage);
+        await restored.LoadBoardAsync(oldPackage);
+        Assert.Same(restoredSide, restored.SideBoard);
+        Assert.False(restoredSide.HasContent);
+        Assert.Equal(1, restoredSide.PageCount);
     }
 
     [Fact]
@@ -38,7 +111,7 @@ public sealed class BoardStorageTests : IDisposable
             using var reader = new StreamReader(archive.GetEntry("board.json")!.Open());
             string manifest = await reader.ReadToEndAsync();
             Assert.DoesNotContain("\"Data\"", manifest); Assert.DoesNotContain("\"PosterData\"", manifest);
-            Assert.Contains("\"Version\":4", manifest);
+            Assert.Contains("\"Version\":3", manifest);
         }
         var loaded = Board(); await loaded.LoadBoardAsync(path);
         Assert.Equal(2, loaded.PageCount); Assert.Equal(BoardBackground.Grid, loaded.Background); Assert.Equal(56, loaded.GridSpacing);
@@ -205,7 +278,7 @@ public sealed class BoardStorageTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var board in _boards) foreach (var page in board.Pages) page.Dispose();
+        foreach (var board in _boards) foreach (var page in board.DocumentPages) page.Dispose();
         Directory.Delete(_directory, true);
     }
 }

@@ -26,27 +26,18 @@ public sealed class NavigationGuard
         get { lock (_sync) return _lastExitMs; }
     }
 
-    public bool TryEnter(long nowMs)
-    {
-        return TryEnter(nowMs, out _);
-    }
+    public bool TryEnter(long nowMs) => TryEnter(nowMs, out _);
 
-    /// <summary>
-    /// Same contract as <see cref="TryEnter(long)"/>, but also reports how long the caller has to
-    /// wait before a retry can succeed. Zero means the guard is currently held, so no retry is
-    /// meaningful. Callers that want a debounced request delivered instead of dropped use this
-    /// value to schedule exactly one retry.
-    /// </summary>
-    public bool TryEnter(long nowMs, out long retryAfterMs)
+    public bool TryEnter(long nowMs, out long retryAfter)
     {
         lock (_sync)
         {
-            retryAfterMs = 0;
+            retryAfter = 0;
             if (_held) return false;
             if (_lastEnterMs != long.MinValue)
             {
-                long remaining = _minIntervalMs - (nowMs - _lastEnterMs);
-                if (remaining > 0) { retryAfterMs = remaining; return false; }
+                retryAfter = Math.Max(0, _minIntervalMs - (nowMs - _lastEnterMs));
+                if (retryAfter > 0) return false;
             }
             _held = true;
             _lastEnterMs = nowMs;

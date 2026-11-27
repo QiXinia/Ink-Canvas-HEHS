@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.IO.Compression;
 using InkCanvas.Core.Ink;
 
@@ -49,7 +50,7 @@ public static class PdfInkCodec
         if (output.Length > 48 * 1024 * 1024) throw new InvalidDataException("PDF ink metadata is too large.");
         return output.ToArray();
     }
-    public static IReadOnlyList<InkStroke> Decode(byte[] compressed)
+    public static IReadOnlyList<InkStroke> Decode(byte[] compressed, CancellationToken token = default)
     {
         if (compressed is null || compressed.Length > 48 * 1024 * 1024) throw new InvalidDataException("PDF ink metadata is too large.");
         using var input = new MemoryStream(compressed, false);
@@ -59,9 +60,12 @@ public static class PdfInkCodec
         if (magic != Magic && magic != PressureMagic && magic != ShapeMagic && magic != LegacyMagic) throw new InvalidDataException("Unsupported PDF ink metadata.");
         int count = reader.ReadInt32();
         if (count < 0 || count > 100_000) throw new InvalidDataException("Invalid PDF ink count.");
-        var result = new List<InkStroke>(); int total = 0, sourceBytes = 0;
+        var result = new List<InkStroke>(count); int total = 0, sourceBytes = 0;
+        bool tabletData = magic is Magic or PressureMagic;
+        Span<byte> pointBuffer = stackalloc byte[29 * 256];
         for (int i = 0; i < count; i++)
         {
+            token.ThrowIfCancellationRequested();
             var idBytes = reader.ReadBytes(16); if (idBytes.Length != 16) throw new EndOfStreamException();
             var id = new Guid(idBytes); long? layer = reader.ReadBoolean() ? reader.ReadInt64() : null;
             bool shape = reader.ReadBoolean();
@@ -94,27 +98,47 @@ public static class PdfInkCodec
             int pointCount = reader.ReadInt32();
             if (pointCount <= 0 || pointCount > MaximumPoints || (total += pointCount) > MaximumPoints) throw new InvalidDataException("PDF ink point limit exceeded.");
             var points = new InkPoint[pointCount];
-            for (int j = 0; j < points.Length; j++)
-            {
-                float x = reader.ReadSingle(), y = reader.ReadSingle(), pressure = reader.ReadSingle(), width = reader.ReadSingle(), time = reader.ReadSingle();
-                if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(pressure) || !float.IsFinite(width) || !float.IsFinite(time)
-                    || Math.Abs(x) > 10_000_000 || Math.Abs(y) > 10_000_000 || width is < 0 or > 1_000_000) throw new InvalidDataException("Invalid PDF ink point.");
-                points[j] = new InkPoint(x, y, pressure, width, time);
-                if (magic == Magic || magic == PressureMagic)
-                {
-                    points[j].HasPressure = reader.ReadBoolean();
-                    points[j].TiltX = reader.ReadSingle(); points[j].TiltY = reader.ReadSingle();
-                    if (!float.IsFinite(points[j].TiltX) || !float.IsFinite(points[j].TiltY)
-                        || Math.Abs(points[j].TiltX) > 180 || Math.Abs(points[j].TiltY) > 180)
-                        throw new InvalidDataException("Invalid pen tilt.");
-                }
-            }
+            ReadPoints(zlib, points, pointBuffer, tabletData, token);
             var stroke = new InkStroke(attributes) { Id = id, LayerOrder = layer, IsRecognizedShape = shape, ShapeSource = source };
             stroke.RestorePoints(points); stroke.ImportObjectFrame(frame); stroke.Complete(); result.Add(stroke);
         }
         if (zlib.ReadByte() != -1) throw new InvalidDataException("Unexpected PDF ink data.");
         ShapeSource.ShareDefinitions(result);
         return result;
+    }
+
+    private static void ReadPoints(Stream stream, Span<InkPoint> points, Span<byte> buffer, bool tabletData, CancellationToken token)
+    {
+        int pointSize = tabletData ? 29 : 20;
+        while (!points.IsEmpty)
+        {
+            token.ThrowIfCancellationRequested();
+            int count = Math.Min(256, points.Length);
+            var bytes = buffer[..(count * pointSize)];
+            stream.ReadExactly(bytes);
+            for (int index = 0; index < count; index++, bytes = bytes[pointSize..])
+            {
+                float x = BinaryPrimitives.ReadSingleLittleEndian(bytes);
+                float y = BinaryPrimitives.ReadSingleLittleEndian(bytes[4..]);
+                float pressure = BinaryPrimitives.ReadSingleLittleEndian(bytes[8..]);
+                float width = BinaryPrimitives.ReadSingleLittleEndian(bytes[12..]);
+                float time = BinaryPrimitives.ReadSingleLittleEndian(bytes[16..]);
+                if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(pressure) || !float.IsFinite(width) || !float.IsFinite(time)
+                    || Math.Abs(x) > 10_000_000 || Math.Abs(y) > 10_000_000 || width is < 0 or > 1_000_000) throw new InvalidDataException("Invalid PDF ink point.");
+                var point = new InkPoint(x, y, pressure, width, time);
+                if (tabletData)
+                {
+                    point.HasPressure = bytes[20] != 0;
+                    point.TiltX = BinaryPrimitives.ReadSingleLittleEndian(bytes[21..]);
+                    point.TiltY = BinaryPrimitives.ReadSingleLittleEndian(bytes[25..]);
+                    if (!float.IsFinite(point.TiltX) || !float.IsFinite(point.TiltY)
+                        || Math.Abs(point.TiltX) > 180 || Math.Abs(point.TiltY) > 180)
+                        throw new InvalidDataException("Invalid pen tilt.");
+                }
+                points[index] = point;
+            }
+            points = points[count..];
+        }
     }
     private static void WriteText(BinaryWriter writer, string value, int limit, ref int total)
     {

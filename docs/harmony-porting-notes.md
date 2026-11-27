@@ -1,5 +1,7 @@
 # HarmonyOS 移植说明（进行中）
 
+交互需求提示与当前源码入口见[鸿蒙代码参考](code-reference/ai-assisted-development.md)。本文保留早期移植阶段的原始状态与历史验证范围。
+
 更新时间：2026-11-18（Phase A 执行中）
 设计规格：`docs/superpowers/specs/2026-11-18-harmonyos-port-design.md`
 实施计划：`docs/superpowers/plans/2026-11-18-harmonyos-phase-a-foundation.md`

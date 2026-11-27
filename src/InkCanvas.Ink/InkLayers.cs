@@ -10,6 +10,51 @@ public sealed partial class InkController
     private bool _drawingOrderDirty = true;
     public long LayerVersion { get; private set; }
     public event Action LayersChanged;
+    private int _activeInkLayer;
+    public int ActiveInkLayer => _activeInkLayer < Document.InkLayerCount ? _activeInkLayer : 0;
+    public event Action ActiveInkLayerChanged;
+    public bool HasInkAboveActiveLayer => Document.InkLayerCount > 1
+        && DrawingObjects.Count > 0 && DrawingObjects[^1].InkLayerIndex > ActiveInkLayer;
+
+    public bool TryCreateInkLayer()
+    {
+        int layer = Document.InkLayerCount;
+        if (layer >= InkStroke.MaximumInkLayers || HasActiveInteraction || Playback is not null) return false;
+        using (Document.DeferNotifications())
+        {
+            Document.RestoreInkLayers(layer + 1);
+            return TrySetActiveInkLayer(layer);
+        }
+    }
+
+    public bool TrySetActiveInkLayer(int layer)
+    {
+        if (layer < 0 || layer >= Document.InkLayerCount || HasActiveInteraction || Playback is not null) return false;
+        if (_activeInkLayer == layer) return true;
+        FinishDotAnimations();
+        _activeInkLayer = layer;
+        ClearSelection();
+        ActiveInkLayerChanged?.Invoke();
+        return true;
+    }
+
+    private bool InActiveInkLayer(InkStroke stroke) => stroke.InkLayerIndex == ActiveInkLayer;
+
+    public void ClearCurrentInkLayer()
+    {
+        if (Document.InkLayerCount == 1) { Clear(); return; }
+        if (HasActiveInteraction) return;
+        EndPlayback();
+        ClearSelection();
+        var strokes = Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => InActiveInkLayer(item.Stroke)).ToArray();
+        if (strokes.Length == 0) return;
+        var targets = strokes.Select(item => item.Stroke).ToArray();
+        Document.RemoveAll(targets);
+        History.Push(new DelegateAction("clear ink layer", () => Document.RemoveAll(targets), () => Document.InsertRange(strokes)));
+        Cleared?.Invoke();
+        Invalidated?.Invoke();
+    }
 
     public IReadOnlyList<DrawingObject> DrawingObjects
     {
@@ -20,7 +65,7 @@ public sealed partial class InkController
                 var elements = GetSelectableElements?.Invoke().Where(element => element.IsPresent)
                     .Select(element => new DrawingObject(null, element)) ?? Enumerable.Empty<DrawingObject>();
                 _drawingObjects = elements.Concat(Document.Strokes.Select(stroke => new DrawingObject(stroke, null)))
-                    .OrderBy(item => item.SortOrder).ToArray();
+                    .OrderBy(item => item.InkLayerIndex).ThenBy(item => item.SortOrder).ToArray();
                 _drawingOrderDirty = false;
             }
             return _drawingObjects;
@@ -31,7 +76,8 @@ public sealed partial class InkController
     {
         var objects = DrawingObjects;
         if (objects.Count == 0) return 0;
-        if (objects.Any(item => !item.LayerOrder.HasValue) || objects[^1].LayerOrder >= long.MaxValue - objects.Count - 1)
+        long highestOrder = objects.Max(item => item.LayerOrder ?? long.MaxValue);
+        if (highestOrder >= long.MaxValue - objects.Count - 1)
         {
             for (int i = 0; i < objects.Count; i++)
             {
@@ -40,7 +86,7 @@ public sealed partial class InkController
             }
             return objects.Count;
         }
-        return objects[^1].LayerOrder.Value + 1;
+        return highestOrder + 1;
     }
 
     private bool IsSelectedObject(DrawingObject item) => item.Stroke is not null
@@ -52,6 +98,7 @@ public sealed partial class InkController
         for (int i = DrawingObjects.Count - 1; i >= 0; i--)
         {
             var item = DrawingObjects[i];
+            if (item.InkLayerIndex != ActiveInkLayer) continue;
             if (item.Element is not null && item.Element.Frame.Contains(world, Matrix3x2.Identity)) return item;
             if (item.Stroke is { } stroke && stroke.Bounds.Inflate(radius).Contains(world)
                 && stroke.DistanceTo(world) <= radius + stroke.HitRadius) return item;
@@ -68,6 +115,7 @@ public sealed partial class InkController
         bool forward = action is LayerAction.BringToFront or LayerAction.MoveForward;
         foreach (var item in DrawingObjects)
         {
+            if (item.InkLayerIndex != ActiveInkLayer) continue;
             bool selected = item.Stroke is not null ? selectedStrokes.Contains(item.Stroke) : selectedElements.Contains(item.Element);
             if (forward && !selected && sawSelected || !forward && selected && sawOther) return true;
             sawSelected |= selected;
@@ -110,7 +158,7 @@ public sealed partial class InkController
 
     private bool TryArrange(LayerAction action, out DrawingObject[] before, out DrawingObject[] after)
     {
-        before = DrawingObjects.ToArray();
+        before = DrawingObjects.Where(item => item.InkLayerIndex == ActiveInkLayer).ToArray();
         after = before.ToArray();
         if (!HasSelection || !Enum.IsDefined(action)) return false;
         var selectedStrokes = Selection.ToHashSet();

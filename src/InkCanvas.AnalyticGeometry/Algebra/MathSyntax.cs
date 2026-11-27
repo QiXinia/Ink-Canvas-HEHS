@@ -38,13 +38,18 @@ public static class MathSyntax
         string body = text[match.Length..^1];
         // Reject f(x)+g(x) as a single call.
         int depth = 0;
+        bool quoted = false, escaped = false;
         foreach (char c in body)
         {
+            if (escaped) { escaped = false; continue; }
+            if (quoted && c == '\\') { escaped = true; continue; }
+            if (c == '"') { quoted = !quoted; continue; }
+            if (quoted) continue;
             if (c is '(' or '[' or '{') depth++;
             if (c is ')' or ']' or '}') depth--;
             if (depth < 0) return false;
         }
-        if (depth != 0) return false;
+        if (quoted || depth != 0) return false;
         arguments = string.IsNullOrWhiteSpace(body) ? Array.Empty<string>() : Split(body);
         return true;
     }

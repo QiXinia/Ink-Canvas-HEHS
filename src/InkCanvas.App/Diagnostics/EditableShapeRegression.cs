@@ -92,6 +92,45 @@ internal static class EditableShapeRegression
             await BoardWindowRegression.SaveVisual(root, Path.Combine(directory, "shape-menu.png"));
             var bounds = toolbar.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, toolbar.ActualWidth, toolbar.ActualHeight));
             Check("selection geometry menu stays within the screen", bounds.Left >= -1 && bounds.Right <= root.ActualWidth + 1 && bounds.Top >= -1 && bounds.Bottom <= root.ActualHeight + 1);
+
+            Check("shape expansion loads as an optional module", services.Modules.GetExport<IPolygonExtension>() is not null);
+            shell.OpenShapePicker(); await Task.Delay(120);
+            var picker = shell.OpenWindows.OfType<ShapePickerWindow>().Single();
+            var palette = Descendants(picker.Content).OfType<ShapePreview>().Single();
+            palette.SelectCategoryFor(ShapeKind.Polygon);
+            await Task.Delay(100);
+            Invoke(palette, "可编辑3边形");
+            Check("the planar menu selects the editable three-vertex preset", c.Tool == InkTool.Shape
+                && c.ShapeKind == ShapeKind.Polygon && c.PolygonVertexCount == 3);
+            if (shell.OpenWindows.Contains(picker)) picker.Close();
+            c.Document.Clear(); c.ViewTransform = Matrix3x2.Identity;
+            c.OnPointerDown(Pointer(new(250, 190))); c.OnPointerUp(Pointer(new(530, 430)));
+            c.Tool = InkTool.Select; c.SelectAll(); c.ToggleShapeEditing();
+            Check("editing the triangle exposes three angle labels", c.ShowPolygonAngles && c.ShapeControlPoints.Count == 3);
+            await Task.Delay(100);
+            await BoardWindowRegression.SaveVisual(root, Path.Combine(directory, "polygon-angles.png"));
+            Invoke(toolbar, "变换"); Invoke(toolbar, "高级旋转"); Invoke(toolbar, "选区中心");
+            var slider = Descendants(toolbar).OfType<PointerSlider>().Single();
+            slider.Value = 45;
+            await Task.Delay(100);
+            Check("rotation toolbar adjusts the preview angle without mutating the selection",
+                c.AdvancedSelection is { IsReady: true, Angle: 45 } && c.Document.Strokes[0].ShapeSource.Geometry.Matrix.IsIdentity);
+            await BoardWindowRegression.SaveVisual(root, Path.Combine(directory, "advanced-rotation.png"));
+            Invoke(toolbar, "应用");
+            Check("rotation toolbar applies the transform", c.AdvancedSelection is null && !c.Document.Strokes[0].ShapeSource.Geometry.Matrix.IsIdentity);
+            c.Undo();
+            Invoke(toolbar, "变换"); Invoke(toolbar, "对称"); Invoke(toolbar, "轴对称");
+            var axisStart = new Vector2(560, 140); var axisEnd = new Vector2(560, 510);
+            c.OnPointerDown(Pointer(axisStart)); c.OnPointerMove(Pointer(axisEnd)); c.OnPointerUp(Pointer(axisEnd));
+            await Task.Delay(100);
+            Check("symmetry toolbar previews a drawn axis", c.AdvancedSelection is { Mode: AdvancedSelectionMode.AxisReflection, IsReady: true });
+            var toolbarBounds = toolbar.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, toolbar.ActualWidth, toolbar.ActualHeight));
+            Check("symmetry toolbar keeps both axis handles available", !toolbarBounds.Contains(new(axisStart.X, axisStart.Y))
+                && !toolbarBounds.Contains(new(axisEnd.X, axisEnd.Y)));
+            await BoardWindowRegression.SaveVisual(root, Path.Combine(directory, "advanced-symmetry.png"));
+            Invoke(toolbar, "取消");
+            Check("canceling the axis preview leaves the triangle unchanged", c.AdvancedSelection is null
+                && c.HasSelection && c.Document.Strokes[0].ShapeSource.Geometry.Matrix.IsIdentity);
         }
         catch (Exception ex) { checks.Add(new { check = "editable shape exception", passed = false, error = ex.ToString() }); }
         finally
@@ -104,7 +143,7 @@ internal static class EditableShapeRegression
     private static OverlayPointer Pointer(Vector2 point) => new(993, point.X, point.Y, .5f, 0, 0, OverlayPointerKind.Mouse, 0);
     private static void Invoke(DependencyObject root, string label)
     {
-        var button = Descendants(root).OfType<TouchIconButton>().Single(b => b.Label == label);
+        var button = Descendants(root).OfType<TouchIconButton>().Single(b => b.Label == label || Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(b) == label);
         ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     }
     private static IEnumerable<DependencyObject> Descendants(DependencyObject parent)

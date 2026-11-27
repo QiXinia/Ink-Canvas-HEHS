@@ -2,6 +2,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName Microsoft.VisualBasic.Core
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\artifacts'))
 if (-not (Test-Path -LiteralPath $artifactsRoot)) { return }
 $rootPrefix = $artifactsRoot.TrimEnd('\') + '\'
@@ -34,20 +35,26 @@ foreach ($build in $builds) {
         Write-Output ('Deferred running build ' + $resolved)
         continue
     }
-    if ($PSCmdlet.ShouldProcess($resolved, 'Remove historical build')) {
-        Remove-Item -LiteralPath $resolved -Recurse -Force
+    if ($PSCmdlet.ShouldProcess($resolved, 'Move historical build to Recycle Bin')) {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($resolved,
+            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin,
+            [Microsoft.VisualBasic.FileIO.UICancelOption]::ThrowException)
     }
 }
 # Old release archives and extension packages outside the retained builds are also build output.
-Get-ChildItem -LiteralPath $artifactsRoot -Filter '*.zip' -File -Recurse | Where-Object {
-    $_.Name -like 'InkCanvas-*.zip' -or $_.Name -like 'inkcanvas.*.zip' -or $_.Name -like 'sample.guide-lines-*.zip'
+Get-ChildItem -LiteralPath $artifactsRoot -File -Recurse | Where-Object {
+    $_.Name -like 'InkCanvas-*.zip' -or $_.Name -like 'InkCanvas-*.msi' -or $_.Name -like 'inkcanvas.*.zip' -or $_.Name -like 'sample.guide-lines-*.zip'
 } | ForEach-Object {
     $archive = $_.FullName
     $insideRetained = @($retainedPaths | Where-Object {
         $archive.StartsWith($_ + '\', [StringComparison]::OrdinalIgnoreCase)
     }).Count -gt 0
-    if (-not $insideRetained -and $PSCmdlet.ShouldProcess($archive, 'Remove historical build archive')) {
-        Remove-Item -LiteralPath $archive -Force
+    if (-not $insideRetained -and $PSCmdlet.ShouldProcess($archive, 'Move historical build archive to Recycle Bin')) {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($archive,
+            [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+            [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin,
+            [Microsoft.VisualBasic.FileIO.UICancelOption]::ThrowException)
     }
 }
 $retained | ForEach-Object { Write-Output ('Retained build ' + $_.Path) }

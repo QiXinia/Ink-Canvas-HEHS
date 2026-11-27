@@ -49,7 +49,7 @@ public sealed class BoardFormulaObject : ISelectionElement, IGroupedSelectionEle
     /// <inheritdoc cref="BoardImageAsset.Transform"/>
     public float[] TransformMatrix { get; set; }
 
-    public string SelectionGroupId => GroupId ?? "";
+    public string SelectionGroupId { get => GroupId ?? ""; set => GroupId = value; }
 
     public Rect Bounds => BoardElementMath.TransformedBounds(Left, Top, Width, Height, TransformMatrix);
 

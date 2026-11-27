@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace InkCanvas.Core.Settings;
@@ -20,31 +20,11 @@ public sealed class AppSettings
     [JsonPropertyName("inkToShape")] public InkToShapeSettings InkToShape { get; set; } = new();
     [JsonPropertyName("startup")] public StartupSettings Startup { get; set; } = new();
     [JsonPropertyName("randSettings")] public RandSettings Rand { get; set; } = new();
-
-    /// <summary>旧版实验特性开关；保留节点以保证旧 Settings.json 读入后不丢字段。</summary>
     [JsonPropertyName("experimental")] public ExperimentalSettings Experimental { get; set; } = new();
     [JsonPropertyName("display")] public DisplaySettings Display { get; set; } = new();
     [JsonPropertyName("storage")] public StorageSettings Storage { get; set; } = new();
-
-    private HotkeySettings _hotkey = new();
-
-    /// <summary>可配置热键；旧设置文件缺少该节点（或显式 null）时回退为默认值。</summary>
-    [JsonPropertyName("hotkey")]
-    public HotkeySettings Hotkey
-    {
-        get => _hotkey ??= new HotkeySettings();
-        set => _hotkey = value ?? new HotkeySettings();
-    }
-
-    private SideBoardSettings _sideBoard = new();
-
-    /// <summary>板中板窗口位置/尺寸；缺省或四个值不全时使用默认右侧抽屉。</summary>
-    [JsonPropertyName("sideBoard")]
-    public SideBoardSettings SideBoard
-    {
-        get => _sideBoard ??= new SideBoardSettings();
-        set => _sideBoard = value ?? new SideBoardSettings();
-    }
+    [JsonPropertyName("archive")] public ArchiveSettings Archive { get; set; } = new();
+    [JsonPropertyName("resume")] public ResumeSettings Resume { get; set; } = new();
 
     private AiSettings _ai = new();
 
@@ -65,9 +45,6 @@ public sealed class AppSettings
         get => _classroom ??= new ClassroomSettings();
         set => _classroom = value ?? new ClassroomSettings();
     }
-
-    /// <summary>新功能回退开关；旧设置文件缺该节点时保持默认（全部开启）。</summary>
-    [JsonPropertyName("features")] public FeatureSettings Features { get; set; } = new();
 
     public AppSettings Clone() =>
         JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(this)) ?? new AppSettings();
@@ -101,6 +78,7 @@ public sealed class AppSettings
         Appearance.IsEnableDisPlayFloatBarText = false;
         Appearance.IsEnableDisPlayNibModeToggler = false;
         Appearance.IsColorfulViewboxFloatingBar = false;
+        Appearance.AutoDismissAnnotationToolPanels = false;
         Appearance.FloatingBarScale = 100.0;
         Appearance.BlackboardScale = 100.0;
         Appearance.FloatingBarBottomMargin = 100.0; // upstream constructor default
@@ -142,6 +120,7 @@ public sealed class AppSettings
         PowerPoint.IsShowCanvasAtNewSlideShow = true;
         PowerPoint.IsNoClearStrokeOnSelectWhenInPowerPoint = true;
         PowerPoint.IsShowStrokeOnSelectInPowerPoint = false;
+        PowerPoint.HideStrokesAfterLeavingAnnotation = false;
         PowerPoint.IsAutoSaveStrokesInPowerPoint = true;
         PowerPoint.IsAutoSaveScreenShotInPowerPoint = true;
         PowerPoint.IsNotifyPreviousPage = false;
@@ -164,6 +143,7 @@ public sealed class AppSettings
         Canvas.HighlighterColor = null;
         Canvas.ShapeKind = null;
         Canvas.EraserSize = 1;
+        Canvas.EraserDiameter = null;
         Canvas.EraserType = 0;
         Canvas.HideStrokeWhenSelecting = false;
         Canvas.UsingWhiteboard = false;
@@ -206,29 +186,17 @@ public sealed class StorageSettings
     public int UpdateCacheDays { get; set; } = 7;
 }
 
-/// <summary>
-/// 旧版实验特性开关。迁移后未参与实际逻辑，但原样读写，避免旧 Settings.json 字段丢失。
-/// </summary>
 public sealed class ExperimentalSettings
 {
-    [JsonPropertyName("ScreenContentTracking")] public bool ScreenContentTracking { get; set; }
-    [JsonPropertyName("FollowScroll")] public bool FollowScroll { get; set; } = true;
-    [JsonPropertyName("FollowZoom")] public bool FollowZoom { get; set; } = true;
-    [JsonPropertyName("MaskFixedRegions")] public bool MaskFixedRegions { get; set; } = true;
-    [JsonPropertyName("RememberPages")] public bool RememberPages { get; set; } = true;
-    [JsonPropertyName("PreserveUnchangedRegions")] public bool PreserveUnchangedRegions { get; set; } = true;
-    [JsonPropertyName("Word")] public bool Word { get; set; } = true;
-    [JsonPropertyName("PowerPoint")] public bool PowerPoint { get; set; } = true;
-    [JsonPropertyName("Edge")] public bool Edge { get; set; } = true;
-}
-
-/// <summary>第一轮功能区开关，供后续新功能按需回退；默认全部开启。</summary>
-public sealed class FeatureSettings
-{
-    [JsonPropertyName("enableAiTeaching")] public bool EnableAiTeaching { get; set; } = true;
-    [JsonPropertyName("enableExerciseFlow")] public bool EnableExerciseFlow { get; set; } = true;
-    [JsonPropertyName("enableExampleLibrary")] public bool EnableExampleLibrary { get; set; } = true;
-    [JsonPropertyName("enableResourceBundle")] public bool EnableResourceBundle { get; set; } = true;
+    public bool ScreenContentTracking { get; set; }
+    public bool FollowScroll { get; set; } = true;
+    public bool FollowZoom { get; set; } = true;
+    public bool MaskFixedRegions { get; set; } = true;
+    public bool RememberPages { get; set; } = true;
+    public bool PreserveUnchangedRegions { get; set; } = true;
+    public bool Word { get; set; } = true;
+    public bool PowerPoint { get; set; } = true;
+    public bool Edge { get; set; } = true;
 }
 
 /// <summary>
@@ -237,6 +205,7 @@ public sealed class FeatureSettings
 /// </summary>
 public sealed class AiSettings
 {
+    public AiDocumentSettings Documents { get; set; } = new();
     [JsonPropertyName("enableLocalCorrection")] public bool EnableLocalCorrection { get; set; } = true;
     [JsonPropertyName("enableEditablePaste")] public bool EnableEditablePaste { get; set; } = true;
     [JsonPropertyName("enableVerification")] public bool EnableVerification { get; set; } = true;
@@ -252,10 +221,29 @@ public sealed class AiSettings
     [JsonPropertyName("hasSeenLassoHint")] public bool HasSeenLassoHint { get; set; }
 }
 
+public sealed class AiDocumentSettings
+{
+    public bool Enabled { get; set; }
+    public string Endpoint { get; set; } = "";
+    public string Model { get; set; } = "";
+    public bool AssistantProtocol { get; set; }
+}
+
 public enum OptionalOperation { Yes, No, Ask }
+
+public enum ColorPaletteKind { Light, Dark, Custom }
 
 public sealed class CanvasSettings
 {
+    [JsonPropertyName("selectionMode")] public Selection.InkSelectionMode SelectionMode { get; set; }
+    [JsonPropertyName("enableCustomColorPalette")] public bool EnableCustomColorPalette { get; set; } = true;
+    [JsonPropertyName("colorPalette")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ColorPaletteKind? ColorPalette { get; set; }
+    private List<uint> _customColors = new();
+    [JsonPropertyName("customColors")]
+    public List<uint> CustomColors { get => _customColors; set => _customColors = value ?? new(); }
+
     public double InkWashWidth { get; set; } = 30;
     public Ink.InkWashBrushOptions InkWash { get; set; } = Ink.InkWashBrushOptions.Default;
     public bool UseHardwarePressure { get; set; } = true;
@@ -276,16 +264,18 @@ public sealed class CanvasSettings
     [JsonPropertyName("highlighterColor")] public uint? HighlighterColor { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonPropertyName("shapeKind")] public Shapes.ShapeKind? ShapeKind { get; set; }
-
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("polygonVertexCount")] public int? PolygonVertexCount { get; set; }
 
     [JsonPropertyName("eraserSize")] public int EraserSize { get; set; } = 2;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    [JsonPropertyName("eraserDiameter")] public double? EraserDiameter { get; set; }
 
     /// <summary>0 = legacy default, 1 = area eraser, 2 = stroke eraser, 3 = lasso eraser.</summary>
     [JsonPropertyName("eraserType")] public int EraserType { get; set; }
 
     [JsonPropertyName("hideStrokeWhenSelecting")] public bool HideStrokeWhenSelecting { get; set; } = true;
     [JsonPropertyName("usingWhiteboard")] public bool UsingWhiteboard { get; set; }
-    [JsonPropertyName("hyperbolaAsymptoteOption")] public OptionalOperation HyperbolaAsymptoteOption { get; set; } = OptionalOperation.Ask;
 }
 
 public enum MatrixTransformCenterPointOptions
@@ -305,10 +295,9 @@ public sealed class GestureSettings
     [JsonPropertyName("AutoSwitchTwoFingerGesture")] public bool AutoSwitchTwoFingerGesture { get; set; } = true;
     [JsonPropertyName("isEnableTwoFingerRotation")] public bool IsEnableTwoFingerRotation { get; set; }
     [JsonPropertyName("isEnableTwoFingerRotationOnSelection")] public bool IsEnableTwoFingerRotationOnSelection { get; set; }
-    [JsonPropertyName("matrixTransformCenterPoint")] public MatrixTransformCenterPointOptions MatrixTransformCenterPoint { get; set; } = MatrixTransformCenterPointOptions.CanvasCenterPoint;
-
-    /// <summary>旧版手写笔手势开关；保留持久化键以兼容 parity 向量与旧 Settings.json。</summary>
+    /// <summary>HarmonyOS port: stylus double-tap/squeeze tool cycling (PR #4). Unused on Windows but persisted for cross-platform Settings.json parity.</summary>
     [JsonPropertyName("isEnableStylusGesture")] public bool IsEnableStylusGesture { get; set; } = true;
+    [JsonPropertyName("matrixTransformCenterPoint")] public MatrixTransformCenterPointOptions MatrixTransformCenterPoint { get; set; } = MatrixTransformCenterPointOptions.CanvasCenterPoint;
 
     [JsonIgnore]
     public bool IsEnableTwoFingerGesture => IsEnableTwoFingerZoom || IsEnableTwoFingerTranslate || IsEnableTwoFingerRotation;
@@ -333,40 +322,10 @@ public sealed class DisplaySettings
     [JsonPropertyName("enabledDevices")] public List<string> EnabledDevices { get; set; } = new();
 }
 
-/// <summary>快捷键配置。字符串形式便于手工编辑 Settings.json；无效值回退默认。</summary>
-public sealed class HotkeySettings
-{
-    private HotkeyBindingSettings _sideBoard = new();
-
-    [JsonPropertyName("sideBoard")]
-    public HotkeyBindingSettings SideBoard
-    {
-        get => _sideBoard ??= new HotkeyBindingSettings();
-        set => _sideBoard = value ?? new HotkeyBindingSettings();
-    }
-}
-
-/// <summary>单个快捷键：修饰键（Alt/Control/Shift/Win，可用 + 组合）与主键（字母、数字或 F1-F24）。</summary>
-public sealed class HotkeyBindingSettings
-{
-    [JsonPropertyName("modifiers")] public string Modifiers { get; set; } = "Alt";
-    [JsonPropertyName("key")] public string Key { get; set; } = "N";
-}
-
-/// <summary>板中板窗口记忆矩形（物理像素）。任一字段为空即视为未保存。</summary>
-public sealed class SideBoardSettings
-{
-    [JsonPropertyName("x")] public int? X { get; set; }
-    [JsonPropertyName("y")] public int? Y { get; set; }
-    [JsonPropertyName("w")] public int? W { get; set; }
-    [JsonPropertyName("h")] public int? H { get; set; }
-
-    [JsonIgnore]
-    public bool HasSavedBounds => X.HasValue && Y.HasValue && W is > 0 && H is > 0;
-}
-
 public sealed class AppearanceSettings
 {
+    [JsonPropertyName("autoDismissAnnotationToolPanels"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AutoDismissAnnotationToolPanels { get; set; }
     [JsonPropertyName("isEnableDisPlayFloatBarText")] public bool IsEnableDisPlayFloatBarText { get; set; }
     [JsonPropertyName("isEnableDisPlayNibModeToggler")] public bool IsEnableDisPlayNibModeToggler { get; set; } = true;
     [JsonPropertyName("isColorfulViewboxFloatingBar")] public bool IsColorfulViewboxFloatingBar { get; set; }
@@ -374,6 +333,8 @@ public sealed class AppearanceSettings
     [JsonPropertyName("enableViewboxBlackBoardScaleTransform")] public double BlackboardScale { get; set; } = 100.0;
     [JsonPropertyName("floatingBarBottomMargin")] public double FloatingBarBottomMargin { get; set; } = 100.0;
     [JsonPropertyName("isTransparentButtonBackground")] public bool IsTransparentButtonBackground { get; set; } = true;
+    /// <summary>Icon style: Fluent System Icons Regular (default) vs Filled.</summary>
+    [JsonPropertyName("isIconRegularStyle")] public bool IsIconRegularStyle { get; set; } = true;
     [JsonPropertyName("isShowExitButton")] public bool IsShowExitButton { get; set; } = true;
     [JsonPropertyName("isShowEraserButton")] public bool IsShowEraserButton { get; set; } = true;
     [JsonPropertyName("isShowHideControlButton")] public bool IsShowHideControlButton { get; set; }
@@ -394,6 +355,7 @@ public sealed class PowerPointSettings
     [JsonPropertyName("isShowCanvasAtNewSlideShow")] public bool IsShowCanvasAtNewSlideShow { get; set; } = true;
     [JsonPropertyName("isNoClearStrokeOnSelectWhenInPowerPoint")] public bool IsNoClearStrokeOnSelectWhenInPowerPoint { get; set; } = true;
     [JsonPropertyName("isShowStrokeOnSelectInPowerPoint")] public bool IsShowStrokeOnSelectInPowerPoint { get; set; }
+    [JsonPropertyName("hideStrokesAfterLeavingAnnotation")] public bool HideStrokesAfterLeavingAnnotation { get; set; }
     [JsonPropertyName("isAutoSaveStrokesInPowerPoint")] public bool IsAutoSaveStrokesInPowerPoint { get; set; } = true;
     [JsonPropertyName("isAutoSaveScreenShotInPowerPoint")] public bool IsAutoSaveScreenShotInPowerPoint { get; set; }
     [JsonPropertyName("isNotifyPreviousPage")] public bool IsNotifyPreviousPage { get; set; }
@@ -456,7 +418,7 @@ public sealed class InkToShapeSettings
 {
     [JsonPropertyName("isInkToShapeEnabled")] public bool IsInkToShapeEnabled { get; set; } = true;
     public int HoldMilliseconds { get; set; } = 450;
-    public bool AutoAlign { get; set; } = true;
+    public bool AutoAlign { get; set; }
     public double AlignmentAngle { get; set; } = 5;
     public bool RecognizePolygons { get; set; } = true;
     public bool RecognizeRoundShapes { get; set; } = true;
@@ -499,34 +461,15 @@ public sealed class RandSettings
     }
 }
 
-/// <summary>课堂工具箱配置：场景预设、倒计时与常用参数；新字段只追加。</summary>
+public enum LotterySamplingMode { SoftCooldown, Uniform, RoundWithoutReplacement }
+
+/// <summary>计时器、聚光灯与放大镜的配置。</summary>
 public sealed class ClassroomSettings
 {
     [JsonPropertyName("version")] public int Version { get; set; } = 1;
-
-    [JsonPropertyName("presetId")] public string PresetId { get; set; } = "teach";
-
     [JsonPropertyName("countdownMinutes")] public int CountdownMinutes { get; set; } = 3;
-
-    [JsonPropertyName("toolkitCollapsed")] public bool ToolkitCollapsed { get; set; }
-
-    [JsonPropertyName("practicePageName")] public string PracticePageName { get; set; } = "随堂练习";
-
-    [JsonPropertyName("customPresets")] public string CustomPresets { get; set; } = "";
-
-    [JsonPropertyName("groupSplitMode")] public string GroupSplitMode { get; set; } = "groupCount";
-
-    [JsonPropertyName("groupSplitValue")] public int GroupSplitValue { get; set; } = 4;
-
     [JsonPropertyName("spotlightRegions")] public string SpotlightRegions { get; set; } = "";
-
-    /// <summary>工具箱窗口屏幕位置；int.MinValue 表示从未保存，按默认居中放置。</summary>
-    [JsonPropertyName("toolkitX")] public int ToolkitX { get; set; } = int.MinValue;
-    [JsonPropertyName("toolkitY")] public int ToolkitY { get; set; } = int.MinValue;
-
     /// <summary>放大镜窗口屏幕位置；int.MinValue 表示未保存。</summary>
     [JsonPropertyName("magnifierX")] public int MagnifierX { get; set; } = int.MinValue;
     [JsonPropertyName("magnifierY")] public int MagnifierY { get; set; } = int.MinValue;
 }
-
-public enum LotterySamplingMode { SoftCooldown, Uniform, RoundWithoutReplacement }

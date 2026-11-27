@@ -54,17 +54,24 @@ public sealed class LassoGeometry
     public bool IntersectsStroke(InkStroke stroke, Matrix3x2 worldToView)
     {
         if (!IsValid || stroke.Count == 0 || !Bounds.Intersects(TransformBounds(stroke.Bounds, worldToView))) return false;
-        if (stroke.ShapeSource?.Geometry?.IsFill == true && Matrix3x2.Invert(worldToView, out var inverse)
-            && stroke.DistanceTo(Vector2.Transform(_points[0], inverse)) == 0) return true;
-        var previous = Vector2.Transform(stroke.Points[0].Position, worldToView);
-        if (Contains(previous)) return true;
-        for (int i = 1; i < stroke.Count; i++)
+        if (stroke.ShapeSource?.Geometry?.IsFill == true)
+            return (Matrix3x2.Invert(worldToView, out var inverse) && stroke.DistanceTo(Vector2.Transform(_points[0], inverse)) == 0)
+                || stroke.FillContours().Any(range => IntersectsContour(range.Start, range.Count, closed: true));
+        return IntersectsContour(0, stroke.Count, closed: false);
+
+        bool IntersectsContour(int start, int count, bool closed)
         {
-            var current = Vector2.Transform(stroke.Points[i].Position, worldToView);
-            if (IntersectsSegment(previous, current)) return true;
-            previous = current;
+            var first = Vector2.Transform(stroke.Points[start].Position, worldToView);
+            if (Contains(first)) return true;
+            var previous = first;
+            for (int i = start + 1; i < start + count; i++)
+            {
+                var current = Vector2.Transform(stroke.Points[i].Position, worldToView);
+                if (IntersectsSegment(previous, current)) return true;
+                previous = current;
+            }
+            return closed && IntersectsSegment(previous, first);
         }
-        return false;
     }
 
     public bool IntersectsFrame(SelectionFrame frame, Matrix3x2 worldToView)
@@ -98,7 +105,7 @@ public sealed class LassoGeometry
             && p.X >= MathF.Min(a.X, b.X) - 0.0001f && p.X <= MathF.Max(a.X, b.X) + 0.0001f
             && p.Y >= MathF.Min(a.Y, b.Y) - 0.0001f && p.Y <= MathF.Max(a.Y, b.Y) + 0.0001f;
 
-    private static bool SegmentsIntersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+    internal static bool SegmentsIntersect(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
     {
         double abC = Cross(b - a, c - a), abD = Cross(b - a, d - a);
         double cdA = Cross(d - c, a - c), cdB = Cross(d - c, b - c);

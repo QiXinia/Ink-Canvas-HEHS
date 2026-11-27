@@ -28,6 +28,7 @@ public static class OriginalMenuCatalog
         new Swatch("荧光笔红色", InkColor.Opaque(220, 38, 38), InkColor.Opaque(220, 38, 38)),
         new Swatch("荧光笔橙色", InkColor.Opaque(234, 88, 12), InkColor.Opaque(234, 88, 12)),
         new Swatch("荧光笔黄色", InkColor.Opaque(234, 179, 8), InkColor.Opaque(234, 179, 8)),
+        new Swatch("荧光笔绿色", InkColor.Opaque(22, 163, 74), InkColor.Opaque(22, 163, 74)),
         new Swatch("荧光笔青色", InkColor.Opaque(13, 148, 136), InkColor.Opaque(13, 148, 136)),
         new Swatch("荧光笔蓝色", InkColor.Opaque(37, 99, 235), InkColor.Opaque(37, 99, 235)),
         new Swatch("荧光笔紫色", InkColor.Opaque(147, 51, 234), InkColor.Opaque(147, 51, 234)),
@@ -68,6 +69,15 @@ public static class OriginalMenuCatalog
     private static readonly float[] EraserFactors = { .5f, .8f, 1f, 1.25f, 1.8f };
     public static float ToEraserRadius(int size) => 45 * EraserFactors[Math.Clamp(size, 0, EraserFactors.Length - 1)];
 
+    public const double EraserDiameterMinimum = 10;
+    public const double EraserDiameterMaximum = 200;
+
+    public static double GetEraserDiameter(CanvasSettings settings) => settings.EraserDiameter is double diameter && double.IsFinite(diameter)
+        ? Math.Clamp(diameter, EraserDiameterMinimum, EraserDiameterMaximum)
+        : ToEraserRadius(settings.EraserSize) * 2;
+
+    public static float ToEraserRadius(CanvasSettings settings) => (float)(GetEraserDiameter(settings) / 2);
+
     public static IReadOnlyList<string> EraserSizes { get; } = Array.AsReadOnly(new[]
     {
         "小", "较小", "中（默认）", "较大", "大",
@@ -92,9 +102,15 @@ public static class OriginalMenuCatalog
     public const double PenWidthMaximum = 30;
     public const double HighlighterWidthMaximum = 120;
     public const double PenWidthStep = 1;
-    public const double HighlighterAlphaMinimum = 20;
-    public const double HighlighterAlphaMaximum = 240;
-    public const double HighlighterAlphaStep = 20;
+    public const double HighlighterOpacityMinimum = 0;
+    public const double HighlighterOpacityMaximum = 100;
+    public const double HighlighterOpacityStep = 1;
+
+    public static double ToHighlighterOpacityPercent(int alpha) =>
+        Math.Round(Math.Clamp(alpha, 0, 255) * 100d / 255, MidpointRounding.AwayFromZero);
+
+    public static int ToStoredHighlighterAlpha(double percent) =>
+        (int)Math.Round(Math.Clamp(percent, 0, 100) * 255 / 100, MidpointRounding.AwayFromZero);
 
     public static double ToStoredPenWidth(double menuWidth) => menuWidth / 2;
 

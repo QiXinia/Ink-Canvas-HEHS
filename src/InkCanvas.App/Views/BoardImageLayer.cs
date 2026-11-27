@@ -1,9 +1,6 @@
 using InkCanvas.Controls.Theming;
-using InkCanvas.Core.AiAssistant;
-using InkCanvas.Features.AiAssistant;
 using InkCanvas.Features.Board;
 using InkCanvas.Ink;
-using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -20,9 +17,6 @@ namespace InkCanvas.App.Views;
 /// </summary>
 internal sealed class BoardImageLayer : Canvas
 {
-    private const string SelectionBorderTag = "selection-border";
-    private const string ResizeHandleTag = "resize-handle";
-
     private readonly Dictionary<Guid, Grid> _views = new();
     private readonly HashSet<(Guid Id, int Version)> _loading = new();
     private readonly Dictionary<byte[], Task<Microsoft.UI.Xaml.Media.Imaging.BitmapImage>> _bitmapSources = new();
@@ -132,7 +126,6 @@ internal sealed class BoardImageLayer : Canvas
                 BorderThickness = new Thickness(2),
                 BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
                 Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-                Tag = SelectionBorderTag,
             };
             var handle = new Border
             {
@@ -142,7 +135,6 @@ internal sealed class BoardImageLayer : Canvas
                 VerticalAlignment = VerticalAlignment.Bottom,
                 Background = PopupBrushes.Accent(),
                 Visibility = Visibility.Collapsed,
-                Tag = ResizeHandleTag,
             };
             var view = new Grid
             {
@@ -150,11 +142,6 @@ internal sealed class BoardImageLayer : Canvas
                 Tag = asset,
             };
             view.Children.Add(image);
-
-            // 图形释义矢量层：只读取资产元数据，不写入墨迹 Document、不与墨迹合并。
-            var annotationLayer = BuildShapeAnnotationLayer(asset);
-            if (annotationLayer is not null) view.Children.Add(annotationLayer);
-
             view.Children.Add(border);
             view.Children.Add(handle);
             // Selection input is routed by the common board selection host.
@@ -169,72 +156,6 @@ internal sealed class BoardImageLayer : Canvas
             // Keep the rest of the board usable if an embedded image is corrupt or unsupported.
         }
         finally { _loading.Remove((asset.Id, version)); }
-    }
-
-    private static CanvasControl BuildShapeAnnotationLayer(BoardImageAsset asset)
-    {
-        if (!string.Equals(asset.ContentType, "image/png", StringComparison.OrdinalIgnoreCase)) return null;
-
-        var metadata = AiPasteMetadata.TryParse(asset.Metadata);
-        if (metadata is null || metadata.Kind != AiPasteKind.Shape) return null;
-        if (metadata.Annotations is not { Count: > 0 }) return null;
-
-        var lines = new List<List<ShapeAnnotationPoint>>();
-        foreach (var flat in metadata.Annotations)
-        {
-            if (flat is null) continue;
-            var normalized = ShapeAnnotationGeometry.Normalize(flat, asset.Width, asset.Height);
-            if (normalized.Count >= 2) lines.Add(normalized);
-        }
-
-        if (lines.Count == 0) return null;
-
-        var canvas = new CanvasControl
-        {
-            ClearColor = Windows.UI.Color.FromArgb(0, 0, 0, 0),
-            IsHitTestVisible = false,
-            Width = asset.Width,
-            Height = asset.Height,
-            Tag = "shape-annotation-layer",
-        };
-
-        canvas.Draw += (sender, args) =>
-        {
-            float width = (float)(sender.ActualWidth > 0 ? sender.ActualWidth : sender.Width);
-            float height = (float)(sender.ActualHeight > 0 ? sender.ActualHeight : sender.Height);
-            if (width <= 0 || height <= 0) return;
-
-            var accent = AccentColor();
-            foreach (var line in lines)
-            {
-                var points = ShapeAnnotationGeometry.Project(line, 0, 0, width, height);
-                for (int i = 1; i < points.Count; i++)
-                {
-                    args.DrawingSession.DrawLine(
-                        new Vector2((float)points[i - 1].X, (float)points[i - 1].Y),
-                        new Vector2((float)points[i].X, (float)points[i].Y),
-                        accent,
-                        2f);
-                }
-            }
-        };
-        canvas.SizeChanged += (_, _) => canvas.Invalidate();
-        return canvas;
-    }
-
-    private static Windows.UI.Color AccentColor()
-    {
-        try
-        {
-            if (Application.Current?.Resources["IcAccentBrush"] is SolidColorBrush brush)
-                return brush.Color;
-        }
-        catch
-        {
-            // Theme resources may be unavailable during teardown; fall back to black.
-        }
-
-        return Microsoft.UI.Colors.Black;
     }
 
     private static async Task<Microsoft.UI.Xaml.Media.Imaging.BitmapImage> LoadBitmapAsync(byte[] bytes)
@@ -253,15 +174,6 @@ internal sealed class BoardImageLayer : Canvas
         return bitmap;
     }
 
-    public void DeleteSelected()
-    {
-        if (_selected is null) return;
-        var selected = _selected;
-        _selected = null;
-        _board.RemoveImage(selected);
-        SelectionChanged?.Invoke();
-    }
-
     /// <summary>Drop the selection without deleting (mode switch or outside click).</summary>
     public void ClearSelection()
     {
@@ -273,18 +185,13 @@ internal sealed class BoardImageLayer : Canvas
 
     private static void SetSelectedVisual(Grid view, bool selected)
     {
-        foreach (var child in view.Children)
+        if (view.Children.Count < 3) return;
+        if (view.Children[1] is Border border)
         {
-            if (child is Border border && string.Equals(border.Tag as string, SelectionBorderTag, StringComparison.Ordinal))
-            {
-                border.BorderBrush = selected
-                    ? (Brush)Application.Current.Resources["IcAccentBrush"]
-                    : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            }
-            else if (child is Border handle && string.Equals(handle.Tag as string, ResizeHandleTag, StringComparison.Ordinal))
-            {
-                handle.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
-            }
+            border.BorderBrush = selected
+                ? PopupBrushes.Accent()
+                : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         }
+        if (view.Children[2] is Border handle) handle.Visibility = selected ? Visibility.Visible : Visibility.Collapsed;
     }
 }

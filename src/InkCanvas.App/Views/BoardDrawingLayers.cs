@@ -21,8 +21,10 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
     private readonly List<Run> _runs = new();
     private readonly Dictionary<Guid, int> _indices = new();
     private InkController _controller;
-    private InkSceneRenderer _scene = new() { ShowSelectionOutline = false };
+    private InkSceneRenderer _scene = new(4096) { ShowSelectionOutline = false };
+    private CanvasControl _liveCanvas;
     private bool _suspended;
+    public bool DrawsLiveInk => _liveCanvas is not null;
 
     public BoardDrawingLayers()
     {
@@ -33,12 +35,15 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
                 run.Canvas.Width = ActualWidth;
                 run.Canvas.Height = ActualHeight;
             }
+            if (_liveCanvas is not null) { _liveCanvas.Width = ActualWidth; _liveCanvas.Height = ActualHeight; }
         };
         _scene.Images.Changed += Invalidate;
     }
 
     public int LayerIndex(Guid id) => _indices.GetValueOrDefault(id);
     public int CachedImageCount => _scene.Images.CachedBitmapCount;
+    internal long RasterBytes => _runs.Sum(run => run.Cache.RasterBytes);
+    internal int SurfaceCount => _runs.Count;
 
     internal async Task SaveSceneAsync(string path)
     {
@@ -58,9 +63,9 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
         if (!ReferenceEquals(_controller, controller))
         {
             if (_controller is not null) _controller.DotAnimationChanged -= Invalidate;
-            ClearRuns();
+            foreach (var run in _runs) run.Cache.Dispose();
             _scene.Dispose();
-            _scene = new InkSceneRenderer { ShowSelectionOutline = false };
+            _scene = new InkSceneRenderer(4096) { ShowSelectionOutline = false };
             _scene.Images.Changed += Invalidate;
             _controller = controller;
             _controller.DotAnimationChanged += Invalidate;
@@ -69,10 +74,21 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
         var pending = new List<DrawingObject>();
         _indices.Clear();
         int first = 0;
+        int firstUpper = -1;
+        bool placeLiveInk = controller.Playback is null && controller.HasInkAboveActiveLayer;
         for (int index = 0; index < controller.DrawingObjects.Count; index++)
         {
             var item = controller.DrawingObjects[index];
-            _indices[item.Id] = index;
+            _indices[item.Id] = index * 2 + 2;
+            if (placeLiveInk && firstUpper < 0 && item.InkLayerIndex > controller.ActiveInkLayer)
+            {
+                firstUpper = index;
+                if (pending.Count > 0)
+                {
+                    groups.Add((first, pending.ToArray()));
+                    pending.Clear();
+                }
+            }
             if (item.Element is BoardSelectionElement { Media: not null })
             {
                 if (pending.Count > 0)
@@ -111,19 +127,47 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
                 Children.Add(run.Canvas);
             }
             var current = _runs[index];
+            current.Cache.RasterBudgetBytes = 64L * 1024 * 1024 / groups.Count;
             if (!current.Objects.SequenceEqual(groups[index].Objects)) current.Objects = groups[index].Objects;
-            SetZIndex(current.Canvas, groups[index].Index);
+            SetZIndex(current.Canvas, groups[index].Index * 2 + 2);
             current.Cache.Invalidate();
             current.Canvas.Invalidate();
         }
         _scene.Strokes.Retain(controller.Document.Strokes);
         _scene.Images.Retain(controller);
+        _scene.RetainNativeElements(controller.DrawingObjects);
+        UpdateLiveCanvas(firstUpper);
+    }
+
+    private void UpdateLiveCanvas(int firstUpper)
+    {
+        if (firstUpper < 0)
+        {
+            if (_liveCanvas is null) return;
+            Children.Remove(_liveCanvas);
+            _liveCanvas.RemoveFromVisualTree();
+            _liveCanvas = null;
+            return;
+        }
+        if (_liveCanvas is null)
+        {
+            _liveCanvas = new CanvasControl { IsHitTestVisible = false, Width = ActualWidth, Height = ActualHeight,
+                ClearColor = Microsoft.UI.Colors.Transparent };
+            _liveCanvas.Draw += (_, args) =>
+            {
+                if (!_suspended) _scene.DrawLiveInk(args.DrawingSession, _controller, _controller.ViewTransform);
+            };
+            Children.Add(_liveCanvas);
+        }
+        SetZIndex(_liveCanvas, firstUpper * 2 + 1);
+        _liveCanvas.Invalidate();
     }
 
     public void Invalidate()
     {
         if (_suspended) return;
         foreach (var run in _runs) run.Canvas.Invalidate();
+        _liveCanvas?.Invalidate();
     }
 
     public void SuspendRendering()
@@ -154,6 +198,7 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
     {
         if (_controller is not null) _controller.DotAnimationChanged -= Invalidate;
         ClearRuns();
+        UpdateLiveCanvas(-1);
         _scene.Dispose();
     }
 }

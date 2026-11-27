@@ -1,4 +1,6 @@
 using System.Numerics;
+using Clipper2Lib;
+using InkCanvas.Core.Shapes;
 
 namespace InkCanvas.Core.Ink;
 
@@ -19,6 +21,12 @@ public static class StrokeEraser
             return false;
         }
 
+        if (stroke.ShapeSource?.Geometry is { IsFill: true })
+            return EraseFill(stroke, center, radius, remaining);
+        if (stroke.ShapeSource?.Geometry is { Construction: ShapeConstruction.Connector,
+            LineStyle: ShapeLineStyle.Dashed or ShapeLineStyle.Dotted })
+            return ErasePatternedConnector(stroke, center, radius, remaining);
+
         var points = stroke.Points;
         if (points.Count == 1)
         {
@@ -34,13 +42,16 @@ public static class StrokeEraser
         bool touched = false;
         var fragments = new List<List<InkPoint>>();
         var current = new List<InkPoint>();
+        Span<float> cuts = stackalloc float[4];
 
         for (int segment = 1; segment < points.Count; segment++)
         {
             InkPoint a = points[segment - 1], b = points[segment];
             Vector2 p0 = a.Position, d = b.Position - p0, f = p0 - center;
             float aa = Vector2.Dot(d, d);
-            var cuts = new List<float> { 0f, 1f };
+            cuts[0] = 0f;
+            cuts[1] = 1f;
+            int cutCount = 2;
 
             if (aa > 1e-8f)
             {
@@ -52,13 +63,13 @@ public static class StrokeEraser
                     float root = MathF.Sqrt(discriminant);
                     float t1 = (-bb - root) / (2f * aa);
                     float t2 = (-bb + root) / (2f * aa);
-                    if (t1 > 0f && t1 < 1f) cuts.Add(t1);
-                    if (t2 > 0f && t2 < 1f) cuts.Add(t2);
+                    if (t1 > 0f && t1 < 1f) cuts[cutCount++] = t1;
+                    if (t2 > 0f && t2 < 1f) cuts[cutCount++] = t2;
                 }
             }
-            cuts.Sort();
+            cuts[..cutCount].Sort();
 
-            for (int i = 1; i < cuts.Count; i++)
+            for (int i = 1; i < cutCount; i++)
             {
                 float t0 = cuts[i - 1], t1 = cuts[i];
                 float tm = (t0 + t1) * 0.5f;
@@ -82,14 +93,16 @@ public static class StrokeEraser
             return false;
         }
 
+        var source = AsContours(stroke.ShapeSource);
         foreach (var fragment in fragments)
         {
             if (fragment.Count == 0) continue;
             var copy = new InkStroke(stroke.Attributes.Clone())
             {
+                InkLayerIndex = stroke.InkLayerIndex,
                 LayerOrder = stroke.LayerOrder,
                 IsRecognizedShape = stroke.IsRecognizedShape,
-                ShapeSource = stroke.ShapeSource,
+                ShapeSource = source,
             };
             copy.RestorePoints(fragment);
             copy.Complete();
@@ -97,6 +110,59 @@ public static class StrokeEraser
             remaining.Add(copy);
         }
         return true;
+    }
+
+    private static ShapeSource AsContours(ShapeSource source) => source?.Geometry is { IsEditable: true } geometry
+        ? ShapeSource.FromGeometry(source.GroupId, geometry.AsContours()) : source;
+
+    private static bool EraseFill(InkStroke stroke, Vector2 center, float radius, List<InkStroke> remaining)
+    {
+        if (stroke.DistanceTo(center) < radius)
+        {
+            const double scale = 1024;
+            var subject = FilledInkGeometry.ToPaths(stroke, scale);
+            int segments = (int)Math.Clamp(Math.Ceiling(Math.PI * Math.Sqrt(radius / 0.25)), 32, 512);
+            var disc = new Path64(segments);
+            for (int i = 0; i < segments; i++)
+            {
+                var (sin, cos) = Math.SinCos(i * Math.Tau / segments);
+                disc.Add(new Point64((center.X + radius * cos) * scale, (center.Y + radius * sin) * scale));
+            }
+            var clipped = Clipper.Difference(subject, new Paths64 { disc }, FillRule.NonZero);
+            if (Math.Abs(Clipper.Area(subject)) - Math.Abs(Clipper.Area(clipped)) > 1)
+            {
+                if (clipped.Count > 0)
+                {
+                    var fragment = FilledInkGeometry.FromPaths(stroke, clipped, scale);
+                    fragment.ObjectFrame = stroke.ObjectFrame;
+                    remaining.Add(fragment);
+                }
+                return true;
+            }
+        }
+        remaining.Add(stroke);
+        return false;
+    }
+
+    private static bool ErasePatternedConnector(InkStroke stroke, Vector2 center, float radius, List<InkStroke> remaining)
+    {
+        bool touched = false;
+        var source = AsContours(stroke.ShapeSource);
+        foreach (var contour in ShapeDefinition.RenderContours(stroke))
+        {
+            contour.InkLayerIndex = stroke.InkLayerIndex;
+            contour.LayerOrder = stroke.LayerOrder;
+            contour.ShapeSource = source;
+            contour.ObjectFrame = stroke.ObjectFrame;
+            touched |= EraseDisc(contour, center, radius, out var fragments);
+            remaining.AddRange(fragments);
+        }
+        if (!touched)
+        {
+            remaining.Clear();
+            remaining.Add(stroke);
+        }
+        return touched;
     }
 
     private static InkPoint Interpolate(in InkPoint a, in InkPoint b, float t) => new(

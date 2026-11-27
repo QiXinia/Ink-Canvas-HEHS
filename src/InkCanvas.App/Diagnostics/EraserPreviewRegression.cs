@@ -5,6 +5,7 @@ using InkCanvas.App.Services;
 using InkCanvas.App.Views;
 using InkCanvas.Controls.Controls;
 using InkCanvas.Core.Ink;
+using InkCanvas.Core.Shapes;
 using InkCanvas.Features.Board;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
@@ -49,6 +50,24 @@ internal static class EraserPreviewRegression
                 controller.EraserMode = InkEraserMode.WholeStroke;
                 Draw();
                 Check("stroke eraser hides area circle", target.GetPixelBytes().All(value => value == 0));
+
+                controller.ViewTransform = Matrix3x2.Identity;
+                controller.EraserMode = InkEraserMode.Area;
+                controller.Document.AddRange(new ShapeDefinition
+                {
+                    Kind = ShapeKind.Rectangle, Parameters = [20, 20, 180, 140],
+                    Vertices = [20, 20, 180, 20, 180, 140, 20, 140], FillColor = 0xFF369AFF,
+                }.Generate(new StrokeAttributes { BaseWidth = 4 }, Guid.NewGuid()));
+                controller.OnPointerDown(Sample(100, 80)); controller.OnPointerUp(Sample(100, 80));
+                using (var drawing = target.CreateDrawingSession())
+                {
+                    drawing.Clear(Microsoft.UI.Colors.Transparent);
+                    scene.DrawCommitted(drawing, controller);
+                }
+                pixels = target.GetPixelBytes();
+                Check("Win2D retains the outline and a transparent cut in the fill",
+                    Alpha(pixels, 320, 100, 80) == 0 && Alpha(pixels, 320, 60, 80) == 255 && Alpha(pixels, 320, 100, 20) == 255);
+                await target.SaveAsync(Path.Combine(directory, "area-erased-shape.png"), CanvasBitmapFileFormat.Png);
 
                 void Draw()
                 {

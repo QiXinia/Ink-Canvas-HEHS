@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
 using InkCanvas.AnalyticGeometry.Algebra;
 using InkCanvas.AnalyticGeometry.Construction;
@@ -51,7 +52,7 @@ public static class WorkbenchDiagnostics
             Check("workbench fraction template selects its numerator", window.FormulaInput.Text == "h(x)=(□)/(□)" && window.FormulaInput.SelectedText == "□");
             window.Keyboard.SendKey("x"); window.Keyboard.SendKey("x²"); window.Keyboard.SendKey("⇥"); window.Keyboard.SendKey("2");
             await Task.Delay(200);
-            Check("workbench keyboard fills and navigates structural placeholders", window.FormulaInput.Text == "h(x)=(x^2)/(2)");
+            Check("workbench keyboard fills and navigates structural placeholders", window.FormulaInput.Text == "h(x)=(x^2)/(2)", window.FormulaInput.Text);
             Check("main plugin entry displays MathML before creating a shape", window.FormulaMathML?.Contains("mfrac", StringComparison.Ordinal) == true,
                 new { nativeRichEdit = window.FormulaUsesRichEdit });
             window.Execute(window.FormulaInput.Text); await window.CalculateAsync();
@@ -76,6 +77,7 @@ public static class WorkbenchDiagnostics
             window.FormulaInput.Text = "f(x)=";
             await Task.Delay(150);
             Check("incomplete input hides the previous mathematical preview", Descendants(window.Content).OfType<MathFormulaView>()
+                .Where(view => AutomationProperties.GetName(view) == "输入公式排版")
                 .All(view => view.Visibility == Visibility.Collapsed));
             window.FormulaInput.Text = "";
             keyboardPanel.IsExpanded = false;
@@ -120,7 +122,8 @@ public static class WorkbenchDiagnostics
             window.Keyboard.SendKey("x²");
             Check("native math keyboard preserves caret insertion", input.Text == "x^2");
             input.Text = "Integral(f,x,0,3)";
-            var tabs = Descendants(window.Content).OfType<Controls.Controls.SegmentedSelector>().First();
+            var tabs = Descendants(window.Content).OfType<Controls.Controls.SegmentedSelector>()
+                .First(selector => AutomationProperties.GetName(selector) == "工作区视图切换");
             tabs.SelectedIndex = 2;
             await window.CalculateCasAsync();
             await Task.Delay(80);
@@ -163,6 +166,24 @@ public static class WorkbenchDiagnostics
             }
             GeometryWorkbenchWindow.ExportPdf(Path.Combine(directory, "construction.pdf"), window.Document.State, window.Evaluation);
             Check("native vector PDF export", new FileInfo(Path.Combine(directory, "construction.pdf")).Length > 300);
+            await File.WriteAllTextAsync(Path.Combine(directory, "construction-pstricks.tex"),
+                ConstructionExport.Pstricks(window.Document.State, window.Evaluation));
+            var animation = window.Document.State with
+            {
+                Objects = window.Document.State.Objects.Select(item => item.Label == "a" ? item with { Animate = true } : item).ToList(),
+            };
+            string gifPath = Path.Combine(directory, "construction.gif");
+            await window.WriteAnimatedGifAsync(gifPath, animation);
+            using (var gif = File.OpenRead(gifPath).AsRandomAccessStream())
+            {
+                var decoder = await BitmapDecoder.CreateAsync(BitmapDecoder.GifDecoderId, gif);
+                var first = await decoder.GetFrameAsync(0);
+                var later = await decoder.GetFrameAsync(16);
+                var firstPixels = (await first.GetPixelDataAsync()).DetachPixelData();
+                var laterPixels = (await later.GetPixelDataAsync()).DetachPixelData();
+                Check("animated GIF contains 64 changing frames", decoder.FrameCount == 64
+                    && decoder.PixelWidth == 480 && decoder.PixelHeight == 360 && !firstPixels.SequenceEqual(laterPixels));
+            }
             await ScreenshotAsync(window, Path.Combine(directory, "workbench-2d.png"));
             window.Document.Load(new() { ThreeDimensional = true });
             window.Execute("g=Cube((-2,-2,-2),4);p=Plane((0,0,0),Vector((1,1,1)));c=Intersect(p,g)");
@@ -170,6 +191,161 @@ public static class WorkbenchDiagnostics
             Check("3D view renders solid and section", window.Evaluation.Values["c"].Paths.Count > 0);
             Check("3D mode button follows loaded construction", Descendants(window.Content).OfType<Controls.Controls.SegmentedSelector>().Any(selector => selector.SelectedIndex == 1));
             await ScreenshotAsync(window, Path.Combine(directory, "workbench-3d.png"));
+            window.Document.SetView(window.Document.State with { Perspective = true, Anaglyph = true });
+            await ScreenshotAsync(window, Path.Combine(directory, "workbench-anaglyph.png"));
+            window.Document.SetView(window.Document.State with { AnaglyphBlue = true });
+            await ScreenshotAsync(window, Path.Combine(directory, "workbench-anaglyph-blue.png"));
+            window.Document.Load(new());
+            window.Execute("a=0;A=(0,0);B=(2,0);M=Midpoint(A,B)");
+            await window.CalculateAsync();
+            window.Document.RegisterEvent("*", "OnRename", "js: if (eventTarget === 'P' && previousEventTarget === 'A') ggbApplet.setValue('a', 7);");
+            window.Execute("Rename(A,P)");
+            for (int attempt = 0; attempt < 20 && window.Document.State.Objects.First(item => item.Label == "a").Definition != "7"; attempt++)
+                await Task.Delay(20);
+            await window.CalculateAsync();
+            Check("construction event registration preserves rename context and dependent geometry",
+                window.Evaluation.Values["a"].Number == 7 && window.Evaluation.Values["M"].Origin.X == 1);
+
+            string geoGebra = Path.Combine(directory, "applet.ggb");
+            using (var file = File.Create(geoGebra))
+            using (var ggb = new ZipArchive(file, ZipArchiveMode.Create))
+            {
+                using (var xml = new StreamWriter(ggb.CreateEntry("geogebra.xml").Open()))
+                    xml.Write("""
+                        <geogebra><construction>
+                          <element type="numeric" label="n"><value val="0"/></element>
+                          <element type="numeric" label="mode"><value val="0"/></element>
+                          <element type="button" label="next"><caption val="Next"/><listener type="objectClick" val="nextStep"/></element>
+                        </construction></geogebra>
+                        """);
+                using var js = new StreamWriter(ggb.CreateEntry("geogebra_javascript.js").Open());
+                js.Write("""
+                    function ggbOnInit() {
+                        ggbApplet.setValue('n', 1);
+                        ggbApplet.registerClientListener(onClient);
+                    }
+                    function onClient(event) {
+                        if (event.type === 'setMode') ggbApplet.setValue('mode', Number(event.argument));
+                    }
+                    function nextStep() { ggbApplet.setValue('n', ggbApplet.getValue('n') + 1); }
+                    """);
+            }
+            await window.OpenConstructionAsync(geoGebra);
+            Check("GeoGebra opens through the workbench and runs applet initialization", window.Evaluation.Values["n"].Number == 1);
+            var next = Descendants(window.Content).OfType<Button>().First(button => Equals(button.Content, "Next"));
+            ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
+            for (int attempt = 0; attempt < 30 && window.Document.State.Objects.First(item => item.Label == "n").Definition != "2"; attempt++)
+                await Task.Delay(20);
+            await window.CalculateAsync();
+            Check("imported GeoGebra control dispatches its object listener", window.Evaluation.Values["n"].Number == 2);
+            tabs.SelectedIndex = 3;
+            await Task.Delay(100);
+            var attachmentTool = Descendants(window.Content).OfType<Button>()
+                .Single(button => AutomationProperties.GetName(button) == "几何工具 附着 / 脱离");
+            ((IInvokeProvider)new ButtonAutomationPeer(attachmentTool).GetPattern(PatternInterface.Invoke)).Invoke();
+            for (int attempt = 0; attempt < 30 && window.Document.State.Objects.First(item => item.Label == "mode").Definition != "67"; attempt++)
+                await Task.Delay(20);
+            await window.CalculateAsync();
+            Check("selecting attachment tool emits the GeoGebra mode number", window.Evaluation.Values["mode"].Number == 67);
+
+            window.Document.Load(new());
+            window.Execute("A=(-6,-2);B=(2,-2);s=Segment(A,B);c=Circle((5,3),2);"
+                + "l=Line((-7,6),(-7,2));m=Line((-9,4),(-5,4))");
+            await window.CalculateAsync();
+            var view = Descendants(window.Content).OfType<ConstructionView>().Single();
+            async Task SelectDrawingTool(string name)
+            {
+                var button = Descendants(window.Content).OfType<Button>()
+                    .Single(candidate => AutomationProperties.GetName(candidate) == "几何工具 " + name);
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+                await Task.Delay(35);
+            }
+            void Pick(double x, double y) => view.PickConstructionAt(view.Project(new(x, y)));
+            GeometryValue LastValue() => window.Evaluation.Values[window.Document.State.Objects[^1].Label];
+
+            int originalCount = window.Document.State.Objects.Count;
+            await SelectDrawingTool("中点 / 中心");
+            Pick(-3, -2);
+            await window.CalculateAsync();
+            Check("midpoint tool accepts a segment with no helper point", window.Document.State.Objects.Count == originalCount + 1
+                && LastValue().Kind == GeometryKind.Point && LastValue().Origin == new GeoVector(-2, -2));
+            Pick(5, 5);
+            await window.CalculateAsync();
+            Check("midpoint tool accepts a circle", LastValue().Origin == new GeoVector(5, 3));
+            window.Execute("B=(4,-2)");
+            await window.CalculateAsync();
+            var midpoint = window.Document.State.Objects.Single(item => item.Definition == "Midpoint(s)");
+            Check("midpoint follows an edited endpoint", window.Evaluation.Values[midpoint.Label].Origin == new GeoVector(-1, -2));
+
+            await SelectDrawingTool("角平分线");
+            Pick(-7, 6);
+            Pick(-4, 4);
+            await window.CalculateAsync();
+            Check("angle bisector accepts two lines", LastValue().Items.Count == 2);
+            await SelectDrawingTool("交点");
+            Pick(-7, 4);
+            await window.CalculateAsync();
+            Check("intersection tool selects both paths at their crossing", LastValue().Kind == GeometryKind.Point
+                && LastValue().Origin == new GeoVector(-7, 4));
+            await SelectDrawingTool("斜率");
+            int beforeInvalidPick = window.Document.State.Objects.Count;
+            Pick(0, 6);
+            Check("object-only tool ignores empty space", window.Document.State.Objects.Count == beforeInvalidPick);
+            await SelectDrawingTool("距离 / 长度");
+            Pick(-3, -2);
+            await window.CalculateAsync();
+            Check("length tool creates a dynamic canvas measurement", LastValue().Number == 10 && LastValue().TextAnchor == new GeoVector(-1, -2));
+            await SelectDrawingTool("对象上的点");
+            Pick(5, 3);
+            await window.CalculateAsync();
+            Check("point tool places a constrained region point", LastValue().AttachmentTarget?.Kind == GeometryKind.Circle
+                && ConstructionDocument.IsRegionPoint(window.Document.State.Objects[^1]));
+
+            await SelectDrawingTool("定半径圆");
+            int beforeDialog = window.Document.State.Objects.Count;
+            Pick(0, -4);
+            await Task.Delay(150);
+            var root = (FrameworkElement)window.Content;
+            ContentDialog RadiusDialog() => VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot)
+                .Where(popup => popup.IsOpen).SelectMany(popup => Descendants(popup.Child)).OfType<ContentDialog>().FirstOrDefault();
+            async Task<ContentDialog> WaitForRadiusDialog()
+            {
+                for (int attempt = 0; attempt < 20; attempt++)
+                {
+                    if (RadiusDialog() is { } dialog) return dialog;
+                    await Task.Delay(50);
+                }
+                throw new InvalidOperationException($"Radius dialog did not open. {window.StatusText}");
+            }
+            void InvokeDialogButton(ContentDialog dialog, string name)
+            {
+                var buttons = Descendants(dialog).OfType<Button>().ToArray();
+                var button = buttons.FirstOrDefault(candidate => candidate.Name == name)
+                    ?? throw new InvalidOperationException($"Missing {name}. Buttons: {string.Join(", ", buttons.Select(candidate => candidate.Name))}");
+                ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
+            }
+            InvokeDialogButton(await WaitForRadiusDialog(), "CloseButton");
+            for (int attempt = 0; attempt < 20 && RadiusDialog() is not null; attempt++) await Task.Delay(50);
+            await Task.Delay(350);
+            Check("cancelling radius input leaves no extra center point", window.Document.State.Objects.Count == beforeDialog);
+            Pick(0, -4);
+            InvokeDialogButton(await WaitForRadiusDialog(), "PrimaryButton");
+            await Task.Delay(200);
+            await window.CalculateAsync();
+            Check("confirming radius input creates the center and circle", window.Document.State.Objects.Count == beforeDialog + 2
+                && LastValue().Radius == 3);
+            window.Document.Undo();
+            await window.CalculateAsync();
+            Check("one undo removes the circle and its new center", window.Document.State.Objects.Count == beforeDialog);
+            tabs.SelectedIndex = 0;
+
+            window.Document.Load(new() { Objects = Enumerable.Range(1, 1000).Select(index => new ConstructionObject
+                { Label = "P" + index, Definition = $"({index % 20},{index % 10})" }).ToList() });
+            await window.CalculateAsync();
+            await Task.Delay(150);
+            var algebraList = Descendants(window.Content).OfType<ListView>().First(list => list.Items.Count == 1000);
+            var visibleRows = Descendants(algebraList).OfType<ListViewItem>().Count(row => row.Tag is string);
+            Check("large imported constructions only realize visible algebra rows", visibleRows is > 0 and < 100, visibleRows);
             window.Close(); window = null;
             Check("closing workbench releases canvas preview", target.Controller.ExtensionPreview.Count == 0);
             window = new(host); window.Activate(); await window.CalculateAsync();

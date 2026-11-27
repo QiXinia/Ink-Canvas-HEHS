@@ -76,7 +76,7 @@ public sealed class SelectionToolbarWindow : Window
     {
         var controller = _shell.Services.OverlayInk;
         if (!_shell.DesktopSelectionAvailable || !controller.HasSelection || controller.Playback is not null
-            || controller.IsMarqueeSelecting || controller.IsRotatingSelection)
+            || controller.IsRegionSelecting || controller.IsRotatingSelection)
         {
             Hide();
             return;
@@ -114,8 +114,10 @@ public sealed class SelectionToolbarWindow : Window
         scale = Math.Min(scale, Math.Min(work.Width / (desired.Width * dpi), work.Height / (desired.Height * dpi)));
         int width = Math.Max(1, (int)Math.Ceiling(desired.Width * scale * dpi));
         int height = Math.Max(1, (int)Math.Ceiling(desired.Height * scale * dpi));
+        var screenTransform = Matrix3x2.CreateScale(overlay.DpiScale) * Matrix3x2.CreateTranslation(overlay.X, overlay.Y);
+        var (first, second) = controller.AdvancedReferencePositions(screenTransform);
         var place = FloatingToolbarLayout.Place(work, selection, _shell.DesktopToolbarBounds,
-            new Vector2(width, height), (float)(10 * dpi));
+            new Vector2(width, height), (float)(10 * dpi), first, second);
         // Input can arrive several times per frame. Skip HWND sizing unless geometry changed.
         var rounded = new Rect(MathF.Round(place.Left), MathF.Round(place.Top), MathF.Round(place.Left) + width, MathF.Round(place.Top) + height);
         if (rounded != _lastPlacement || Math.Abs(scale - _lastScale) > .001)

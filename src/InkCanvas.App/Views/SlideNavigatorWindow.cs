@@ -4,6 +4,7 @@ using InkCanvas.Features.Ppt;
 using InkCanvas.Platform.System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -23,9 +24,9 @@ public sealed class SlideNavigatorWindow : Window
 
     private readonly StackPanel _list = new() { Spacing = 6 };
     private readonly TextBlock _emptyText;
-    private readonly Button _allFilter;
-    private readonly Button _annotatedFilter;
-    private readonly Button _favoriteFilter;
+    private readonly ToggleButton _allFilter;
+    private readonly ToggleButton _annotatedFilter;
+    private readonly ToggleButton _favoriteFilter;
     private readonly Border _root;
     private readonly Dictionary<string, BitmapImage> _thumbCache = new();
     private readonly List<InMemoryRandomAccessStream> _streams = new();
@@ -193,21 +194,14 @@ public sealed class SlideNavigatorWindow : Window
 
     private void UpdateFilterVisual()
     {
-        ApplyFilterStyle(_allFilter, _filter == SlideFilter.All);
-        ApplyFilterStyle(_annotatedFilter, _filter == SlideFilter.Annotated);
-        ApplyFilterStyle(_favoriteFilter, _filter == SlideFilter.Favorite);
+        _allFilter.IsChecked = _filter == SlideFilter.All;
+        _annotatedFilter.IsChecked = _filter == SlideFilter.Annotated;
+        _favoriteFilter.IsChecked = _filter == SlideFilter.Favorite;
     }
 
-    private void ApplyFilterStyle(Button button, bool active)
+    private ToggleButton FilterButton(string text, SlideFilter filter)
     {
-        button.Background = active ? Resolve("IcAccentSoftBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        button.Foreground = active ? Resolve("IcAccentBrush") : Resolve("IcTextSecondaryBrush");
-        button.BorderBrush = active ? Resolve("IcAccentBrush") : Resolve("IcStrokeBrush");
-    }
-
-    private Button FilterButton(string text, SlideFilter filter)
-    {
-        var button = new Button
+        var button = new ToggleButton
         {
             Content = text,
             MinHeight = 32,
@@ -323,14 +317,16 @@ public sealed class SlideNavigatorWindow : Window
         grid.Children.Add(info);
         grid.Children.Add(star);
 
+        var selection = new SelectionIndicator { IsSelected = current, CornerRadius = new CornerRadius(8) };
+        selection.UseLeadingMarker();
         var row = new Button
         {
-            Content = grid,
-            Padding = new Thickness(6),
+            Content = new Grid { Children = { selection, new Border { Padding = new Thickness(10, 6, 6, 6), Child = grid } } },
+            Padding = new Thickness(0),
             MinHeight = 75,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Background = current ? Resolve("IcAccentSoftBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderBrush = current ? Resolve("IcAccentBrush") : new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
         };

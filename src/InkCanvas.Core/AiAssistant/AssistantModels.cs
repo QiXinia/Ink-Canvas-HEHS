@@ -80,6 +80,8 @@ public sealed class AssistantRegion
 
 public sealed class AssistantRequest
 {
+    /// <summary>Previous visible conversation turns, oldest first. Screenshots remain in Images.</summary>
+    public IReadOnlyList<AssistantMessage> Messages { get; set; } = Array.Empty<AssistantMessage>();
     public string ImageBase64 { get; set; } = "";
 
     public IReadOnlyList<AssistantStroke> InkStrokes { get; set; } = Array.Empty<AssistantStroke>();
@@ -89,6 +91,8 @@ public sealed class AssistantRequest
     public AssistantMode Mode { get; set; }
 
     public string SessionId { get; set; } = "";
+
+    public string Question { get; set; } = "";
 
     public AssistantStage Stage { get; set; } = AssistantStage.WithImage;
 
@@ -100,14 +104,8 @@ public sealed class AssistantRequest
     /// <summary>讲题模式；服务端据此裁剪答案与分步。</summary>
     public AssistantTeachingMode Teaching { get; set; } = AssistantTeachingMode.StepByStep;
 
-    /// <summary>请求用途：空为普通讲题，<c>variant</c> 表示变式题，<c>board_write</c> 表示 AI 板书整理/书写。</summary>
+    /// <summary>请求用途：空为普通讲题，<c>variant</c> 表示生成同知识点变式题。</summary>
     public string Purpose { get; set; } = "";
-
-    /// <summary>板书整理/书写的自然语言指令；仅 <see cref="Purpose"/> 为 <c>board_write</c> 时下发。</summary>
-    public string Instruction { get; set; } = "";
-
-    /// <summary>板书写入的目标页索引；-1 表示未指定，由服务端或客户端默认当前页。</summary>
-    public int TargetPageIndex { get; set; } = -1;
 
     /// <summary>变式题难度：basic / advanced；普通讲题为空。</summary>
     public string Difficulty { get; set; } = "";
@@ -115,6 +113,8 @@ public sealed class AssistantRequest
     /// <summary>课件上下文（标题/本页/前后页文本），仅作辅助，不覆盖框选。</summary>
     public SlideContext SlideContext { get; set; }
 }
+
+public sealed record AssistantMessage(string Role, string Content);
 
 public enum AssistantEventKind
 {
@@ -124,7 +124,6 @@ public enum AssistantEventKind
     ShapeAnnotation,
     Done,
     Error,
-    BoardPlan,
 }
 
 public sealed class AssistantEvent
@@ -183,9 +182,6 @@ public sealed class AssistantSession
 
     /// <summary>服务端自检标记，null 表示未校验。</summary>
     public bool? Verified { get; set; }
-
-    /// <summary>AI 板书计划；仅 <c>board_plan</c> 事件解析成功后填充。</summary>
-    public AssistantBoardPlan BoardPlan { get; set; }
 
     /// <summary>弱网首屏本地提示，不参与最终结果。</summary>
     public string LocalHint { get; set; } = "";

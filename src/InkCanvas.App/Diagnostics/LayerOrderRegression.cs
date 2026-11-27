@@ -28,6 +28,7 @@ internal static class LayerOrderRegression
         var checks = new List<object>();
         using var services = new AppServices(Path.Combine(directory, "settings"));
         services.Settings.Startup.IsAutoUpdate = false;
+        services.Settings.Archive.SaveOnExit = false;
         services.Settings.Automation.MinimumAutomationStrokeNumber = int.MaxValue;
         using var shell = new ShellController(services);
         shell.Start(); shell.StartInClickThrough();
@@ -132,6 +133,7 @@ internal static class LayerOrderRegression
                     controller.SelectedElements.Add(store.GetSelectionElements().Single(element => element.Id == image.Id));
                     await board.ExportSelectionImageAsync(Path.Combine(directory, "mixed-export.png")).WaitAsync(TimeSpan.FromSeconds(8));
                     shell.ToggleBoard();
+                    for (int attempt = 0; attempt < 30 && shell.OpenWindows.OfType<BoardWindow>().Any(); attempt++) await Task.Delay(50);
                     Check("board closes cleanly after mixed layer edits", !shell.OpenWindows.OfType<BoardWindow>().Any());
                 }
 

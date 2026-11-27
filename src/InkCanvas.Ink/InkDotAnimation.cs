@@ -20,7 +20,7 @@ public sealed class InkDotAnimation
         SourceVersion = source.GeometryVersion;
         _initial = provisional.Points.ToArray();
         _points = new InkPoint[_initial.Length];
-        Preview = new InkStroke(source.Attributes.Clone());
+        Preview = new InkStroke(source.Attributes.Clone()) { InkLayerIndex = source.InkLayerIndex };
         UpdateShape();
     }
 

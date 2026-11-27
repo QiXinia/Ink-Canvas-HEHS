@@ -3,9 +3,10 @@ using System.Numerics;
 namespace InkCanvas.AnalyticGeometry.Construction;
 
 /// <summary>One projection shared by the native view, vector exports and canvas insertion.</summary>
-public sealed class GeometryProjection(ConstructionSnapshot view, double width, double height)
+public sealed class GeometryProjection(ConstructionSnapshot view, double width, double height, int stereoEye = 0)
 {
     private readonly double _scale = Math.Min(width / (view.XMax - view.XMin), height / (view.YMax - view.YMin));
+    public double Scale => _scale;
     public Vector2 Project(GeoVector point)
     {
         double x = point.X, y = point.Y;
@@ -20,7 +21,9 @@ public sealed class GeometryProjection(ConstructionSnapshot view, double width, 
             {
                 double distance = (view.XMax - view.XMin) * 2;
                 double scale = distance / Math.Max(distance * .15, distance - Depth(point));
-                x *= scale;
+                // Parallel cameras with a shared convergence plane at zero depth.
+                double eye = stereoEye * (view.XMax - view.XMin) * .045;
+                x = x * scale + eye * (1 - scale);
                 y *= scale;
             }
         }
@@ -63,6 +66,13 @@ public sealed class GeometryProjection(ConstructionSnapshot view, double width, 
 
     public IEnumerable<Vector2[]> Paths(GeometryValue value)
     {
+        if (value.Kind == GeometryKind.List)
+        {
+            foreach (var item in value.Items)
+            foreach (var path in Paths(item))
+                yield return path;
+            yield break;
+        }
         IEnumerable<GeoVector[]> paths = value.Paths;
         if (value.Kind is GeometryKind.Line or GeometryKind.Ray)
         {
@@ -94,6 +104,19 @@ public sealed class GeometryProjection(ConstructionSnapshot view, double width, 
                 }
             }
             if (current.Count > 1) yield return current.ToArray();
+        }
+        if (value.Kind == GeometryKind.Vector && value.Paths.Count > 0 && value.Paths[0].Length >= 2)
+        {
+            var start = Project(value.Paths[0][0]);
+            var tip = Project(value.Paths[0][^1]);
+            var direction = tip - start;
+            float length = direction.Length();
+            if (length > 1 && float.IsFinite(length) && tip.X >= 0 && tip.X <= width && tip.Y >= 0 && tip.Y <= height)
+            {
+                var back = direction * (Math.Min(12, length * .5f) / length);
+                var side = new Vector2(-back.Y, back.X) * .45f;
+                yield return [tip - back + side, tip, tip - back - side];
+            }
         }
     }
 

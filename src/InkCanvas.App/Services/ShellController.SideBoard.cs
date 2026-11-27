@@ -1,143 +1,90 @@
 using InkCanvas.App.Views;
-using InkCanvas.Core.AiAssistant;
 using Microsoft.UI.Xaml;
 
 namespace InkCanvas.App.Services;
 
-/// <summary>板中板窗口的 Shell 接入：单实例、Show/Hide 保留内容、随主展板一并关闭。</summary>
 public sealed partial class ShellController
 {
-    private SideBoardWindow _sideBoard;
-
-    /// <summary>诊断/自测入口：当前存活的子板窗口（未创建时为 null），不参与产品逻辑。</summary>
-    internal SideBoardWindow CurrentSideBoard => _sideBoard;
+    private BoardWindow _sideBoard;
+    private bool _sideBoardTarget;
+    private bool _assistantHiddenWithSideBoard;
+    private BoardWindow ActiveBoardWindow => _sideBoardTarget ? _sideBoard ?? _board : _board;
+    internal BoardWindow MainBoardWindow => _board;
 
     public void ToggleSideBoard()
     {
-        if (_disposed || _exiting) return;
-        if (_board is null)
-        {
-            ToggleBoard();
-            if (_board is null) return;
-        }
+        if (_disposed || _exiting || _board is null) return;
+        if (_sideBoard?.AppWindow.IsVisible == true) { HideSideBoard(); return; }
         if (_sideBoard is null)
         {
-            var window = new SideBoardWindow(Services, this, _board);
-            window.Closed += OnSideBoardClosed;
-            window.SideBoardVisibilityChanged += OnSideBoardVisibilityChanged;
+            var window = new BoardWindow(Services, this, _board, Services.Board.EnableSideBoard());
             _sideBoard = window;
+            window.CurrentPageChanged += OnSideBoardPageChanged;
+            window.Activated += (_, args) =>
+            {
+                if (ReferenceEquals(window, _sideBoard) && args.WindowActivationState != WindowActivationState.Deactivated)
+                    SetSideBoardTarget(true);
+            };
+            window.Closed += (_, _) =>
+            {
+                window.CurrentPageChanged -= OnSideBoardPageChanged;
+                if (!ReferenceEquals(window, _sideBoard)) return;
+                _sideBoard = null;
+                SetSideBoardTarget(false);
+            };
             NotifyWindowOpened(window);
         }
-        if (_sideBoard.IsShown)
-        {
-            _sideBoard.RequestHide();
-            return;
-        }
-        _sideBoard.ShowBoard();
-        WindowChrome.EnsureAbove(_sideBoard, WindowChrome.GetHwnd(_board));
+        WindowChrome.KeepVisible(_sideBoard);
+        _sideBoard.RestoreFromAnnotation();
         _sideBoard.Activate();
+        SetSideBoardTarget(true);
+        if (_assistantHiddenWithSideBoard)
+        {
+            _assistantHiddenWithSideBoard = false;
+            Assistant?.SetCanvasVisible(true);
+        }
     }
 
-    /// <summary>统一子板显示/收回联动：隐藏时同步隐藏 AI 浮窗（不销毁会话），显示时恢复。</summary>
-    private void OnSideBoardVisibilityChanged(bool visible)
+    internal void HideSideBoard()
     {
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[SideBoard] Shell 收到可见性：visible={visible}，assistant={_aiAssistant is not null}，"
-            + $"belongs={AssistantBelongsToSideBoard}，hiddenFlag={_aiHiddenWithSideBoard}，"
-            + $"target={AssistantTargetPolicy.Describe(_aiTarget)}",
-            Core.Diagnostics.LogType.Info);
-        if (visible) ShowAssistantForSideBoard();
-        else HideAssistantForSideBoard();
+        if (_sideBoard?.AppWindow.IsVisible != true) return;
+        if (_sideBoardTarget && Assistant?.IsOpen == true)
+        {
+            _assistantHiddenWithSideBoard = true;
+            Assistant.SetCanvasVisible(false);
+        }
+        _sideBoard.HideSideBoardWindow();
+        SetSideBoardTarget(false);
+        _board?.Activate();
     }
-
-    private void OnSideBoardClosed(object sender, WindowEventArgs args)
-    {
-        if (_sideBoard is null || !ReferenceEquals(sender, _sideBoard)) return;
-        CloseAssistantForSideBoard();
-        _sideBoard.SideBoardVisibilityChanged -= OnSideBoardVisibilityChanged;
-        _sideBoard.Closed -= OnSideBoardClosed;
-        _sideBoard = null;
-    }
-
-    /// <summary>主展板关闭时关闭子板窗口；BoardService 仍保留，重新打开时内容恢复。</summary>
-    internal void CloseSideBoardWithBoard() => CloseSideBoard();
-
-    /// <summary>应用退出时释放子板窗口与事件订阅。</summary>
-    internal void CloseSideBoardForExit() => CloseSideBoard();
-
-    internal void EnsureSideBoardOnScreen() => _sideBoard?.EnsureOnScreen();
 
     private void CloseSideBoard()
     {
-        if (_sideBoard is null) return;
         var window = _sideBoard;
-        CloseAssistantForSideBoard();
+        if (window is null) return;
+        if (_sideBoardTarget) Assistant?.SetCanvasVisible(false);
+        SetSideBoardTarget(false);
         _sideBoard = null;
-        window.SideBoardVisibilityChanged -= OnSideBoardVisibilityChanged;
-        window.Closed -= OnSideBoardClosed;
-        window.Close();
+        _assistantHiddenWithSideBoard = false;
+        window.CloseForShutdown();
     }
 
-    /// <summary>子板收回：属于子板的 AI 浮窗同步隐藏，保留会话与流不销毁。</summary>
-    private void HideAssistantForSideBoard()
+    private void SetSideBoardTarget(bool side)
     {
-        if (_aiAssistant is null)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                "[SideBoard] 隐藏 AI 浮窗跳过：_aiAssistant 为 null",
-                Core.Diagnostics.LogType.Info);
-            return;
-        }
-        if (!AssistantBelongsToSideBoard)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[SideBoard] 隐藏 AI 浮窗跳过：不属于子板（fromSideBoard={_aiAssistantFromSideBoard}，"
-                + $"target={AssistantTargetPolicy.Describe(_aiTarget)}）",
-                Core.Diagnostics.LogType.Info);
-            return;
-        }
-        _aiHiddenWithSideBoard = true;
-        _aiAssistant.AppWindow.Hide();
-        bool visibleAfter = _aiAssistant.AppWindow.IsVisible;
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[SideBoard] AppWindow.Hide 后：isVisible={visibleAfter}，hwnd=0x{WindowChrome.GetHwnd(_aiAssistant).ToInt64():X}",
-            Core.Diagnostics.LogType.Info);
-        if (visibleAfter)
-        {
-            WindowChrome.HideWindow(_aiAssistant);
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[SideBoard] Win32 兜底后：isVisible={_aiAssistant.AppWindow.IsVisible}",
-                Core.Diagnostics.LogType.Info);
-        }
+        if (_sideBoardTarget == side) return;
+        _sideBoardTarget = side;
+        _shapePicker?.Close();
+        _palette?.Close();
+        CanvasToolTargetChanged?.Invoke();
+        Assistant?.NotifyBoardChanged();
     }
 
-    /// <summary>子板再次拉出：恢复属于它的 AI 浮窗，不重建会话。</summary>
-    private void ShowAssistantForSideBoard()
+    private void OnSideBoardPageChanged()
     {
-        if (_aiAssistant is null || !_aiHiddenWithSideBoard || !AssistantBelongsToSideBoard || _sideBoard is null)
-        {
-            Core.Diagnostics.FileLog.WriteLogToFile(
-                $"[SideBoard] 恢复 AI 浮窗跳过：assistant={_aiAssistant is not null}，hiddenFlag={_aiHiddenWithSideBoard}，"
-                + $"belongs={AssistantBelongsToSideBoard}，sideBoard={_sideBoard is not null}",
-                Core.Diagnostics.LogType.Info);
-            return;
-        }
-        _aiHiddenWithSideBoard = false;
-        _aiAssistant.AppWindow.Show(activateWindow: false);
-        WindowChrome.EnsureAbove(_aiAssistant, WindowChrome.GetHwnd(_sideBoard));
-        Core.Diagnostics.FileLog.WriteLogToFile(
-            $"[SideBoard] 恢复 AI 浮窗后：isVisible={_aiAssistant.AppWindow.IsVisible}",
-            Core.Diagnostics.LogType.Info);
-    }
-
-    /// <summary>子板关闭/主展板关闭/退出：关闭属于子板的 AI 浮窗并清理流与会话。</summary>
-    private void CloseAssistantForSideBoard()
-    {
-        if (_aiAssistant is null || !AssistantBelongsToSideBoard) return;
-        var window = _aiAssistant;
-        _aiHiddenWithSideBoard = false;
-        _aiTarget = null;
-        _aiAssistantFromSideBoard = false;
-        window.Close(); // 触发 OnAiWindowClosed：停流、清会话、置空 _aiAssistant
+        if (!_sideBoardTarget) return;
+        _shapePicker?.Close();
+        _palette?.Close();
+        CanvasToolTargetChanged?.Invoke();
+        Assistant?.NotifyBoardChanged();
     }
 }

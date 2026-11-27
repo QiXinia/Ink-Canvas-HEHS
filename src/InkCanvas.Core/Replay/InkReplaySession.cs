@@ -68,7 +68,7 @@ public sealed class InkReplaySession
             var source = _source[i];
             float end = _cumulative[i];
             if (elapsedMs >= end) { result.Add(source); continue; }
-            if (elapsedMs <= 0) break;
+            if (elapsedMs <= 0 || source.ShapeSource?.Geometry?.FillContourLengths is not null) break;
             int take = Math.Clamp((int)(source.Count * (elapsedMs - start) / Math.Max(1, end - start)), Math.Min(1, source.Count), source.Count);
             if (_partialIndex != i)
             {
@@ -106,6 +106,7 @@ public sealed class InkReplaySession
                 result.Add(src);
                 continue;
             }
+            if (src.ShapeSource?.Geometry?.FillContourLengths is not null) break;
 
             float fraction = (elapsedMs - start) / Math.Max(1f, end - start);
             int take = Math.Max(1, (int)(src.Count * fraction));

@@ -18,10 +18,12 @@ public sealed class PdfAnnotationFile : IDisposable
     private readonly string _directory;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<int, IReadOnlyList<InkStroke>> _stored = new();
+    private readonly Dictionary<int, PdfPageSpacing> _spacing = new();
+    private readonly Dictionary<int, int> _rotations = new();
     public string SourcePath { get; }
     public string RenderPath { get; private set; }
     public string Password { get; }
-    public IReadOnlyList<PdfPageGeometry> Pages { get; }
+    public IReadOnlyList<PdfPageGeometry> Pages { get; private set; }
     public IEnumerable<int> InkPages => _stored.Keys;
     public IReadOnlyList<PdfBookmark> Bookmarks { get; }
     public bool ReadOnly { get; }
@@ -30,32 +32,41 @@ public sealed class PdfAnnotationFile : IDisposable
     private bool _disposed;
     private readonly Dictionary<string, (long Length, DateTime Modified)> _savedFiles = new(StringComparer.OrdinalIgnoreCase);
 
-    private PdfAnnotationFile(string path, string password, string directory, PdfDocument document, bool readOnly)
+    private PdfAnnotationFile(string path, string password, string directory, PdfDocument document, bool readOnly, CancellationToken token)
     {
         SourcePath = Path.GetFullPath(path); Password = password; _directory = directory; ReadOnly = readOnly;
         RenderPath = Path.Combine(directory, "source.pdf");
         RememberFile(SourcePath);
-        Pages = document.Pages.Cast<PdfPage>().Select(page =>
+        var pages = new PdfPageGeometry[document.PageCount];
+        for (int index = 0; index < pages.Length; index++)
         {
+            token.ThrowIfCancellationRequested();
+            var page = document.Pages[index];
             var box = page.CropBox; if (box.Width <= 0 || box.Height <= 0) box = page.MediaBox;
             double unit = page.Elements.GetReal("/UserUnit"); if (unit <= 0) unit = 1;
             var geometry = new PdfPageGeometry(box.X1, box.Y1, box.X2, box.Y2, page.Rotate, unit);
             if (!float.IsFinite(geometry.DipWidth) || !float.IsFinite(geometry.DipHeight) || geometry.DipWidth <= 0 || geometry.DipHeight <= 0)
                 throw new InvalidDataException("PDF 页面尺寸无效。");
-            return geometry;
-        }).ToArray();
+            pages[index] = geometry;
+        }
+        Pages = pages;
         HasSignatures = document.Internals.Catalog.Elements.GetDictionary("/AcroForm")?.Elements.GetInteger("/SigFlags") > 0;
         var bookmarks = new List<PdfBookmark>();
-        var pageIndices = document.Pages.Cast<PdfPage>().Select((page, index) => (page, index)).ToDictionary(item => item.page, item => item.index);
-        ReadBookmarks(document.Outlines, 0);
+        if (document.Outlines.Count > 0)
+        {
+            var pageIndices = new Dictionary<PdfPage, int>(pages.Length);
+            for (int index = 0; index < pages.Length; index++) pageIndices.Add(document.Pages[index], index);
+            ReadBookmarks(document.Outlines, pageIndices, 0);
+        }
         Bookmarks = bookmarks;
-        void ReadBookmarks(PdfOutlineCollection outlines, int depth)
+        void ReadBookmarks(PdfOutlineCollection outlines, Dictionary<PdfPage, int> pageIndices, int depth)
         {
             if (depth > 24 || bookmarks.Count >= 5000) return;
             foreach (PdfOutline outline in outlines)
             {
+                token.ThrowIfCancellationRequested();
                 if (outline.DestinationPage is { } page && pageIndices.TryGetValue(page, out int index)) bookmarks.Add(new PdfBookmark(outline.Title, index, depth));
-                if (outline.HasChildren) ReadBookmarks(outline.Outlines, depth + 1);
+                if (outline.HasChildren) ReadBookmarks(outline.Outlines, pageIndices, depth + 1);
                 if (bookmarks.Count >= 5000) return;
             }
         }
@@ -81,13 +92,16 @@ public sealed class PdfAnnotationFile : IDisposable
                 { throw new PdfPasswordRequiredException("此 PDF 需要正确的打开密码。", ex); }
                 try
                 {
-                    var session = new PdfAnnotationFile(path, password, directory, document, readOnly);
+                    var session = new PdfAnnotationFile(path, password, directory, document, readOnly, token);
                     if (session.Pages.Count == 0) throw new InvalidDataException("PDF 没有可显示的页面。");
-                    if (!readOnly && session.ExtractInk(document))
+                    if (!readOnly && session.ExtractEditableContent(document, token))
                     {
+                        token.ThrowIfCancellationRequested();
                         session.RenderPath = Path.Combine(directory, "background.pdf");
+                        document.Options.CompressContentStreams = false;
                         document.Save(session.RenderPath);
                     }
+                    token.ThrowIfCancellationRequested();
                     document.Dispose();
                     return session;
                 }
@@ -97,53 +111,121 @@ public sealed class PdfAnnotationFile : IDisposable
         catch { try { Directory.Delete(directory, true); } catch (IOException) { } throw; }
     }
     public IReadOnlyList<InkStroke> GetInk(int pageIndex) => _stored.TryGetValue(pageIndex, out var ink) ? ink : Array.Empty<InkStroke>();
+    public PdfPageSpacing GetSpacing(int pageIndex) => _spacing.GetValueOrDefault(pageIndex) ?? PdfPageSpacing.Empty;
+    public int GetDisplayRotation(int pageIndex) => _rotations.GetValueOrDefault(pageIndex);
 
-    private bool ExtractInk(PdfDocument document)
+    private bool ExtractEditableContent(PdfDocument document, CancellationToken token)
+    {
+        bool changed = ExtractInk(document, token);
+        var originalPages = (PdfPageGeometry[])Pages;
+        for (int index = 0; index < originalPages.Length; index++)
+        {
+            token.ThrowIfCancellationRequested();
+            var displayed = originalPages[index];
+            if (!PdfSpacingContent.TryRestore(document.Pages[index], displayed, out var original, out var spacing)) continue;
+            changed = true;
+            originalPages[index] = original;
+            _spacing[index] = spacing;
+            _rotations[index] = (displayed.NormalizedRotation - original.NormalizedRotation + 360) % 360;
+            var transform = displayed.TransformTo(spacing.Expand(original));
+            if (transform != Matrix3x2.Identity && _stored.TryGetValue(index, out var strokes))
+                foreach (var stroke in strokes) stroke.Transform(transform, scaleWidth: false);
+        }
+        Pages = originalPages;
+        if (changed && _stored.Count > 0)
+        {
+            var display = Pages.Select((page, index) => GetSpacing(index).Expand(page)).ToArray();
+            var distributed = PdfInkSplitter.Distribute(_stored, new PdfContinuousLayout(display), token);
+            _stored.Clear();
+            foreach (var pair in distributed) if (pair.Value.Count > 0) _stored[pair.Key] = pair.Value;
+        }
+        return changed;
+    }
+
+    private bool ExtractInk(PdfDocument document, CancellationToken token)
     {
         bool any = false;
         for (int index = 0; index < document.PageCount; index++)
         {
+            token.ThrowIfCancellationRequested();
             var page = document.Pages[index];
             if (!page.Elements.ContainsKey("/Annots")) continue;
             var strokes = new List<InkStroke>();
             for (int a = page.Annotations.Count - 1; a >= 0; a--)
             {
+                token.ThrowIfCancellationRequested();
                 var annotation = page.Annotations[a];
                 if (annotation.Elements.GetInteger("/InkCanvasVersion") != 1) continue;
                 var data = annotation.Elements.GetDictionary("/InkCanvasData");
                 try
                 {
                     if (data?.Stream is null || data.Elements.GetName("/Filter") != "/FlateDecode") throw new InvalidDataException("Unknown ink metadata encoding.");
-                    strokes.AddRange(PdfInkCodec.Decode(data.Stream.Value));
+                    var decoded = PdfInkCodec.Decode(data.Stream.Value, token);
+                    if (annotation.Elements.GetDictionary("/InkCanvasLayers")?.Stream is { } layers)
+                    {
+                        var indices = layers.Value;
+                        if (indices.Length == decoded.Count)
+                            for (int i = 0; i < decoded.Count; i++) decoded[i].InkLayerIndex = indices[i];
+                    }
+                    strokes.AddRange(decoded);
                     page.Annotations.Remove(annotation); any = true;
                 }
                 catch (Exception ex) when (ex is IOException or ArgumentException or OverflowException) { UnrecognizedInkPages++; }
             }
-            if (strokes.Count > 0) _stored[index] = strokes.GroupBy(stroke => stroke.Id).Select(group => group.Last()).OrderBy(stroke => stroke.LayerOrder ?? long.MaxValue).ToArray();
+            if (strokes.Count > 0) _stored[index] = InkStroke.InDrawingOrder(strokes.GroupBy(stroke => stroke.Id).Select(group => group.Last())).ToArray();
         }
         return any;
     }
 
-    public async Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token = default)
+    public Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token = default)
+        => SaveAsync(target, pages, null, token);
+
+    public async Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages,
+        IReadOnlyDictionary<int, int> rotations, CancellationToken token = default)
+        => await SaveAsync(target, pages, rotations, _spacing, token);
+
+    public async Task SaveAsync(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages,
+        IReadOnlyDictionary<int, int> rotations, IReadOnlyDictionary<int, PdfPageSpacing> spacing, CancellationToken token = default,
+        IReadOnlyList<int> pageOrder = null)
     {
         if (ReadOnly) throw new UnauthorizedAccessException("此 PDF 的权限只允许查看，请使用有编辑权限的文件。 ");
         target = Path.GetFullPath(target);
         if (HasSignatures && target.Equals(SourcePath, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("此 PDF 包含数字签名，请另存为批注副本。");
+        var order = pageOrder?.ToArray();
+        if (order is not null && (order.Length == 0 || order.Distinct().Count() != order.Length || order.Any(page => (uint)page >= (uint)Pages.Count)))
+            throw new ArgumentException("Invalid PDF page order.", nameof(pageOrder));
+        if (order is not null && order.SequenceEqual(Enumerable.Range(0, Pages.Count))) order = null;
+        if (order is not null)
+        {
+            var retained = order.ToHashSet();
+            pages = pages.Where(pair => retained.Contains(pair.Key)).ToDictionary();
+            spacing = spacing.Where(pair => retained.Contains(pair.Key)).ToDictionary();
+        }
         foreach (var page in pages)
         {
             if (page.Key < 0 || page.Key >= Pages.Count) throw new ArgumentOutOfRangeException(nameof(pages));
             if (page.Value.Sum(stroke => (long)stroke.Count) > PdfInkCodec.MaximumPoints) throw new InvalidDataException("单页墨迹点数过多，请拆分页保存。");
         }
+        var spacingSnapshot = spacing.Where(pair => !pair.Value.IsEmpty).ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (spacingSnapshot.Any(pair => pair.Key < 0 || pair.Key >= Pages.Count || !pair.Value.IsValid(Pages[pair.Key])))
+            throw new ArgumentException("Invalid PDF page spacing.", nameof(spacing));
+        var dimensions = Pages.Select((page, index) => spacingSnapshot.TryGetValue(index, out var layout) ? layout.Expand(page) : page).ToArray();
+        // Structural edits keep page-local ink attached to the source page, including its margins.
+        if (order is null) pages = PdfInkSplitter.Distribute(pages, new PdfContinuousLayout(dimensions));
+        var rotationSnapshot = (rotations ?? _rotations).ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (rotationSnapshot is not null && rotationSnapshot.Any(pair => pair.Key < 0 || pair.Key >= Pages.Count || pair.Value % 90 != 0))
+            throw new ArgumentException("Invalid page rotation.", nameof(rotations));
         await _gate.WaitAsync(token);
         try
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            await Task.Run(() => SaveCore(target, pages, token), token);
+            await Task.Run(() => SaveCore(target, pages, rotationSnapshot, spacingSnapshot, dimensions, order, token), token);
         }
         finally { _gate.Release(); }
     }
 
-    private void SaveCore(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, CancellationToken token)
+    private void SaveCore(string target, IReadOnlyDictionary<int, IReadOnlyList<InkStroke>> pages, IReadOnlyDictionary<int, int> rotations,
+        IReadOnlyDictionary<int, PdfPageSpacing> spacing, IReadOnlyList<PdfPageGeometry> dimensions, int[] pageOrder, CancellationToken token)
     {
         if (_savedFiles.TryGetValue(target, out var expected))
         {
@@ -155,11 +237,26 @@ public sealed class PdfAnnotationFile : IDisposable
         string temporary = Path.Combine(Path.GetDirectoryName(target)!, "." + Path.GetFileName(target) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
+            foreach (var pair in spacing)
+            {
+                token.ThrowIfCancellationRequested();
+                PdfSpacingContent.Apply(document, document.Pages[pair.Key], Pages[pair.Key], pair.Value);
+            }
+            if (rotations is not null)
+                foreach (var rotation in rotations) document.Pages[rotation.Key].Rotate = (Pages[rotation.Key].Rotation + rotation.Value + 360) % 360;
             foreach (var pair in pages.OrderBy(pair => pair.Key))
             {
                 token.ThrowIfCancellationRequested(); if (pair.Value.Count == 0) continue;
-                var page = document.Pages[pair.Key]; var geometry = Pages[pair.Key];
-                var expanded = PdfPageBleed.IncludeInk(geometry, pair.Value);
+                var page = document.Pages[pair.Key]; var geometry = dimensions[pair.Key];
+                IReadOnlyList<InkStroke> ink = pair.Value;
+                if (rotations?.TryGetValue(pair.Key, out int turn) == true && turn % 360 != 0)
+                {
+                    var rotated = geometry with { Rotation = geometry.Rotation + turn };
+                    var transform = geometry.TransformTo(rotated);
+                    ink = ink.Select(stroke => { var copy = stroke.Clone(); copy.Transform(transform, scaleWidth: false); return copy; }).ToArray();
+                    geometry = rotated;
+                }
+                var expanded = PdfPageBleed.IncludeInk(geometry, ink);
                 if (expanded != geometry)
                 {
                     // Enlarging CropBox must not reveal content hidden by the original crop.
@@ -183,16 +280,30 @@ public sealed class PdfAnnotationFile : IDisposable
                     Contents = "Ink Canvas 可编辑墨迹", Flags = PdfAnnotationFlags.Print };
                 annotation.Elements.SetInteger("/InkCanvasVersion", 1);
                 var offset = PdfPageBleed.InkOffset(geometry, expanded);
-                var savedInk = offset == Vector2.Zero ? pair.Value : pair.Value.Select(stroke =>
+                var savedInk = offset == Vector2.Zero ? ink : ink.Select(stroke =>
                 {
                     var copy = stroke.Clone(); copy.Transform(Matrix3x2.CreateTranslation(offset), scaleWidth: false); return copy;
                 }).ToArray();
+                if (savedInk.Any(stroke => stroke.InkLayerIndex != 0))
+                {
+                    savedInk = InkStroke.InDrawingOrder(savedInk).Select((stroke, index) =>
+                    {
+                        var copy = stroke.Clone();
+                        copy.LayerOrder = index;
+                        return copy;
+                    }).ToArray();
+                    var layers = new PdfDictionary(document);
+                    layers.CreateStream(savedInk.Select(stroke => (byte)stroke.InkLayerIndex).ToArray());
+                    document.Internals.AddObject(layers);
+                    annotation.Elements["/InkCanvasLayers"] = layers.Reference;
+                }
                 var state = CompressedStream(PdfInkCodec.Encode(savedInk), alreadyCompressed: true);
                 annotation.Elements["/InkCanvasData"] = state.Reference;
-                var appearance = Appearance(pair.Value, geometry, expanded);
+                var appearance = Appearance(ink, geometry, expanded);
                 var ap = new PdfDictionary(document); ap.Elements["/N"] = appearance.Reference; annotation.Elements["/AP"] = ap;
                 page.Annotations.Add(annotation);
             }
+            if (pageOrder is not null) ApplyPageOrder(document, pageOrder, token);
             document.Options.CompressContentStreams = true; document.Options.FlateEncodeMode = PdfFlateEncodeMode.BestCompression;
             document.Save(temporary);
             token.ThrowIfCancellationRequested();
@@ -225,7 +336,7 @@ public sealed class PdfAnnotationFile : IDisposable
                 states.Elements["/GS" + alpha] = gs;
             }
             Span<Vector2> contour = stackalloc Vector2[26];
-            foreach (var stroke in strokes.OrderBy(stroke => stroke.LayerOrder ?? long.MaxValue).SelectMany(InkCanvas.Core.Shapes.ShapeDefinition.RenderContours))
+            foreach (var stroke in InkStroke.InDrawingOrder(strokes).SelectMany(InkCanvas.Core.Shapes.ShapeDefinition.RenderContours))
             {
                 var waterInk = InkBrush.UsesInkWash(stroke) ? WaterInkPaths(stroke, token) : null;
                 var layers = InkBrush.Layers(stroke);
@@ -239,9 +350,7 @@ public sealed class PdfAnnotationFile : IDisposable
                     if (points.Count == 0) continue;
                     if (stroke.ShapeSource?.Geometry?.IsFill == true)
                     {
-                        var path = new Path64(points.Count);
-                        foreach (var point in points) path.Add(new Point64(Math.Round(point.X * 10000d), Math.Round(point.Y * 10000d)));
-                        AppendPaths(new Paths64 { path }); content.Append("f\n"); continue;
+                        AppendPaths(FilledInkGeometry.ToPaths(stroke, 10000d)); content.Append("f\n"); continue;
                     }
                     if (waterInk is not null)
                     {
@@ -298,6 +407,48 @@ public sealed class PdfAnnotationFile : IDisposable
         var file = new FileInfo(path);
         _savedFiles[path] = (file.Length, file.LastWriteTimeUtc);
     }
+    private static void ApplyPageOrder(PdfDocument document, int[] order, CancellationToken token)
+    {
+        var retained = order.ToHashSet();
+        var removed = new HashSet<PdfPage>();
+        for (int page = document.PageCount - 1; page >= 0; page--)
+        {
+            token.ThrowIfCancellationRequested();
+            if (retained.Contains(page)) continue;
+            removed.Add(document.Pages[page]);
+            document.Pages.RemoveAt(page);
+        }
+        if (removed.Count > 0) RemoveDeletedBookmarks(document.Outlines);
+        var current = order.Order().ToList();
+        for (int position = 0; position < order.Length; position++)
+        {
+            token.ThrowIfCancellationRequested();
+            if (current[position] == order[position]) continue;
+            int previous = current.IndexOf(order[position], position + 1);
+            document.Pages.MovePage(previous, position);
+            current.RemoveAt(previous);
+            current.Insert(position, order[position]);
+        }
+
+        PdfPage RemoveDeletedBookmarks(PdfOutlineCollection bookmarks)
+        {
+            PdfPage first = null;
+            for (int i = bookmarks.Count - 1; i >= 0; i--)
+            {
+                var outline = bookmarks[i];
+                var childPage = outline.HasChildren ? RemoveDeletedBookmarks(outline.Outlines) : null;
+                var destination = outline.DestinationPage;
+                if (destination is not null && removed.Contains(destination))
+                {
+                    if (childPage is null) { bookmarks.RemoveAt(i); continue; }
+                    outline.DestinationPage = destination = childPage;
+                }
+                first = destination ?? childPage ?? first;
+            }
+            return first;
+        }
+    }
+
     private static byte[] Compress(byte[] data)
     {
         using var output = new MemoryStream(); using (var stream = new ZLibStream(output, CompressionLevel.SmallestSize, true)) stream.Write(data);
@@ -337,7 +488,25 @@ public sealed class PdfAnnotationFile : IDisposable
         }
     }
 
-    public async Task<IReadOnlyList<PdfSearchHit>> SearchAsync(string query, CancellationToken token = default)
+    public async Task<string> ReadPageTextAsync(int index, CancellationToken token = default)
+    {
+        await _gate.WaitAsync(token);
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (index < 0 || index >= Pages.Count) throw new ArgumentOutOfRangeException(nameof(index), "PDF 页码不存在。");
+            return await Task.Run(() =>
+            {
+                token.ThrowIfCancellationRequested();
+                using var document = UglyToad.PdfPig.PdfDocument.Open(RenderPath, new UglyToad.PdfPig.ParsingOptions { Password = Password });
+                return document.GetPage(index + 1).Text;
+            }, token);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<IReadOnlyList<PdfSearchHit>> SearchAsync(string query, CancellationToken token = default,
+        IReadOnlyList<int> pageOrder = null)
     {
         await _gate.WaitAsync(token);
         try
@@ -347,15 +516,15 @@ public sealed class PdfAnnotationFile : IDisposable
             {
                 query = query?.Trim();
                 if (string.IsNullOrEmpty(query)) return Array.Empty<PdfSearchHit>();
-                using var document = UglyToad.PdfPig.PdfDocument.Open(Path.Combine(_directory, "source.pdf"), new UglyToad.PdfPig.ParsingOptions { Password = Password });
+                using var document = UglyToad.PdfPig.PdfDocument.Open(RenderPath, new UglyToad.PdfPig.ParsingOptions { Password = Password });
                 var results = new List<PdfSearchHit>();
-                for (int page = 1; page <= document.NumberOfPages; page++)
+                foreach (int index in pageOrder ?? Enumerable.Range(0, document.NumberOfPages))
                 {
                     token.ThrowIfCancellationRequested();
-                    var content = document.GetPage(page);
+                    var content = document.GetPage(index + 1);
                     var letters = content.Letters;
                     string text = string.Concat(letters.Select(letter => letter.Value));
-                    var geometry = Pages[page - 1];
+                    var geometry = Pages[index];
                     float scaleX = geometry.DipWidth / (float)content.Width;
                     float scaleY = geometry.DipHeight / (float)content.Height;
                     for (int start = 0; start <= text.Length - query.Length && results.Count < 500;)
@@ -387,7 +556,7 @@ public sealed class PdfAnnotationFile : IDisposable
                             if (position >= found + query.Length) break;
                         }
                         int previewStart = Math.Max(0, found - 24);
-                        results.Add(new PdfSearchHit(page - 1, text.Substring(previewStart, Math.Min(100, text.Length - previewStart)), bounds));
+                        results.Add(new PdfSearchHit(index, text.Substring(previewStart, Math.Min(100, text.Length - previewStart)), bounds));
                         start = found + query.Length;
                     }
                     if (results.Count >= 500) break;

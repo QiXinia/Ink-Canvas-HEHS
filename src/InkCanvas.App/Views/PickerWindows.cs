@@ -15,7 +15,6 @@ namespace InkCanvas.App.Views;
 public sealed class PenPaletteWindow : Window
 {
     public void ConfigureNibMode(bool visible, bool enabled, Action<bool> changed) => _palette.ConfigureNibMode(visible, enabled, changed);
-    private static bool _lastPinned;
     private readonly PenPalette _palette;
     private readonly Viewbox _host;
     private double _designW, _designH;
@@ -32,15 +31,19 @@ public sealed class PenPaletteWindow : Window
     public bool IsDetached { get; private set; }
     public bool IsPinned => _palette.Header.IsPinned;
     public bool IsHighlighter { get; }
+    internal Func<bool> AutoDismissEnabled { get => _palette.AutoDismissEnabled; set => _palette.AutoDismissEnabled = value; }
+    private bool CanAutoDismiss => AutoDismissEnabled?.Invoke() != false && !IsPinned && !_palette.IsEditingColor;
 
     public PenPaletteWindow(InkController controller, bool highlighter, int theme, double scalePercent = 100)
+        : this(controller, highlighter, theme, scalePercent, null) { }
+
+    public PenPaletteWindow(InkController controller, bool highlighter, int theme, double scalePercent,
+        Core.Settings.CanvasSettings settings)
     {
         IsHighlighter = highlighter;
         Title = highlighter ? "荧光笔" : "墨迹选项";
 
-        _palette = new PenPalette(highlighter) { Controller = controller };
-        _palette.Header.IsPinned = _lastPinned;
-        _palette.Header.PinChanged += () => _lastPinned = _palette.Header.IsPinned;
+        _palette = new PenPalette(highlighter, settings) { Controller = controller };
         _palette.RequestClose = Close;
         _palette.ApplyChrome(theme);
         MeasureDesign();
@@ -74,6 +77,8 @@ public sealed class PenPaletteWindow : Window
         WindowChrome.EnableDragMove(this, _palette.Header, Detach, onDragCompleted: RefreshDisplayPlacement);
         _palette.RefreshFromController();
         WireDismissal();
+        AppWindow.Closing += (_, _) => _palette.FlushSliderChanges();
+        Closed += (_, _) => _palette.FlushSliderChanges();
         OptionPopupCoordinator.Attach(this, _palette.Header);
         scroll.Loaded += (_, _) => { _live = true; AttachDpiTracking(); };
         _palette.CardSurface.SizeChanged += (_, _) =>
@@ -111,6 +116,8 @@ public sealed class PenPaletteWindow : Window
         }
     }
     public Action AttributesChanged { get => _palette.AttributesChanged; set => _palette.AttributesChanged = value; }
+    public Action ColorPaletteChanged { get => _palette.ColorPaletteChanged; set => _palette.ColorPaletteChanged = value; }
+    public Func<FrameworkElement, Core.Ink.InkColor, Action<Core.Ink.InkColor>, Task> EditColorAsync { get => _palette.EditColorAsync; set => _palette.EditColorAsync = value; }
     public int HighlighterAlpha { get => _palette.HighlighterAlpha; set => _palette.HighlighterAlpha = value; }
     public bool LightColorScheme { get => _palette.LightColorScheme; set => _palette.LightColorScheme = value; }
 
@@ -126,6 +133,9 @@ public sealed class PenPaletteWindow : Window
     }
 
     public void RefreshFromController() => _palette.RefreshFromController();
+    public void FlushSliderChanges() => _palette.FlushSliderChanges();
+    public new void Close() { _palette.FlushSliderChanges(); base.Close(); }
+    public void RefreshFromController(Core.Settings.CanvasSettings settings) => _palette.RefreshFromController(settings);
 
     /// <summary>
     /// WPF has no dedicated menu-size setting: palettes live inside the scaled tools Viewbox
@@ -145,10 +155,14 @@ public sealed class PenPaletteWindow : Window
         }
     }
 
-    /// <summary>Shell overlay-input hook: WPF HideSubPanels always hides PenPalette on inking.</summary>
     public void DismissOnOverlayInput()
     {
-        if (!_closed && !_palette.Header.IsPinned) Close();
+        if (CanAutoDismiss) DismissIfUnpinned();
+    }
+
+    internal void DismissIfUnpinned()
+    {
+        if (!_closed && !_palette.Header.IsPinned && !_palette.IsEditingColor) Close();
     }
 
     /// <summary>
@@ -275,7 +289,7 @@ public sealed class PenPaletteWindow : Window
         {
             if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; if (!_closed) Close(); }
         };
-        TransientWindowDismissal.Attach(this, () => _ownerHwnd, () => !_palette.Header.IsPinned,
+        TransientWindowDismissal.Attach(this, () => _ownerHwnd, () => CanAutoDismiss,
             () => _getAnchor?.Invoke() ?? default, () => _getInteractionRegion?.Invoke() ?? default);
         Closed += (_, _) => { _closed = true; _detachAnchor?.Invoke(); };
     }
@@ -286,9 +300,6 @@ public sealed class PenPaletteWindow : Window
 /// </summary>
 public sealed class ShapePickerWindow : Window
 {
-    /// <summary>WPF's auto-hide toggle is main-window state: it survives popup re-opens.</summary>
-    private static bool _lastAutoHide = true;
-
     private readonly ShapePreview _preview;
     private readonly Viewbox _host;
     private double _designW, _designH;
@@ -302,6 +313,8 @@ public sealed class ShapePickerWindow : Window
     private bool _closed;
     private bool _designRefreshPending;
     public bool IsDetached { get; private set; }
+    internal Func<bool> AutoDismissEnabled { get; set; }
+    private bool CanAutoDismiss => AutoHide && AutoDismissEnabled?.Invoke() != false;
 
     public ShapePickerWindow(InkController controller, Action onPicked, int theme,
         double scalePercent = 100, bool boardMode = false)
@@ -310,12 +323,10 @@ public sealed class ShapePickerWindow : Window
 
         _preview = new ShapePreview(controller, theme, boardMode);
         _preview.Header.CloseRequested += Close;
-        _preview.AutoHide = _lastAutoHide;
-        _preview.AutoHideChanged += () => _lastAutoHide = _preview.AutoHide;
         _preview.SelectionMade += (_, sticky) =>
         {
             onPicked?.Invoke();
-            if (_preview.AutoHide) Close();
+            if (CanAutoDismiss) Close();
         };
 
         // Natural design size measured while unrooted (a rooted measure is constrained by the
@@ -378,8 +389,6 @@ public sealed class ShapePickerWindow : Window
                 else ResizeAtCurrentPosition();
             });
         };
-        // Carry the pin state to the next open, like the original main-window toggle.
-        Closed += (_, _) => _lastAutoHide = _preview.AutoHide;
     }
 
     private double UserScale => _scalePercent / 100.0;
@@ -391,11 +400,11 @@ public sealed class ShapePickerWindow : Window
         }
     }
 
-    /// <summary>Pin state: true = auto-hide after a pick (WPF default), false = stay open.</summary>
+    /// <summary>Whether the panel is unpinned and eligible for automatic dismissal.</summary>
     public bool AutoHide
     {
         get => _preview.AutoHide;
-        set { _preview.AutoHide = value; _lastAutoHide = value; }
+        set => _preview.AutoHide = value;
     }
 
     internal void Detach()
@@ -417,11 +426,12 @@ public sealed class ShapePickerWindow : Window
         else ResizeAtCurrentPosition();
     }
 
-    /// <summary>
-    /// Shell overlay-input hook: HideSubPanels hides BorderDrawShape only while auto-hide is
-    /// armed; a pinned picker stays open while the teacher draws shapes.
-    /// </summary>
     public void DismissOnOverlayInput()
+    {
+        if (CanAutoDismiss) DismissIfUnpinned();
+    }
+
+    internal void DismissIfUnpinned()
     {
         if (!_closed && _preview.AutoHide) Close();
     }
@@ -506,7 +516,7 @@ public sealed class ShapePickerWindow : Window
         {
             if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; if (!_closed) Close(); }
         };
-        TransientWindowDismissal.Attach(this, () => _ownerHwnd, () => _preview.AutoHide,
+        TransientWindowDismissal.Attach(this, () => _ownerHwnd, () => CanAutoDismiss,
             () => _getAnchor?.Invoke() ?? default, () => _getInteractionRegion?.Invoke() ?? default);
         Closed += (_, _) => { _closed = true; _detachAnchor?.Invoke(); };
     }

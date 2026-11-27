@@ -4,6 +4,7 @@ using InkCanvas.Core.ScreenTracking;
 using InkCanvas.Core.Ink;
 using Microsoft.Graphics.Canvas;
 using Microsoft.UI.Dispatching;
+using Microsoft.UI.Xaml.Media;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices.WindowsRuntime;
@@ -44,10 +45,6 @@ public sealed class OverlayInkPresenter : IDisposable
     private long _lastDotAnimationVersion;
     private long _lastRecognitionVersion;
     private DotAnimationClock _dotClock;
-    // Surface size the committed/live caches were built for. The overlay is re-anchored between
-    // the full-screen show and a windowed reading view, so a stale cache must never be copied
-    // into a smaller DIB.
-    private int _cacheWidth, _cacheHeight;
 
     private CanvasRenderTarget _liveTarget;
     private int _liveCapacityWidth, _liveCapacityHeight;
@@ -65,6 +62,8 @@ public sealed class OverlayInkPresenter : IDisposable
     private bool _rendering;
     private bool _pending;
     private bool _attached;
+    private bool _viewportFrameQueued;
+    private long _viewportFrameTime;
     private ScreenInkClip _trackingClip;
     private bool _trackingSuppressed;
     private int _sceneUpdateDepth;
@@ -204,6 +203,8 @@ public sealed class OverlayInkPresenter : IDisposable
         _trackingTimer.Interval = TimeSpan.FromMilliseconds(16);
         _trackingTimer.Tick += OnScreenTrackingFrame;
         _dotClock = new DotAnimationClock(_controller, RequestRender);
+        _controller.ViewportReleaseMotionEnabled = true;
+        _controller.ViewportFrameRequested += ScheduleViewportFrame;
         _window.PointerDown += OnDown;
         _window.PointerMove += OnMove;
         _window.PointerUp += OnUp;
@@ -231,6 +232,9 @@ public sealed class OverlayInkPresenter : IDisposable
         _trackingTimer = null;
         _dotClock?.Dispose();
         _dotClock = null;
+        _controller.ViewportFrameRequested -= ScheduleViewportFrame;
+        CompositionTarget.Rendering -= RenderViewportFrame;
+        _viewportFrameQueued = false;
         _window.PointerDown -= OnDown;
         _window.PointerMove -= OnMove;
         _window.PointerUp -= OnUp;
@@ -245,6 +249,24 @@ public sealed class OverlayInkPresenter : IDisposable
         _controller.PlaybackChanged -= InvalidateCommitted;
         _controller.ElementsChanged -= OnElementsChanged;
         Scene.Images.Changed -= InvalidateImageContent;
+    }
+
+    private void ScheduleViewportFrame()
+    {
+        if (_viewportFrameQueued || !_attached) return;
+        _viewportFrameQueued = true;
+        _viewportFrameTime = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += RenderViewportFrame;
+    }
+
+    private void RenderViewportFrame(object sender, object args)
+    {
+        CompositionTarget.Rendering -= RenderViewportFrame;
+        _viewportFrameQueued = false;
+        if (!_attached) return;
+        long now = Stopwatch.GetTimestamp();
+        float elapsed = (float)Math.Clamp(Stopwatch.GetElapsedTime(_viewportFrameTime, now).TotalSeconds, 0, .05);
+        if (_controller.AdvanceViewportFrame(elapsed)) ScheduleViewportFrame();
     }
 
     private void OnDown(OverlayPointer p)
@@ -273,7 +295,7 @@ public sealed class OverlayInkPresenter : IDisposable
         try { _controller.OnPointerHover(p); }
         finally { _moveInput = false; }
     }
-    private void OnExited(uint pointerId) => _controller.HideEraserPreview(pointerId);
+    private void OnExited(uint pointerId) => _controller.OnPointerExited(pointerId);
 
     private void NoteInput(OverlayPointer p)
     {
@@ -354,7 +376,7 @@ public sealed class OverlayInkPresenter : IDisposable
         if (_window.PixelBuffer == IntPtr.Zero) return;
 
         if (!InkVisible || _trackingSuppressed || (_controller.Document.Count == 0 && !ImageSceneRenderer.Images(_controller).Any() && !_controller.LiveStrokes.Any()
-            && !_controller.ShapePreview.Any() && _controller.ExtensionPreview.Count == 0 && !_controller.HasSelection && !_controller.IsMarqueeSelecting && !_controller.IsLassoErasing
+            && !_controller.ShapePreview.Any() && _controller.ExtensionPreview.Count == 0 && !_controller.HasSelection && !_controller.IsRegionSelecting && !_controller.IsLassoErasing
             && !_controller.IsEraserPreviewVisible && !_controller.IsPenCursorVisible))
         {
             // Keep alpha at one so the layered window remains hit-testable. The window's
@@ -388,16 +410,17 @@ public sealed class OverlayInkPresenter : IDisposable
             RestoreLiveRegion();
         }
 
-        bool incremental = _controller.Playback is null && _controller.PreviewStrokes is null
+        bool layeredLive = InkSceneRenderer.NeedsLayeredLiveInk(_controller);
+        bool incremental = !layeredLive && _controller.Playback is null && _controller.PreviewStrokes is null
             && !_controller.ShapePreview.Any() && _controller.RecognitionPreview.Count == 0
             && _controller.ExtensionPreview.Count == 0 && _controller.DotAnimations.Count == 0
-            && !_controller.HasSelection && !_controller.IsMarqueeSelecting && !_controller.IsLassoErasing
+            && !_controller.HasSelection && !_controller.IsRegionSelecting && !_controller.IsLassoErasing
             && !_controller.IsEraserPreviewVisible && !_controller.IsPenCursorVisible;
         var region = LiveRegion(incremental);
         if (region.Width > 0 && region.Height > 0)
         {
             RestoreRegion(region.X, region.Y, region.Width, region.Height);
-            CompositeLiveRegion(region);
+            CompositeLiveRegion(region, layeredLive);
         }
         else ReleaseLiveBuffer();
 
@@ -440,29 +463,6 @@ public sealed class OverlayInkPresenter : IDisposable
 
     private void EnsureCommittedCache()
     {
-        if (_cacheWidth != _window.Width || _cacheHeight != _window.Height)
-        {
-            // The window was resized (full-screen show ⇄ windowed reading view). Drop every
-            // buffer derived from the old surface: copying them into the new DIB would throw
-            // "Destination is too short" and leave the presenter unusable.
-            _cacheWidth = _window.Width; _cacheHeight = _window.Height;
-            _committedTarget?.Dispose();
-            _committedTarget = null;
-            _committedPixelsBuffer = null;
-            _committedPixels = null;
-            _committedValid = false;
-            _committedChanged = false;
-            _liveTarget?.Dispose();
-            _liveTarget = null;
-            _livePixelsBuffer = null;
-            _livePixels = null;
-            _liveCapacityWidth = _liveCapacityHeight = 0;
-            _liveW = _liveH = 0;
-            _liveDamage.Clear();
-            _nextLiveDamage.Clear();
-            _historyTiles.Invalidate();
-        }
-
         var view = OverlayTransform();
         bool viewChanged = _lastView != view || _lastTrackingAnimation != _trackingTransition.IsActive;
         // During a selection drag this is the frozen restore image. The moving scene is
@@ -531,7 +531,7 @@ public sealed class OverlayInkPresenter : IDisposable
         if (_controller.Playback is { } playback)
             foreach (var s in playback.VisibleStrokes) world = world.Union(s.Bounds);
         var adornment = _controller.SelectionVisualBounds.Union(_controller.LassoVisualBounds).Union(_controller.EraserVisualBounds)
-            .Union(_controller.PenCursorVisualBounds);
+            .Union(_controller.PenCursorVisualBounds).Union(_controller.AdvancedSelectionVisualBounds);
         if (!adornment.IsEmpty && Matrix3x2.Invert(_controller.ViewTransform, out var inverse))
         {
             foreach (var p in new[] { new Vector2(adornment.Left, adornment.Top), new Vector2(adornment.Right, adornment.Top),
@@ -580,7 +580,7 @@ public sealed class OverlayInkPresenter : IDisposable
         }
     }
 
-    private void CompositeLiveRegion((int X, int Y, int Width, int Height) region)
+    private void CompositeLiveRegion((int X, int Y, int Width, int Height) region, bool layeredLive)
     {
         // Reuse capacity while drawing; allocate only when the live box outgrows it.
         if (_liveTarget is null || region.Width > _liveCapacityWidth || region.Height > _liveCapacityHeight)
@@ -606,24 +606,26 @@ public sealed class OverlayInkPresenter : IDisposable
         // Render world-DIP geometry into a physical-pixel subregion.
         var transform = OverlayTransform() * Matrix3x2.CreateTranslation(-region.X, -region.Y);
 
+        bool replace = layeredLive || _controller.PreviewStrokes is not null;
         using (var session = _liveTarget.CreateDrawingSession())
         {
-            bool selectionPreview = _controller.PreviewStrokes is not null;
-            session.Clear(selectionPreview ? Windows.UI.Color.FromArgb(1, 1, 1, 1) : Windows.UI.Color.FromArgb(0, 0, 0, 0));
-            if (selectionPreview)
+            session.Clear(replace ? Windows.UI.Color.FromArgb(1, 1, 1, 1) : Windows.UI.Color.FromArgb(0, 0, 0, 0));
+            if (layeredLive)
+                Scene.DrawWithLayeredLiveInk(session, _controller, transform, new Rect(-2, -2, region.Width + 2, region.Height + 2));
+            else
             {
-                _historyTiles.Draw(session, Scene, _controller, region.Width, region.Height, transformOverride: transform);
+                if (replace) _historyTiles.Draw(session, Scene, _controller, region.Width, region.Height, transformOverride: transform);
+                Scene.DrawLive(session, _controller, transform);
             }
-            Scene.DrawLive(session, _controller, transform);
         }
 
         // Read back only the live box into the reused buffer (no per-frame allocation).
         _liveTarget.GetPixelBytes(_livePixelsBuffer, 0, 0, region.Width, region.Height);
         _trackingClip?.Apply(_livePixels.AsSpan(0, region.Width * region.Height * 4), region.Width, region.Height,
-            region.X, region.Y, background: _controller.PreviewStrokes is not null ? (byte)1 : (byte)0);
+            region.X, region.Y, background: replace ? (byte)1 : (byte)0);
         int liveBytes = region.Width * region.Height * 4;
         GpuReadbackBytes += liveBytes;
-        if (_controller.PreviewStrokes is not null)
+        if (replace)
         {
             // Replace the affected scene region, so old ink disappears and translucent
             // selected strokes keep their exact stacking against stationary strokes.

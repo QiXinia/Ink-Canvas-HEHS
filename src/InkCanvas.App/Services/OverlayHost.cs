@@ -1,4 +1,3 @@
-using InkCanvas.Core.Settings;
 using InkCanvas.Ink;
 using InkCanvas.Ink.Rendering;
 using InkCanvas.Platform.Input;
@@ -13,19 +12,9 @@ namespace InkCanvas.App.Services;
 /// </summary>
 public sealed class OverlayHost : IDisposable
 {
-private Action _undo, _redo, _togglePen, _toggleEraser, _clear;
-    private Action _togglePassThrough, _toggleBoard;
-    private Action _pptNext, _pptPrevious, _pptExit, _toggleBlackScreen;
-    private Action _screenshot, _fold, _select, _line, _draw, _ai;
-    private Action _sideBoard;
-    private string _sideBoardModifiers, _sideBoardKey;
-    private Func<bool> _editingEnabled, _overlayEditingEnabled, _presentationEnabled;
-    private bool _presentationKeysEnabled;
-
     private Core.Settings.DisplaySettings _displaySettings = new();
     private long _idleSince;
     private bool _idleResourcesReleased;
-
     public void ConfigureDisplays(Core.Settings.DisplaySettings settings)
     {
         _displaySettings = settings ?? new();
@@ -117,36 +106,12 @@ private Action _undo, _redo, _togglePen, _toggleEraser, _clear;
         InteractionChanged?.Invoke();
     }
 
-public void Hide()
+    public void Hide()
     {
         Controller.CancelLassoErase();
         Presenter.Suspend();
         Window.Hide();
         InteractionChanged?.Invoke();
-    }
-
-    /// <summary>
-    /// Re-anchors the ink surface to a slideshow window. While a show runs the visible
-    /// picture can sit on a different monitor than the primary one, so both the bounds and
-    /// the world centre have to follow it.
-    /// </summary>
-    public void AlignTo(ShowWindowInfo bounds)
-    {
-        if (bounds.Width <= 0 || bounds.Height <= 0) return;
-        Window.SetBounds(bounds.X, bounds.Y, bounds.Width, bounds.Height);
-        Controller.ViewCenter = new System.Numerics.Vector2(
-            Window.Width / Window.DpiScale / 2f, Window.Height / Window.DpiScale / 2f);
-        if (Window.IsVisible) Presenter.Attach();
-    }
-
-    /// <summary>Returns the ink surface to the primary screen once the show ends.</summary>
-    public void ResetToPrimary()
-    {
-        var screen = ScreenService.Primary;
-        Window.SetBounds(screen.X, screen.Y, screen.Width, screen.Height);
-        Controller.ViewCenter = new System.Numerics.Vector2(
-            Window.Width / Window.DpiScale / 2f, Window.Height / Window.DpiScale / 2f);
-        if (Window.IsVisible) Presenter.Attach();
     }
 
     internal bool TrimIdleResources(bool force = false)
@@ -167,115 +132,35 @@ public void Hide()
     }
 
     /// <summary>
-    /// Registers the union of the local teaching shortcuts and the WPF guide's set
-    /// (OperatingGuideWindow rows): Ctrl+Z/Y undo/redo, Ctrl+Shift+C clear, Alt+C screenshot,
-    /// Alt+V fold, Alt+D draw/palette, Alt+Q (and the local Alt+P) mouse mode, Alt+B board,
-    /// Alt+S select, Alt+E eraser, Alt+L line, Alt+1 pen, Alt+A AI 助教, Alt+N 板中板,
-    /// F9 black screen.
-    /// PageUp/PageDown/Esc/B are registered separately while a slideshow runs.
+    /// Register the WPF guide's hotkey set (OperatingGuideWindow rows): Ctrl+Z/Y undo/redo,
+    /// Ctrl+E clear, Alt+C screenshot, Alt+V fold, Alt+D draw/palette, Alt+Q mouse mode,
+    /// Alt+B board, Alt+S select, Alt+E eraser, Alt+L line, Shift+Esc exit slideshow.
+    /// PageUp/PageDown remain as slideshow conveniences (documented in ppt-porting-notes).
     /// Failures are non-fatal (key may be taken).
     /// </summary>
     public void RegisterHotkeys(Action undo, Action redo, Action toggleEraser, Action clear,
         Action togglePassThrough = null, Action toggleBoard = null,
         Action pptNext = null, Action pptPrevious = null, Action pptExit = null,
         Action screenshot = null, Action fold = null, Action select = null, Action line = null, Action draw = null,
-        Func<bool> editingEnabled = null, Func<bool> overlayEditingEnabled = null, Func<bool> presentationEnabled = null,
-        Action togglePen = null, Action toggleBlackScreen = null, Action ai = null,
-        Action sideBoard = null, string sideBoardModifiers = null, string sideBoardKey = null)
+        Func<bool> editingEnabled = null, Func<bool> overlayEditingEnabled = null, Func<bool> presentationEnabled = null)
     {
-        _undo = undo;
-        _redo = redo;
-        _togglePen = togglePen;
-        _toggleEraser = toggleEraser;
-        _clear = clear;
-        _togglePassThrough = togglePassThrough;
-        _toggleBoard = toggleBoard;
-        _pptNext = pptNext;
-        _pptPrevious = pptPrevious;
-        _pptExit = pptExit;
-        _toggleBlackScreen = toggleBlackScreen;
-        _screenshot = screenshot;
-        _fold = fold;
-        _select = select;
-        _line = line;
-        _draw = draw;
-        _ai = ai;
-        _sideBoard = sideBoard;
-        _sideBoardModifiers = sideBoardModifiers;
-        _sideBoardKey = sideBoardKey;
-        _editingEnabled = editingEnabled;
-        _overlayEditingEnabled = overlayEditingEnabled;
-        _presentationEnabled = presentationEnabled;
-        // The Win32 hotkey service has no per-key removal; rebuilding avoids stale bindings.
-        Hotkeys.UnregisterAll();
-        RegisterBaselineHotkeys();
-        if (_presentationKeysEnabled) RegisterPresentationHotkeys();
+        Hotkeys.Register(HotkeyModifiers.Control, 0x5A /* Z */, undo, overlayEditingEnabled);
+        Hotkeys.Register(HotkeyModifiers.Control, 0x59 /* Y */, redo, overlayEditingEnabled);
+        Hotkeys.Register(HotkeyModifiers.Control, 0x45 /* E */, clear, overlayEditingEnabled);
+        Hotkeys.Register(HotkeyModifiers.Alt, 0x45 /* E */, toggleEraser, editingEnabled);
+        if (select is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x53 /* S */, select, editingEnabled);
+        if (line is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x4C /* L */, line, editingEnabled);
+        if (toggleBoard is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x42 /* B */, toggleBoard);
+        if (fold is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x56 /* V */, fold);
+        if (screenshot is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x43 /* C */, screenshot);
+        if (draw is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x44 /* D */, draw);
+        // Escape hatch: the overlay captures the whole screen while writing, so mouse mode must
+        // work even if the bar is unreachable.
+        if (togglePassThrough is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x51 /* Q */, togglePassThrough);
+        if (pptNext is not null) Hotkeys.Register(HotkeyModifiers.None, 0x22 /* PageDown */, pptNext, presentationEnabled);
+        if (pptPrevious is not null) Hotkeys.Register(HotkeyModifiers.None, 0x21 /* PageUp */, pptPrevious, presentationEnabled);
+        if (pptExit is not null) Hotkeys.Register(HotkeyModifiers.Shift, 0x1B /* Escape */, pptExit, presentationEnabled);
     }
-
-    /// <summary>
-    /// Registers only the keys that are valid during a slide show (Page Up/Down, Esc, B). They
-    /// are deliberately absent outside a show so a browser or video player keeps its keys.
-    /// Re-registering the baseline set is required because the Win32 hotkey service has no
-    /// per-key removal; this runs only on show start/end.
-    /// </summary>
-    public bool SetPresentationKeysEnabled(bool enabled)
-    {
-        if (_presentationKeysEnabled == enabled) return true;
-        _presentationKeysEnabled = enabled;
-        Hotkeys.UnregisterAll();
-        RegisterBaselineHotkeys();
-        return enabled ? RegisterPresentationHotkeys() : true;
-    }
-
-    private void RegisterBaselineHotkeys()
-    {
-        Hotkeys.Register(HotkeyModifiers.Control, 0x5A /* Z */, _undo, _overlayEditingEnabled);
-        Hotkeys.Register(HotkeyModifiers.Control, 0x59 /* Y */, _redo, _overlayEditingEnabled);
-        if (_togglePen is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x31 /* 1 */, _togglePen, _editingEnabled);
-        Hotkeys.Register(HotkeyModifiers.Alt, 0x45 /* E */, _toggleEraser, _editingEnabled);
-        // Local teaching loop keeps Ctrl+Shift+C clear (Ctrl+C stays with the foreground app).
-        Hotkeys.Register(HotkeyModifiers.Control | HotkeyModifiers.Shift, 0x43 /* C */, _clear, _overlayEditingEnabled);
-        if (_select is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x53 /* S */, _select, _editingEnabled);
-        if (_line is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x4C /* L */, _line, _editingEnabled);
-        if (_draw is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x44 /* D */, _draw, _editingEnabled);
-        if (_fold is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x56 /* V */, _fold);
-        if (_screenshot is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x43 /* C */, _screenshot);
-        // Escape hatches: the overlay captures the whole screen while writing, so these must
-        // work even if the bar is unreachable. Alt+P is the local hotkey, Alt+Q the guide's.
-        if (_togglePassThrough is not null)
-        {
-            Hotkeys.Register(HotkeyModifiers.Alt, 0x50 /* P */, _togglePassThrough);
-            Hotkeys.Register(HotkeyModifiers.Alt, 0x51 /* Q */, _togglePassThrough);
-        }
-        if (_toggleBoard is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x42 /* B */, _toggleBoard);
-        // AI 助教 works from the overlay and from the board (BoardWindow also handles it locally
-        // as a fallback when this registration is rejected by another application).
-        if (_ai is not null) Hotkeys.Register(HotkeyModifiers.Alt, 0x41 /* A */, _ai);
-        // 板中板：默认 Alt+N，可在 Settings.hotkey.sideBoard 中改写；无效配置回退默认。
-        if (_sideBoard is not null)
-        {
-            if (!SideBoardHotkey.TryParseModifiers(_sideBoardModifiers, out var sideBoardModifiers))
-                sideBoardModifiers = SideBoardHotkeyModifiers.Alt;
-            Hotkeys.Register((HotkeyModifiers)(uint)sideBoardModifiers,
-                SideBoardHotkey.ParseVirtualKey(_sideBoardKey), _sideBoard);
-        }
-        // F9 is the global black-screen toggle and stays available outside a show.
-        if (_toggleBlackScreen is not null) Hotkeys.Register(HotkeyModifiers.None, 0x78 /* F9 */, _toggleBlackScreen);
-    }
-
-    private bool RegisterPresentationHotkeys()
-    {
-        Func<bool> enabled = _presentationEnabled is null
-            ? () => _presentationKeysEnabled
-            : () => _presentationKeysEnabled && _presentationEnabled();
-        bool ok = true;
-        if (_pptNext is not null) ok &= Hotkeys.Register(HotkeyModifiers.None, 0x22 /* PageDown */, _pptNext, enabled);
-        if (_pptPrevious is not null) ok &= Hotkeys.Register(HotkeyModifiers.None, 0x21 /* PageUp */, _pptPrevious, enabled);
-        if (_pptExit is not null) ok &= Hotkeys.Register(HotkeyModifiers.None, 0x1B /* Escape */, _pptExit, enabled);
-        if (_toggleBlackScreen is not null) ok &= Hotkeys.Register(HotkeyModifiers.None, 0x42 /* B */, _toggleBlackScreen, enabled);
-        return ok;
-    }
-
 
     public void Dispose()
     {

@@ -48,9 +48,10 @@ internal static class BoardWindowRegression
             var selected = Descendants(root).OfType<Button>().Where(b => AutomationProperties.GetItemStatus(b) == "已选中").ToArray();
             bool oneActive = selected.Length == 1 && Descendants(selected[0]).OfType<TextBlock>().Any(t => t.Text == "墨迹");
             var otherTool = Descendants(root).OfType<Button>().First(b => Descendants(b).OfType<TextBlock>().Any(t => t.Text == "橡皮"));
-            bool differentFill = selected.Length == 1 && ((SolidColorBrush)((Border)selected[0].Content).Background).Color != ((SolidColorBrush)((Border)otherTool.Content).Background).Color;
-            passed &= oneActive && differentFill;
-            checks.Add(new { check = "board theme change preserves one active tool", background = background.ToString(), oneActive, differentFill });
+            bool selectionVisible = selected.Length == 1 && Descendants(selected[0]).OfType<SelectionIndicator>().Single().IsSelected
+                && !Descendants(otherTool).OfType<SelectionIndicator>().Single().IsSelected;
+            passed &= oneActive && selectionVisible;
+            checks.Add(new { check = "board theme change preserves one active tool", background = background.ToString(), oneActive, selectionVisible });
         }
         foreach (int theme in new[] { 1, 2 })
         {

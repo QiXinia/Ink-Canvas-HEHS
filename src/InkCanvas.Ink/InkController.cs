@@ -27,12 +27,20 @@ public enum InkEraserMode { Area, WholeStroke, Lasso }
 /// </summary>
 public sealed partial class InkController : IDisposable
 {
-    public InkController() => Document.Changed += OnPlaybackDocumentChanged;
+    public InkController() : this(new UndoStack(200)) { }
+    public InkController(UndoStack history)
+    {
+        History = history ?? throw new ArgumentNullException(nameof(history));
+        Document.Changed += OnPlaybackDocumentChanged;
+    }
     public InkPlayback Playback { get; private set; }
     public event Action PlaybackChanged;
     public bool BeginPlayback()
     {
+        CancelAdvancedSelection();
         EndPlayback();
+        CommitViewportFrame();
+        StopViewportMotion();
         FinishDotAnimations();
         HideEraserPreview();
         if (_live.Count > 0 || IsLassoErasing || _erasing) return false;
@@ -53,8 +61,10 @@ public sealed partial class InkController : IDisposable
     }
     private void OnPlaybackDocumentChanged()
     {
+        CancelAdvancedSelection();
         RefreshShapeConnections();
         _drawingOrderDirty = true;
+        _drawingObjects = Array.Empty<DrawingObject>();
         EndPlayback();
         if (_dotAnimations.RemoveAll(animation => !Document.Strokes.Contains(animation.Source)
             || animation.SourceVersion != animation.Source.GeometryVersion) == 0) return;
@@ -108,6 +118,8 @@ public sealed partial class InkController : IDisposable
     private readonly PalmRejector _palm = new();
     private readonly List<InkStroke> _recentForRecognition = new();
     private readonly Dictionary<uint, Vector2> _shapeDragStart = new();
+    private Matrix3x2 _worldToShape = Matrix3x2.Identity;
+    private Matrix3x2 _shapeToWorld = Matrix3x2.Identity;
     private List<InkStroke> _shapePreview = new();
 
     // Two-step shape state (Cuboid / Hyperbola, upstream drawMultiStepShape* / CuboidFrontRect*).
@@ -124,20 +136,33 @@ public sealed partial class InkController : IDisposable
 
     public InkDocument Document { get; } = new();
 
-    public UndoStack History { get; } = new(200);
+    public UndoStack History { get; }
 
-    public bool HasActiveInteraction => _live.Count > 0 || _touches.Count > 0 || _erasing || IsLassoErasing
-        || _activeHandle != SelectionHandle.None || _selectionGesture || _panPointerId is not null || _shapeStep != 0 || _shapeEditPointer is not null;
+    public bool HasActiveInteraction => _live.Count > 0 || _touches.Count > 0 || _erasing || IsLassoErasing || IsRegionSelecting
+        || _activeHandle != SelectionHandle.None || _selectionGesture || _panPointerId is not null || _shapeStep != 0
+        || _shapeEditPointer is not null || _advancedDrag is not null;
 
     public bool RestoreScreenContext(IEnumerable<InkStroke> strokes, UndoHistoryState history, Matrix3x2 view)
     {
         if (HasActiveInteraction) return false;
         EndPlayback(); FinishDotAnimations(); ClearSelection(); HideEraserPreview();
         ViewTransform = view;
-        Document.ReplaceAll(strokes);
+        ReplacePageInk(strokes);
         History.Restore(history);
         NotifyElementsChanged();
         return true;
+    }
+
+    public void ReplacePageInk(IEnumerable<InkStroke> strokes)
+    {
+        _activeInkLayer = 0;
+        _recentForRecognition.Clear();
+        using (Document.DeferNotifications())
+        {
+            Document.ReplaceAll(strokes);
+            Document.RestoreInkLayers(1);
+        }
+        ActiveInkLayerChanged?.Invoke();
     }
 
     public StrokeAttributes CurrentAttributes { get; } = new()
@@ -156,6 +181,8 @@ public sealed partial class InkController : IDisposable
         {
             EndPlayback();
             if (_tool == value) return;
+            CommitViewportFrame();
+            ResetViewportContacts();
             var previous = _tool;
             HideEraserPreview();
             _tool = value;
@@ -267,24 +294,34 @@ public sealed partial class InkController : IDisposable
     {
         if (element is null || !element.IsPresent) return;
         Tool = InkTool.Select;
-        ClearSelection();
-        SelectedElements.Add(element);
-        AddSelectionGroupMembers(element);
+        if (ActiveInkLayer == 0) ClearSelection();
+        else if (!TrySetActiveInkLayer(0)) return;
+        SetGroupSelected(element, true);
         SelectionChanged?.Invoke();
         Invalidated?.Invoke();
     }
 
-    /// <summary>AI objects written in one gesture share a GroupId; selecting one selects the whole group.</summary>
-    private void AddSelectionGroupMembers(ISelectionElement element)
+    private void SetGroupSelected(ISelectionElement element, bool selected)
     {
-        if (element is not IGroupedSelectionElement grouped) return;
-        string groupId = grouped.SelectionGroupId;
-        if (string.IsNullOrEmpty(groupId) || GetSelectableElements is null) return;
-        foreach (ISelectionElement candidate in GetSelectableElements())
-            if (candidate.IsPresent && candidate is IGroupedSelectionElement sibling
-                && string.Equals(sibling.SelectionGroupId, groupId, StringComparison.Ordinal)
-                && !SelectedElements.Contains(candidate))
-                SelectedElements.Add(candidate);
+        var members = element is IGroupedSelectionElement { SelectionGroupId.Length: > 0 } grouped
+            ? GetSelectableElements().OfType<IGroupedSelectionElement>().Where(candidate =>
+                candidate.IsPresent && candidate.SelectionGroupId == grouped.SelectionGroupId).Cast<ISelectionElement>()
+            : new[] { element };
+        foreach (var member in members)
+        {
+            if (!selected) SelectedElements.Remove(member);
+            else if (!SelectedElements.Contains(member)) SelectedElements.Add(member);
+        }
+    }
+
+    public static void RemapSelectionGroups(IEnumerable<ISelectionElement> elements)
+    {
+        foreach (var group in elements.OfType<IGroupedSelectionElement>()
+            .Where(item => !string.IsNullOrEmpty(item.SelectionGroupId)).GroupBy(item => item.SelectionGroupId))
+        {
+            string newId = Guid.NewGuid().ToString("N");
+            foreach (var item in group) item.SelectionGroupId = newId;
+        }
     }
 
     public void SetSelectionImageOpacity(float opacity)
@@ -309,6 +346,7 @@ public sealed partial class InkController : IDisposable
     /// <summary>Menu selection entry point: pick a kind and whether it stays selected (long-press).</summary>
     public void SelectShape(ShapeKind kind, bool sticky = false)
     {
+        if (!CanDrawShape(kind)) return;
         ShapeKind = kind;
         StickyShape = sticky;
         Tool = InkTool.Shape;
@@ -368,6 +406,7 @@ public sealed partial class InkController : IDisposable
 
     public void OnPointerHover(in OverlayPointer pointer)
     {
+        PointerInput?.Invoke(new(this, pointer, InkPointerPhase.Hover));
         if (pointer.Kind == OverlayPointerKind.Touch || _erasing || Playback is not null) return;
         UpdateEraserPreview(pointer);
     }
@@ -410,7 +449,7 @@ public sealed partial class InkController : IDisposable
     private Matrix3x2 _lassoViewAtStart;
     public bool IsLassoErasing { get; private set; }
     public IReadOnlyList<Vector2> LassoPath => _lassoPath;
-    public Rect LassoVisualBounds => IsLassoErasing ? _lassoBounds.Inflate(4) : Rect.Empty;
+    public Rect LassoVisualBounds => IsLassoErasing || IsLassoSelecting ? _lassoBounds.Inflate(4) : Rect.Empty;
 
     /// <summary>Palm/back-of-hand acts as an area eraser.</summary>
     public bool PalmErases { get; set; } = true;
@@ -429,10 +468,35 @@ public sealed partial class InkController : IDisposable
         get => _viewTransform;
         set
         {
-            if (value.Equals(_viewTransform)) return;
-            _viewTransform = value;
-            ViewChanged?.Invoke(value);
+            _pendingViewport = null;
+            _viewportFramePending = false;
+            StopViewportMotion();
+            SetViewport(value);
         }
+    }
+
+    private void SetViewport(Matrix3x2 value)
+    {
+        if (value == _viewTransform) return;
+        _viewTransform = value;
+        ViewChanged?.Invoke(value);
+    }
+
+    /// <summary>视图缩放 / 平移变化（参数为最新的 <see cref="ViewTransform"/>），供板书录制使用。</summary>
+    public event Action<Matrix3x2> ViewChanged;
+
+    /// <summary>设置视图变换；与直接赋值 <see cref="ViewTransform"/> 等价。</summary>
+    public void SetView(Matrix3x2 transform) => ViewTransform = transform;
+
+    /// <summary>
+    /// 设置视图中心。仅当中心确实变化时触发 <see cref="ViewChanged"/>
+    /// （中心本身不改变矩阵，订阅方仍会拿到当前变换）。
+    /// </summary>
+    public void SetViewCenter(Vector2 center)
+    {
+        if (center.Equals(ViewCenter)) return;
+        ViewCenter = center;
+        ViewChanged?.Invoke(ViewTransform);
     }
 
     public bool PanZoomEnabled { get; set; }
@@ -454,28 +518,11 @@ public sealed partial class InkController : IDisposable
         _manipulator.MinScale = minimum;
         _manipulator.MaxScale = maximum;
     }
-    public bool IsViewManipulating => _panPointerId is not null
-        || TouchGesturesEnabled && PanZoomEnabled && Tool == InkTool.Pan && TryGetTouchPair(out _, out _)
-        || TouchGesturesEnabled && !_selectionGesture && !MultiTouchEnabled && TryGetTouchPair(out _, out _) && Tool is not (InkTool.Select or InkTool.Eraser);
+    public bool IsViewManipulating => _panPointerId is not null || IsTouchViewManipulating || IsViewportSettling
+        || TouchGesturesEnabled && !_selectionGesture && !MultiTouchEnabled
+            && TryGetTouchPair(out _, out _) && Tool is not (InkTool.Select or InkTool.Eraser);
 
     public Vector2 ViewCenter { get; set; } = new(960, 540);
-
-    /// <summary>视图缩放 / 平移变化（参数为最新的 <see cref="ViewTransform"/>），供板书录制使用。</summary>
-    public event Action<Matrix3x2> ViewChanged;
-
-    /// <summary>设置视图变换；与直接赋值 <see cref="ViewTransform"/> 等价。</summary>
-    public void SetView(Matrix3x2 transform) => ViewTransform = transform;
-
-    /// <summary>
-    /// 设置视图中心。仅当中心确实变化时触发 <see cref="ViewChanged"/>
-    /// （中心本身不改变矩阵，订阅方仍会拿到当前变换）。
-    /// </summary>
-    public void SetViewCenter(Vector2 center)
-    {
-        if (center.Equals(ViewCenter)) return;
-        ViewCenter = center;
-        ViewChanged?.Invoke(ViewTransform);
-    }
 
     /// <summary>1:1 port of the original gesture pivot option. 未验证。</summary>
     public Core.Settings.MatrixTransformCenterPointOptions TransformCenterOption { get; set; }
@@ -516,10 +563,11 @@ public sealed partial class InkController : IDisposable
                 bounds = bounds.Union(Rect.FromLTRB(p.X - 12, p.Y - 12, p.X + 12, p.Y + 12));
             var rotate = frame.HandlePosition(SelectionHandle.Rotate, ViewTransform);
             bounds = bounds.Union(Rect.FromLTRB(rotate.X - 12, rotate.Y - 12, rotate.X + 75, rotate.Y + 40));
+            int padding = ShowPolygonAngles ? 128 : 15;
             foreach (var control in ShapeControlPoints)
             {
                 var p = Vector2.Transform(control, ViewTransform);
-                bounds = bounds.Union(Rect.FromLTRB(p.X - 15, p.Y - 15, p.X + 15, p.Y + 15));
+                bounds = bounds.Union(Rect.FromLTRB(p.X - padding, p.Y - padding, p.X + padding, p.Y + padding));
             }
             return bounds;
         }
@@ -614,14 +662,17 @@ public sealed partial class InkController : IDisposable
 
     public void ClearSelection()
     {
+        CancelAdvancedSelection();
         if (_shapeEditPointer is { } editPointer)
             UpdateShapeControlDrag(new OverlayPointer(editPointer, 0, 0, .5f, 0, 0, OverlayPointerKind.Mouse, 0), true, canceled: true);
         ShapeEditEnabled = false;
         if (_selectionGesture) EndSelectionGesture();
         else if (_activeHandle != SelectionHandle.None) EndSelectionDrag();
+        FinishRegionSelection(canceled: true);
         Selection.Clear(); SelectedElements.Clear();
         IsMarqueeSelecting = false; MarqueeBounds = Rect.Empty;
         _marqueeInitialStrokes = null; _marqueeInitialElements = null;
+        ResetViewportContacts();
         _touches.Clear();
         SelectionChanged?.Invoke(); Invalidated?.Invoke();
     }
@@ -630,26 +681,10 @@ public sealed partial class InkController : IDisposable
     {
         Tool = InkTool.Select;
         ClearSelection();
-        Selection.AddRange(Document.Strokes);
-        if (GetSelectableElements is not null) SelectedElements.AddRange(GetSelectableElements().Where(e => e.IsPresent));
+        Selection.AddRange(Document.Strokes.Where(InActiveInkLayer));
+        if (ActiveInkLayer == 0 && GetSelectableElements is not null)
+            SelectedElements.AddRange(GetSelectableElements().Where(e => e.IsPresent));
         SelectionChanged?.Invoke(); Invalidated?.Invoke();
-    }
-
-    // Marquee (rubber-band) selection state. Pure view/world geometry; no UI dependency.
-    private bool _marqueeing;
-    private Vector2 _marqueeStartView, _marqueeStartWorld, _marqueeCurrentView;
-
-    /// <summary>Current marquee rectangle in view coordinates while dragging, otherwise null.</summary>
-    public Rect? MarqueeViewRect
-    {
-        get
-        {
-            if (!_marqueeing) return null;
-            var a = _marqueeStartView;
-            var b = _marqueeCurrentView;
-            return Rect.FromLTRB(MathF.Min(a.X, b.X), MathF.Min(a.Y, b.Y),
-                MathF.Max(a.X, b.X), MathF.Max(a.Y, b.Y));
-        }
     }
 
     public PalmRejector Palm => _palm;
@@ -657,16 +692,13 @@ public sealed partial class InkController : IDisposable
     /// <summary>Raised once per logical change; the presenter redraws on this.</summary>
     public event Action Invalidated;
 
-    public event Action SelectionChanged;
-
-    /// <summary>一支笔画刚被提交到文档（用于板书录制）。</summary>
     public event Action<InkStroke> StrokeCommitted;
-
-    /// <summary>整笔擦除移除的笔画（用于板书录制）。</summary>
+    /// <summary>Committed ink and any shape recognition have finished updating the document and history.</summary>
+    public event Action StrokeCommitCompleted;
     public event Action<IReadOnlyList<InkStroke>> StrokesErased;
-
-    /// <summary>当前页被清空（用于板书录制）。</summary>
     public event Action Cleared;
+
+    public event Action SelectionChanged;
 
     public void ConfigureGestures(bool zoom, bool translate, bool rotate)
     {
@@ -677,9 +709,11 @@ public sealed partial class InkController : IDisposable
 
     // ---- input ------------------------------------------------------------
 
-    public void OnPointerDown(in OverlayPointer p)
+    private void OnPointerDownCore(in OverlayPointer p)
     {
         if (Playback is not null) return;
+        CommitViewportFrame();
+        StopViewportMotion();
         if (_shapeEditPointer is not null) return;
         if (Tool == InkTool.Select && BeginShapeControlDrag(p)) return;
         _palm.OnDown(p);
@@ -689,23 +723,27 @@ public sealed partial class InkController : IDisposable
             foreach (var touch in _touches.Values)
                 if (touch.InputSurface == p.InputSurface) _suppressedTouches.Add(touch.Id);
             foreach (var id in _suppressedTouches) _touches.Remove(id);
+            ResetViewportContacts();
             _manipulator.Reset();
             if (_erasing && _palm.ActivePalms.Contains(_eraserPointerId)) EndErase();
         }
         if (_palm.SuppressesTouch(p)) { _suppressedTouches.Add(p.Id); return; }
         if (p.Kind == OverlayPointerKind.Touch && _palm.ShouldErase(p) && Tool is InkTool.Pan or InkTool.Select) return;
+        if (AdvancedSelection is not null) { BeginAdvancedReference(p); return; }
         UpdateEraserPreview(p, notify: false);
         if (Tool == InkTool.Pan)
         {
             if (TouchGesturesEnabled && PanZoomEnabled && p.Kind == OverlayPointerKind.Touch)
             {
                 _touches[p.Id] = p;
-                if (_touches.Count >= 2 && TryGetTouchPair(out var a, out var b, p.InputSurface))
-                {
-                    _panPointerId = null;
-                    _manipulator.Begin(new(a.X, a.Y), new(b.X, b.Y));
-                    return;
-                }
+                if (BeginViewportPair(p.InputSurface, p.TimeMs) || _viewportGesture) return;
+                _viewportGesture = true;
+                _viewportSurface = p.InputSurface;
+                _viewportRemaining = p.Id;
+                _panPointerId = null;
+                _viewportAnchor = Position(p);
+                ResetViewportSamples(p.TimeMs);
+                return;
             }
             if (_panPointerId is null)
             {
@@ -732,7 +770,7 @@ public sealed partial class InkController : IDisposable
                         BeginSelectionTouchPair(first, p);
                     return;
                 }
-                if (HasSelection && !IsMarqueeSelecting
+                if (HasSelection && !IsRegionSelecting
                     && (_activeHandle == SelectionHandle.None || _touches.ContainsKey(_selectionPointerId))
                     && TryGetSelectionTouchPair(out var a, out var b, p.InputSurface))
                 {
@@ -741,7 +779,7 @@ public sealed partial class InkController : IDisposable
                     return;
                 }
             }
-            if ((_activeHandle != SelectionHandle.None || IsMarqueeSelecting) && p.Id != _selectionPointerId) return;
+            if ((_activeHandle != SelectionHandle.None || IsRegionSelecting) && p.Id != _selectionPointerId) return;
             BeginSelectionInteraction(p, world);
             return;
         }
@@ -799,10 +837,14 @@ public sealed partial class InkController : IDisposable
             if (TouchGesturesEnabled && !MultiTouchEnabled && TryGetTouchPair(out var a, out var b, p.InputSurface))
             {
                 CancelTouchInk(p.InputSurface);
-                _manipulator.Begin(new Vector2(a.X, a.Y), new Vector2(b.X, b.Y));
+                if (GesturesTargetSelection && Selection.Count > 0)
+                    _manipulator.Begin(ToWorld(a), ToWorld(b));
+                else
+                    BeginViewportPair(p.InputSurface, p.TimeMs);
                 Invalidated?.Invoke();
                 return;
             }
+            if (IsViewportSurface(p.InputSurface)) return;
         }
 
         switch (Tool)
@@ -816,11 +858,14 @@ public sealed partial class InkController : IDisposable
                 break;
 
             case InkTool.Shape:
-                // Hyperbola step 2 keeps iniP locked at the center (NeedUpdateIniP,
-                // upstream MW_ShapeDrawing.cs:1646-1653); the cuboid depth drag only uses endP.
-                _shapeDragStart[p.Id] = _shapeStep == 1 && ShapeGenerator.IsHyperbola(ShapeKind)
-                    ? _stepAnchor
-                    : world;
+                if (_shapeStep == 0 && _shapeDragStart.Count == 0)
+                {
+                    var view = ViewTransform;
+                    float angle = MathF.Atan2(view.M12, view.M11);
+                    _worldToShape = Matrix3x2.CreateRotation(angle);
+                    _shapeToWorld = Matrix3x2.CreateRotation(-angle);
+                }
+                _shapeDragStart[p.Id] = Vector2.Transform(world, _worldToShape);
                 break;
 
             default:
@@ -829,12 +874,20 @@ public sealed partial class InkController : IDisposable
         }
     }
 
-    public void OnPointerMove(in OverlayPointer p)
+    private void OnPointerMoveCore(in OverlayPointer p)
     {
         if (Playback is not null) return;
+        if (_touches.TryGetValue(p.Id, out var viewportPrevious)
+            && IsViewportContact(p.Id) && (Tool == InkTool.Pan || !MultiTouchEnabled))
+        {
+            _touches[p.Id] = p;
+            MoveViewportContact(p, viewportPrevious);
+            return;
+        }
         if (_shapeEditPointer is not null) { UpdateShapeControlDrag(p, false); return; }
         if (_suppressedTouches.Contains(p.Id)) return;
         _palm.OnMove(p);
+        if (AdvancedSelection is not null) { MoveAdvancedReference(p); return; }
         if (p.Kind == OverlayPointerKind.Touch && PalmErases && _palm.ShouldErase(p)
             && Tool is InkTool.Pen or InkTool.Highlighter or InkTool.Shape && !_erasing)
         {
@@ -889,9 +942,9 @@ public sealed partial class InkController : IDisposable
             }
             return;
         }
-        if (IsMarqueeSelecting)
+        if (IsRegionSelecting)
         {
-            if (p.Id == _selectionPointerId) UpdateMarquee(new Vector2(p.X, p.Y));
+            if (p.Id == _selectionPointerId) UpdateRegionSelection(new Vector2(p.X, p.Y));
             return;
         }
 
@@ -928,13 +981,6 @@ public sealed partial class InkController : IDisposable
             }
         }
 
-        if (_marqueeing)
-        {
-            _marqueeCurrentView = new Vector2(p.X, p.Y);
-            Invalidated?.Invoke();
-            return;
-        }
-
         if (_activeHandle != SelectionHandle.None)
         {
             if (p.Id == _selectionPointerId) UpdateSelectionDrag(new Vector2(p.X, p.Y), p.Shift, p.Control);
@@ -952,7 +998,7 @@ public sealed partial class InkController : IDisposable
 
         if (Tool == InkTool.Shape && _shapeDragStart.TryGetValue(p.Id, out var start))
         {
-            _shapePreview = GenerateShapePreview(start, world);
+            _shapePreview = GenerateShapePreview(start, Vector2.Transform(world, _worldToShape));
             Invalidated?.Invoke();
             return;
         }
@@ -975,11 +1021,13 @@ public sealed partial class InkController : IDisposable
         }
     }
 
-    public void OnPointerUp(in OverlayPointer p, bool canceled = false)
+    private void OnPointerUpCore(in OverlayPointer p, bool canceled)
     {
         if (Playback is not null) return;
+        if (ReleaseViewportContact(p, canceled)) { _palm.OnUp(p); return; }
         if (_shapeEditPointer is not null) { UpdateShapeControlDrag(p, true, canceled); return; }
         if (_suppressedTouches.Remove(p.Id)) { _palm.OnUp(p); return; }
+        if (AdvancedSelection is not null) { _palm.OnUp(p); FinishAdvancedReference(p, canceled); return; }
         if (p.Kind == OverlayPointerKind.Touch) HideEraserPreview(p.Id);
         else UpdateEraserPreview(p);
         if (Tool == InkTool.Pan)
@@ -1030,13 +1078,12 @@ public sealed partial class InkController : IDisposable
         if (viewGestureEnded) Invalidated?.Invoke();
 
         var world = ToWorld(p);
-        if (IsMarqueeSelecting)
+        if (IsRegionSelecting)
         {
             if (p.Id != _selectionPointerId) return;
-            UpdateMarquee(new Vector2(p.X, p.Y));
-            IsMarqueeSelecting = false; MarqueeBounds = Rect.Empty;
-            _marqueeInitialStrokes = null; _marqueeInitialElements = null;
-            SelectionChanged?.Invoke(); Invalidated?.Invoke();
+            if (IsLassoSelecting) AppendLassoPoint(new Vector2(p.X, p.Y), final: true);
+            else if (!canceled) UpdateMarquee(new Vector2(p.X, p.Y));
+            FinishRegionSelection(canceled);
             return;
         }
 
@@ -1046,12 +1093,6 @@ public sealed partial class InkController : IDisposable
             _slideGestureActive = false;
             float dx = p.X - _slideGestureStartX;
             if (MathF.Abs(dx) > 60f) SlideFlipRequested?.Invoke(dx < 0);
-            return;
-        }
-
-        if (_marqueeing)
-        {
-            EndMarquee(world);
             return;
         }
 
@@ -1074,7 +1115,7 @@ public sealed partial class InkController : IDisposable
 
         if (Tool == InkTool.Shape && _shapeDragStart.Remove(p.Id, out var start))
         {
-            CommitShapeDrag(start, world);
+            CommitShapeDrag(start, Vector2.Transform(world, _worldToShape));
             return;
         }
 
@@ -1141,7 +1182,7 @@ public sealed partial class InkController : IDisposable
             foreach (var point in stroke.Points)
                 if (point.Width > targetWidth) { targetWidth = point.Width; dotPoint = point; }
         }
-        var dot = new InkStroke(stroke.Attributes.Clone());
+        var dot = new InkStroke(stroke.Attributes.Clone()) { InkLayerIndex = stroke.InkLayerIndex };
         dot.RestorePoints(new[] { new InkPoint(worldCenter.X, worldCenter.Y, dotPoint.Pressure, targetWidth, first.TimeMs,
             stroke.UsesHardwarePressure || dotPoint.HasPressure, dotPoint.TiltX, dotPoint.TiltY) });
         if (stroke.Count > 1 || Vector2.DistanceSquared(first.Position, worldCenter) > .001f
@@ -1156,7 +1197,7 @@ public sealed partial class InkController : IDisposable
     private void StartStroke(in OverlayPointer p, Vector2 world)
     {
         var attrs = GetDrawingAttributes(Tool == InkTool.Highlighter);
-        var stroke = new InkStroke(attrs);
+        var stroke = new InkStroke(attrs) { InkLayerIndex = ActiveInkLayer };
         bool relativeTime = attrs.EffectiveTaper is >= TaperKind.SmoothPen and <= TaperKind.InkWash
             || UseHardwarePressure && p.Kind == OverlayPointerKind.Pen && p.HasPressure;
         if (relativeTime) _strokeStartTimes[p.Id] = p.TimeMs;
@@ -1205,19 +1246,42 @@ public sealed partial class InkController : IDisposable
             if (ShapeGenerator.IsTwoStepSolid(ShapeKind))
             {
                 var offset = SolidOffset(start, end);
-                var screenOffset = Vector2.TransformNormal(offset, ViewTransform);
+                var screenOffset = Vector2.TransformNormal(offset, _shapeToWorld * ViewTransform);
                 return screenOffset.LengthSquared() < 9 ? new List<InkStroke>(_stepPending)
-                    : ShapeGenerator.GenerateSolid(ShapeKind, _stepAnchor, _stepSecond, offset, ShapeAttributes());
+                    : PlaceShape(ShapeGenerator.GenerateSolid(ShapeKind, _stepAnchor, _stepSecond, offset, ShapeAttributes()));
             }
             if (ShapeGenerator.IsHyperbola(ShapeKind))
             {
                 return _stepPending
-                    .Concat(ShapeGenerator.GenerateHyperbolaBranches(_stepAnchor, _stepK, end,
-                        ShapeGenerator.HasHyperbolaFoci(ShapeKind), ShapeAttributes()))
+                    .Concat(PlaceShape(ShapeGenerator.GenerateHyperbolaBranches(_stepAnchor, _stepK, end,
+                        ShapeGenerator.HasHyperbolaFoci(ShapeKind), ShapeAttributes())))
                     .ToList();
             }
         }
-        return ShapeGenerator.Generate(ShapeKind, start, end, ShapeAttributes());
+        return PlaceShape(GenerateSelectedShape(start, end, ShapeAttributes()));
+    }
+
+    private List<InkStroke> GenerateSelectedShape(Vector2 start, Vector2 end, StrokeAttributes attrs)
+    {
+        if (!CanDrawShape(ShapeKind)) return [];
+        return ShapeKind == ShapeKind.Polygon
+            ? ShapeGenerator.GeneratePolygon(PolygonVertexCount, start, end, attrs)
+            : ShapeGenerator.Generate(ShapeKind, start, end, attrs);
+    }
+
+    private List<InkStroke> PlaceShape(List<InkStroke> strokes)
+    {
+        if (_shapeToWorld.IsIdentity || strokes.Count == 0) return strokes;
+        var source = strokes[0].ShapeSource;
+        if (source?.Geometry is { } geometry)
+            source = ShapeSource.FromGeometry(source.GroupId, geometry.Transformed(_shapeToWorld));
+        foreach (var stroke in strokes)
+        {
+            stroke.ShapeSource = null;
+            stroke.Transform(_shapeToWorld, scaleWidth: false);
+            stroke.ShapeSource = source;
+        }
+        return strokes;
     }
 
     private Vector2 SolidOffset(Vector2 start, Vector2 end)
@@ -1239,7 +1303,7 @@ public sealed partial class InkController : IDisposable
                     _shapePreview.Clear(); Invalidated?.Invoke(); return;
                 }
                 // Hold the first face as preview until the signed depth/apex drag commits.
-                _stepPending = ShapeGenerator.Generate(kind, start, end, attrs);
+                _stepPending = PlaceShape(ShapeGenerator.Generate(kind, start, end, attrs));
                 _stepAnchor = new Vector2(MathF.Min(start.X, end.X), MathF.Min(start.Y, end.Y));
                 _stepSecond = new Vector2(MathF.Max(start.X, end.X), MathF.Max(start.Y, end.Y));
                 _shapeStep = 1;
@@ -1249,11 +1313,11 @@ public sealed partial class InkController : IDisposable
             }
             // The signed second drag places the opposite face. Commit all edges in one undo unit.
             var offset = SolidOffset(start, end);
-            if (Vector2.TransformNormal(offset, ViewTransform).LengthSquared() < 9)
+            if (Vector2.TransformNormal(offset, _shapeToWorld * ViewTransform).LengthSquared() < 9)
             {
                 _shapePreview = new List<InkStroke>(_stepPending); Invalidated?.Invoke(); return;
             }
-            var solid = ShapeGenerator.GenerateSolid(kind, _stepAnchor, _stepSecond, offset, attrs);
+            var solid = PlaceShape(ShapeGenerator.GenerateSolid(kind, _stepAnchor, _stepSecond, offset, attrs));
             if (solid.Count == 0) return;
             _stepPending = new List<InkStroke>();
             _shapeStep = 0;
@@ -1270,7 +1334,7 @@ public sealed partial class InkController : IDisposable
                 // Step 1: dashed asymptotes lock k=|dy/dx| (upstream:894-902,1550-1555).
                 var asymptotes = ShapeGenerator.Generate(kind, start, end, attrs);
                 if (asymptotes.Count == 0) { Invalidated?.Invoke(); return; } // degenerate drag: retry
-                _stepPending = asymptotes;
+                _stepPending = PlaceShape(asymptotes);
                 _stepK = MathF.Abs((end.Y - start.Y) / (end.X - start.X));
                 _stepAnchor = start;
                 _stepSecond = end;
@@ -1282,19 +1346,21 @@ public sealed partial class InkController : IDisposable
             var branches = ShapeGenerator.GenerateHyperbolaBranches(_stepAnchor, _stepK, end,
                 ShapeGenerator.HasHyperbolaFoci(kind), attrs);
             if (branches.Count == 0) { Invalidated?.Invoke(); return; }
+            PlaceShape(branches);
             var kept = _stepPending;
             _stepPending = new List<InkStroke>();
             _shapeStep = 0;
             _shapePreview.Clear();
             var hyperbola = ShapeGenerator.HasHyperbolaAsymptotes(kind) ? kept.Concat(branches).ToList() : branches;
             ShapeDefinition.Attach(hyperbola, new ShapeDefinition { Kind = kind, Construction = ShapeConstruction.Hyperbola,
+                Transform = ShapeDefinition.Write(_shapeToWorld),
                 Parameters = new[] { _stepAnchor.X, _stepAnchor.Y, _stepSecond.X, _stepSecond.Y, end.X, end.Y } });
             if (hyperbola.Count > 0) CommitStrokes(hyperbola, "shape");
             if (!StickyShape) Tool = InkTool.Pen;
             return;
         }
 
-        var shapes = ShapeGenerator.Generate(kind, start, end, attrs);
+        var shapes = PlaceShape(GenerateSelectedShape(start, end, attrs));
         _shapePreview = new List<InkStroke>();
         if (shapes.Count > 0) CommitStrokes(shapes, "shape");
         Invalidated?.Invoke();
@@ -1308,7 +1374,11 @@ public sealed partial class InkController : IDisposable
     private void CommitStrokes(List<InkStroke> strokes, string name, bool lineEndpointHeld = false, HeldShape heldShape = null)
     {
         long layer = NextLayerOrder();
-        foreach (var stroke in strokes) stroke.LayerOrder = layer++;
+        foreach (var stroke in strokes)
+        {
+            stroke.InkLayerIndex = ActiveInkLayer;
+            stroke.LayerOrder = layer++;
+        }
         foreach (var s in strokes) s.Complete();
         using (Document.DeferNotifications())
         {
@@ -1317,9 +1387,10 @@ public sealed partial class InkController : IDisposable
             History.Push(new DelegateAction(name,
                 () => Document.AddRange(strokes),
                 () => Document.RemoveAll(strokes)));
-            foreach (var s in strokes) StrokeCommitted?.Invoke(s);
+            foreach (var stroke in strokes) StrokeCommitted?.Invoke(stroke);
             if (RecognizeShapes && name == "ink") TryRecognize(strokes, lineEndpointHeld, heldShape);
         }
+        StrokeCommitCompleted?.Invoke();
         Invalidated?.Invoke();
     }
 
@@ -1362,21 +1433,23 @@ public sealed partial class InkController : IDisposable
         if (lasso.IsValid)
         {
             var removed = Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke))
-                .Where(item => lasso.IntersectsStroke(item.Stroke, view)).ToList();
+                .Where(item => InActiveInkLayer(item.Stroke) && lasso.IntersectsStroke(item.Stroke, view)).ToList();
             var shapeGroups = removed.Where(item => item.Stroke.ShapeSource?.Geometry is not null).Select(item => item.Stroke.ShapeSource.GroupId).ToHashSet();
             if (shapeGroups.Count > 0)
             {
                 var hits = removed.Select(item => item.Stroke).ToHashSet();
                 removed = Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke))
-                    .Where(item => hits.Contains(item.Stroke) || item.Stroke.ShapeSource is { } source && shapeGroups.Contains(source.GroupId)).ToList();
+                    .Where(item => InActiveInkLayer(item.Stroke) &&
+                        (hits.Contains(item.Stroke) || item.Stroke.ShapeSource is { } source && shapeGroups.Contains(source.GroupId))).ToList();
             }
-            var elements = GetSelectableElements?.Invoke()
-                .Where(e => e.IsPresent && lasso.IntersectsFrame(e.Frame, view)).ToList() ?? new();
+            var elements = ActiveInkLayer == 0 ? GetSelectableElements?.Invoke()
+                .Where(e => e.IsPresent && lasso.IntersectsFrame(e.Frame, view)).ToList() ?? new() : new();
             if (removed.Count > 0 || elements.Count > 0)
             {
                 var strokes = removed.Select(item => item.Stroke).ToList();
                 Remove();
                 History.Push(new DelegateAction("lasso erase", Remove, Restore));
+                if (strokes.Count > 0) StrokesErased?.Invoke(strokes);
                 PruneSelection();
 
                 void Remove()
@@ -1439,7 +1512,7 @@ public sealed partial class InkController : IDisposable
         _lastEraserPoint = world;
         _erasedThisGesture.Clear();
         _eraseBeforeSnapshot = partialStroke
-            ? Document.Strokes.Select(s => s.Clone()).ToList()
+            ? Document.Strokes.ToList()
             : null;
         bool changed = EraseAlong(world, world);
         if (partialStroke && !changed) EraserPreviewChanged?.Invoke();
@@ -1452,30 +1525,47 @@ public sealed partial class InkController : IDisposable
         float dist = Vector2.Distance(from, to);
         int steps = Math.Max(1, (int)(dist / MathF.Max(4f, radius * 0.5f)));
         bool any = false;
-        for (int i = 0; i <= steps; i++)
+        using (Document.DeferNotifications())
+        for (int i = dist == 0 ? steps : 1; i <= steps; i++)
         {
             var p = Vector2.Lerp(from, to, steps == 0 ? 0 : (float)i / steps);
-            var shapeGroups = Document.Strokes.Where(s => s.ShapeSource?.Geometry is not null && s.Bounds.Inflate(radius).Contains(p)
-                && s.DistanceTo(p) <= radius + s.HitRadius).Select(s => s.ShapeSource.GroupId).ToHashSet();
-            if (shapeGroups.Count > 0)
-            {
-                var shapes = Document.Strokes.Where(s => s.ShapeSource is { } source && shapeGroups.Contains(source.GroupId)).ToList();
-                if (!_partialEraseGesture) _erasedThisGesture.AddRange(shapes);
-                Document.RemoveAll(shapes); any = true;
-            }
             if (_partialEraseGesture)
             {
-                var currentStrokes = Document.Strokes.ToArray();
+                HashSet<Guid> cutGroups = null;
+                var currentStrokes = Document.Strokes.Where(stroke => InActiveInkLayer(stroke) && stroke.Bounds.Inflate(radius).Contains(p)).ToArray();
                 foreach (var stroke in currentStrokes)
                 {
                     if (!StrokeEraser.EraseDisc(stroke, p, radius, out var remaining)) continue;
+                    if (stroke.ShapeSource is { Geometry.IsEditable: true } source)
+                        (cutGroups ??= new()).Add(source.GroupId);
                     Document.Replace(stroke, remaining);
                     any = true;
+                }
+                if (cutGroups is not null)
+                {
+                    // Keep untouched parts in the same group without letting shape tools rebuild the cut.
+                    foreach (var stroke in Document.Strokes.Where(stroke => InActiveInkLayer(stroke)
+                        && stroke.ShapeSource is { Geometry.IsEditable: true } source && cutGroups.Contains(source.GroupId)).ToArray())
+                    {
+                        var copy = stroke.Clone();
+                        var source = stroke.ShapeSource;
+                        copy.ShapeSource = ShapeSource.FromGeometry(source.GroupId, source.Geometry.AsContours());
+                        Document.Replace(stroke, new[] { copy });
+                    }
                 }
             }
             else
             {
-                var hits = Document.EraseAt(p, radius);
+                var shapeGroups = Document.Strokes.Where(s => InActiveInkLayer(s) && s.ShapeSource?.Geometry is not null && s.Bounds.Inflate(radius).Contains(p)
+                    && s.DistanceTo(p) <= radius + s.HitRadius).Select(s => s.ShapeSource.GroupId).ToHashSet();
+                if (shapeGroups.Count > 0)
+                {
+                    var shapes = Document.Strokes.Where(s => InActiveInkLayer(s) && s.ShapeSource is { } source && shapeGroups.Contains(source.GroupId)).ToList();
+                    _erasedThisGesture.AddRange(shapes);
+                    Document.RemoveAll(shapes);
+                    any = true;
+                }
+                var hits = Document.EraseAt(p, radius, ActiveInkLayer);
                 if (hits.Count > 0)
                 {
                     _erasedThisGesture.AddRange(hits);
@@ -1493,14 +1583,7 @@ public sealed partial class InkController : IDisposable
         _gestureEraserRadius = null;
         if (_partialEraseGesture)
         {
-            var before = _eraseBeforeSnapshot ?? new List<InkStroke>();
-            var after = Document.Strokes.Select(s => s.Clone()).ToList();
-            if (before.Count != after.Count || !SameStrokeSnapshot(before, after))
-            {
-                History.Push(new DelegateAction("area erase",
-                    () => RestoreDocument(after),
-                    () => RestoreDocument(before)));
-            }
+            RecordAreaErase();
             _eraseBeforeSnapshot = null;
             _partialEraseGesture = false;
         }
@@ -1510,33 +1593,38 @@ public sealed partial class InkController : IDisposable
             History.Push(new DelegateAction("erase",
                 () => Document.RemoveAll(removed),
                 () => Document.AddRange(removed)));
-            StrokesErased?.Invoke(removed);
             _erasedThisGesture.Clear();
+            StrokesErased?.Invoke(removed);
         }
         Invalidated?.Invoke();
     }
 
-    private void RestoreDocument(List<InkStroke> strokes)
+    private void RecordAreaErase()
     {
-        Document.Clear();
-        Document.AddRange(strokes.Select(s => s.Clone()));
-        Selection.Clear();
-        SelectedElements.Clear();
-        _frameStrokes.Clear(); _frameElements.Clear();
-        SelectionChanged?.Invoke();
-        Invalidated?.Invoke();
-    }
+        var before = _eraseBeforeSnapshot;
+        if (before is null) return;
+        var originals = before.ToHashSet();
+        var present = Document.Strokes.ToHashSet();
+        var removed = before.Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => !present.Contains(item.Stroke)).ToArray();
+        if (removed.Length == 0) return;
+        var added = Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => !originals.Contains(item.Stroke)).ToArray();
+        // Only changed ink belongs to this history entry. Untouched strokes keep their identity.
+        var active = added.Select(item => item.Stroke).ToArray();
+        History.Push(new DelegateAction("area erase", () => Restore(added), () => Restore(removed)));
 
-    private static bool SameStrokeSnapshot(IReadOnlyList<InkStroke> a, IReadOnlyList<InkStroke> b)
-    {
-        if (a.Count != b.Count) return false;
-        for (int i = 0; i < a.Count; i++)
+        void Restore((int Index, InkStroke Stroke)[] snapshot)
         {
-            if (a[i].Count != b[i].Count) return false;
-            for (int p = 0; p < a[i].Count; p++)
-                if (a[i].Points[p].Position != b[i].Points[p].Position) return false;
+            using (Document.DeferNotifications())
+            {
+                Document.RemoveAll(active);
+                Document.InsertRange(snapshot);
+            }
+            active = snapshot.Select(item => item.Stroke).ToArray();
+            _frameStrokes.Clear(); _frameElements.Clear();
+            ClearSelection();
         }
-        return true;
     }
 
     // ---- selection --------------------------------------------------------
@@ -1576,37 +1664,30 @@ public sealed partial class InkController : IDisposable
         {
             _controlClickElement = SelectedElements.LastOrDefault(element => element.Frame.Contains(world, Matrix3x2.Identity));
             if (_controlClickElement is null)
-                _controlClickStroke = Document.HitTest(world, 6f / MathF.Max(.1f, MathF.Sqrt(MathF.Abs(ViewTransform.GetDeterminant()))))
+                _controlClickStroke = Document.HitTest(world, 6f / MathF.Max(.1f, MathF.Sqrt(MathF.Abs(ViewTransform.GetDeterminant()))), ActiveInkLayer)
                     .LastOrDefault(stroke => Selection.Contains(stroke));
         }
         else if (p.Control) handle = SelectionHandle.None;
         if (handle == SelectionHandle.None)
         {
+            if (SelectionMode == Core.Selection.InkSelectionMode.Lasso)
+            {
+                BeginRegionSelection(viewPoint, p.Control || p.Shift, p.Control);
+                return;
+            }
             var hit = HitTestDrawingObject(world);
             var hitElement = hit?.Element;
             var hitStroke = hit?.Stroke;
             bool additive = p.Control || p.Shift;
             if (hitElement is null && hitStroke is null)
             {
-                _marqueeInitialStrokes = additive ? Selection.ToList() : new();
-                _marqueeInitialElements = additive ? SelectedElements.ToList() : new();
-                if (!additive) { Selection.Clear(); SelectedElements.Clear(); }
-                IsMarqueeSelecting = true;
-                _dragFromView = viewPoint;
-                MarqueeBounds = Rect.Empty;
-                SelectionChanged?.Invoke();
-                Invalidated?.Invoke();
+                BeginRegionSelection(viewPoint, additive);
                 return;
             }
             if (!additive) { Selection.Clear(); SelectedElements.Clear(); }
             if (hitElement is not null)
             {
-                if (p.Control && SelectedElements.Contains(hitElement)) SelectedElements.Remove(hitElement);
-                else if (!SelectedElements.Contains(hitElement))
-                {
-                    SelectedElements.Add(hitElement);
-                    AddSelectionGroupMembers(hitElement);
-                }
+                SetGroupSelected(hitElement, !(p.Control && SelectedElements.Contains(hitElement)));
             }
             if (hitStroke is not null)
             {
@@ -1636,31 +1717,6 @@ public sealed partial class InkController : IDisposable
         Invalidated?.Invoke();
     }
 
-    private void EndMarquee(Vector2 endWorld)
-    {
-        _marqueeing = false;
-
-        var a = _marqueeStartView;
-        var b = _marqueeCurrentView;
-        float vLeft = MathF.Min(a.X, b.X), vTop = MathF.Min(a.Y, b.Y);
-        float vRight = MathF.Max(a.X, b.X), vBottom = MathF.Max(a.Y, b.Y);
-        var viewRect = Rect.FromLTRB(vLeft, vTop, vRight, vBottom);
-
-        Selection.Clear();
-        if (viewRect.Width >= 6 && viewRect.Height >= 6)
-        {
-            float wLeft = MathF.Min(_marqueeStartWorld.X, endWorld.X);
-            float wTop = MathF.Min(_marqueeStartWorld.Y, endWorld.Y);
-            float wRight = MathF.Max(_marqueeStartWorld.X, endWorld.X);
-            float wBottom = MathF.Max(_marqueeStartWorld.Y, endWorld.Y);
-            var worldRect = Rect.FromLTRB(wLeft, wTop, wRight, wBottom);
-            Selection.AddRange(Document.HitTest(worldRect));
-        }
-
-        SelectionChanged?.Invoke();
-        Invalidated?.Invoke();
-    }
-
     private void UpdateSelectionDrag(Vector2 viewPoint, bool constrain = false, bool control = false)
     {
         if (_dragTargets is null) return;
@@ -1673,6 +1729,7 @@ public sealed partial class InkController : IDisposable
             _controlCloneDrag |= control;
             _dragTargets = InkStroke.CloneObjects(Selection);
             _dragElements = SelectedElements.Select(e => e.Duplicate()).ToList();
+            RemapSelectionGroups(_dragElements);
             SetCloneLayerOrder();
             _cloneDrag = true;
             _previewSet.Clear();
@@ -1720,7 +1777,7 @@ public sealed partial class InkController : IDisposable
         if (!moved && controlClone)
         {
             if (_controlClickStroke is not null) { var members = ShapeMembers(_controlClickStroke).ToHashSet(); Selection.RemoveAll(members.Contains); }
-            if (_controlClickElement is not null) SelectedElements.Remove(_controlClickElement);
+            if (_controlClickElement is not null) SetGroupSelected(_controlClickElement, false);
         }
         _controlClickStroke = null; _controlClickElement = null;
         if (moved)
@@ -1788,12 +1845,13 @@ public sealed partial class InkController : IDisposable
         if (Vector2.DistanceSquared(_dragFromView, viewPoint) >= 9)
         {
             Selection.Clear(); Selection.AddRange(_marqueeInitialStrokes);
-            foreach (var stroke in Document.HitTest(MarqueeBounds, ViewTransform)) if (!Selection.Contains(stroke)) Selection.Add(stroke);
+            foreach (var stroke in Document.HitTest(MarqueeBounds, ViewTransform, ActiveInkLayer))
+                if (!Selection.Contains(stroke)) Selection.Add(stroke);
             ExpandShapeSelection();
             SelectedElements.Clear(); SelectedElements.AddRange(_marqueeInitialElements);
-            if (GetSelectableElements is not null)
+            if (ActiveInkLayer == 0 && GetSelectableElements is not null)
                 foreach (var element in GetSelectableElements())
-                    if (element.IsPresent && element.Frame.Intersects(MarqueeBounds, ViewTransform) && !SelectedElements.Contains(element)) SelectedElements.Add(element);
+                    if (element.IsPresent && element.Frame.Intersects(MarqueeBounds, ViewTransform) && !SelectedElements.Contains(element)) SetGroupSelected(element, true);
             SelectionChanged?.Invoke();
         }
         Invalidated?.Invoke();
@@ -1827,8 +1885,7 @@ public sealed partial class InkController : IDisposable
             }
             return;
         }
-        IsMarqueeSelecting = false; MarqueeBounds = Rect.Empty;
-        _marqueeInitialStrokes = null; _marqueeInitialElements = null;
+        FinishRegionSelection(canceled: true);
         _dragTargets = Selection.ToList(); _dragSnapshot = null;
         _dragElements = SelectedElements.ToList(); _dragElementSnapshot = _dragElements.Select(e => e.Capture()).ToList();
         _dragFrame = SelectionFrame; _cloneDrag = false; _dragMoved = false;
@@ -1852,6 +1909,7 @@ public sealed partial class InkController : IDisposable
         {
             _dragTargets = InkStroke.CloneObjects(Selection);
             _dragElements = SelectedElements.Select(e => e.Duplicate()).ToList();
+            RemapSelectionGroups(_dragElements);
             SetCloneLayerOrder();
             _cloneDrag = true;
             _previewSet.Clear();
@@ -1906,6 +1964,7 @@ public sealed partial class InkController : IDisposable
 
     public void TransformSelection(Matrix3x2 m)
     {
+        CancelAdvancedSelection();
         if (Selection.Count == 0) return;
         InkDocument.Transform(Selection, m);
         Invalidated?.Invoke();
@@ -1913,6 +1972,7 @@ public sealed partial class InkController : IDisposable
 
     public void TransformSelectionUndoable(Matrix3x2 matrix, string name, bool scaleWidth = true)
     {
+        CancelAdvancedSelection();
         if (!HasSelection) return;
         var strokes = Selection.ToList();
         var elements = SelectedElements.ToList();
@@ -1989,6 +2049,7 @@ public sealed partial class InkController : IDisposable
 
     public void Undo()
     {
+        CancelAdvancedSelection();
         EndPlayback();
         CancelLassoErase();
         if (History.Undo()) { PruneSelection(); Invalidated?.Invoke(); }
@@ -1996,6 +2057,7 @@ public sealed partial class InkController : IDisposable
 
     public void Redo()
     {
+        CancelAdvancedSelection();
         EndPlayback();
         CancelLassoErase();
         if (History.Redo()) { PruneSelection(); Invalidated?.Invoke(); }
@@ -2006,6 +2068,19 @@ public sealed partial class InkController : IDisposable
         int removed = Selection.RemoveAll(s => !Document.Strokes.Contains(s));
         removed += SelectedElements.RemoveAll(e => !e.IsPresent);
         if (removed > 0) SelectionChanged?.Invoke();
+    }
+
+    public void ClearHandwriting()
+    {
+        CancelLassoErase();
+        ClearSelection();
+        var removed = Document.Strokes.Select((stroke, index) => (Index: index, Stroke: stroke))
+            .Where(item => !item.Stroke.IsRecognizedShape && item.Stroke.ShapeSource is null).ToArray();
+        if (removed.Length == 0) return;
+        var strokes = removed.Select(item => item.Stroke).ToArray();
+        Document.RemoveAll(strokes);
+        History.Push(new DelegateAction("clear handwriting", () => Document.RemoveAll(strokes), () => Document.InsertRange(removed)));
+        Invalidated?.Invoke();
     }
 
     public void Clear()
@@ -2064,9 +2139,17 @@ public sealed partial class InkController : IDisposable
 
     public void Dispose()
     {
+        _advancedDrag = null;
+        AdvancedSelection = null;
         EndPlayback(); Document.Changed -= OnPlaybackDocumentChanged;
         _panPointerId = null;
-        _lassoPath.Clear(); IsLassoErasing = false;
+        _pendingViewport = null;
+        _viewportFramePending = false;
+        _viewportVelocity = Vector2.Zero;
+        _springOffset = 0;
+        _viewportPair = null;
+        _viewportRemaining = null;
+        _lassoPath.Clear(); IsLassoErasing = IsLassoSelecting = IsMarqueeSelecting = false;
         _live.Clear();
         ClearShapeHolds();
         _dotAnimations.Clear();
@@ -2081,5 +2164,9 @@ public sealed partial class InkController : IDisposable
         _shapeDragStart.Clear();
         _stepPending.Clear();
         _shapePreview.Clear();
+        _eraseBeforeSnapshot = null;
+        _erasedThisGesture.Clear();
+        _drawingObjects = Array.Empty<DrawingObject>();
+        History.Clear();
     }
 }

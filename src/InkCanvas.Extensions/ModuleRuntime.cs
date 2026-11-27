@@ -150,6 +150,8 @@ public sealed class ModuleRuntime : IDisposable
             "InkCanvas.Extensibility", "InkCanvas.Host.Contracts", "InkCanvas.Core", "InkCanvas.Platform",
             "InkCanvas.Ink", "InkCanvas.Features", "InkCanvas.Controls", "Microsoft.WinUI",
             "Microsoft.InteractiveExperiences.Projection", "Microsoft.Windows.SDK.NET", "WinRT.Runtime", "Microsoft.Graphics.Canvas", "Microsoft.Graphics.Canvas.Interop",
+            // FilledInkGeometry and the PDF module exchange Clipper paths across this boundary.
+            "Clipper2Lib",
         };
         protected override Assembly Load(AssemblyName name)
         {
