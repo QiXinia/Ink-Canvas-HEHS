@@ -64,7 +64,7 @@ export { MatrixTransformCenterPointOptions, resolvePivot } from './src/main/ets/
 export { TouchIntent, TouchDecision, measureContactWidth, boundsWidth, classifyContact } from './src/main/ets/input/TouchContactClassifier';
 export type { AdvancedTouchInput, TouchClassifyInput } from './src/main/ets/input/TouchContactClassifier';
 export { PalmRejector, OverlayPointerKind, simulatePalm } from './src/main/ets/input/PalmRejector';
-export { calibrationMultiplier } from './src/main/ets/input/TouchCalibration';
+export { calibrationMultiplier, normalizePenOffset, PEN_OFFSET_LIMIT } from './src/main/ets/input/TouchCalibration';
 export type { PalmEvent, PalmOptions, PalmEventResult, PalmSimResult } from './src/main/ets/input/PalmRejector';
 export { ReplayClock, simulateReplayClock } from './src/main/ets/replay/ReplayClock';
 export type { ReplayClockSimResult } from './src/main/ets/replay/ReplayClock';

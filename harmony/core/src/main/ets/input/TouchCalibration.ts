@@ -16,3 +16,9 @@ export function calibrationMultiplier(samples: number[], targetWidth: number): n
   const multiplier = targetWidth / avg;
   return Math.min(5, Math.max(0.1, multiplier));
 }
+
+export const PEN_OFFSET_LIMIT: number = 50;
+
+export function normalizePenOffset(value: number): number {
+  return Number.isFinite(value) ? Math.max(-PEN_OFFSET_LIMIT, Math.min(PEN_OFFSET_LIMIT, value)) : 0;
+}

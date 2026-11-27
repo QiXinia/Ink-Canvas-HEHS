@@ -30,8 +30,14 @@
       "codepoint": "U+F6A1",
       "char": "",
       "target": "sys.symbol.square_dashed",
-      "fluentName": "select_object",
+      "fluentName": "square_multiple",
       "segoeCodepoint": "U+E8B3"
+    },
+    {
+      "name": "Spotlight",
+      "codepoint": "U+F7A4",
+      "char": "",
+      "target": null
     },
     {
       "name": "Shapes",
@@ -39,6 +45,24 @@
       "char": "△",
       "target": "custom:text",
       "segoeCodepoint": "U+25B3"
+    },
+    {
+      "name": "Assistant",
+      "codepoint": "U+EB3D",
+      "char": "",
+      "target": null
+    },
+    {
+      "name": "Agent",
+      "codepoint": "U+F1F9",
+      "char": "",
+      "target": null
+    },
+    {
+      "name": "Hint",
+      "codepoint": "U+F4E1",
+      "char": "",
+      "target": null
     },
     {
       "name": "Undo",
@@ -71,6 +95,18 @@
       "target": "sys.symbol.plus",
       "fluentName": "add",
       "segoeCodepoint": "U+E710"
+    },
+    {
+      "name": "AddPage",
+      "codepoint": "U+E4E8",
+      "char": "",
+      "target": null
+    },
+    {
+      "name": "ExitBoard",
+      "codepoint": "U+F6E3",
+      "char": "",
+      "target": null
     },
     {
       "name": "Settings",
@@ -117,7 +153,7 @@
       "codepoint": "U+F8C3",
       "char": "",
       "target": "sys.symbol.square_and_pencil",
-      "fluentName": "whiteboard",
+      "fluentName": "board",
       "segoeCodepoint": "U+E7F4"
     },
     {
@@ -367,7 +403,7 @@
       "codepoint": "U+F6A1",
       "char": "",
       "target": "sys.symbol.square_dashed",
-      "fluentName": "select_object",
+      "fluentName": "square_multiple",
       "segoeCodepoint": "U+E958"
     },
     {
@@ -399,7 +435,7 @@
       "codepoint": "U+F8C3",
       "char": "",
       "target": "sys.symbol.square_and_pencil",
-      "fluentName": "whiteboard",
+      "fluentName": "board",
       "segoeCodepoint": "U+E929"
     },
     {
@@ -537,20 +573,6 @@
       "target": "sys.symbol.arrow_clockwise",
       "fluentName": "arrow_clockwise",
       "segoeCodepoint": "U+E7AD"
-    },
-    {
-      "name": "AddPage",
-      "codepoint": "U+E4E8",
-      "char": "",
-      "target": "sys.symbol.doc_badge_plus",
-      "fluentName": "document_add"
-    },
-    {
-      "name": "ExitBoard",
-      "codepoint": "U+F6E3",
-      "char": "",
-      "target": "sys.symbol.arrow_right_to_line",
-      "fluentName": "sign_out"
     }
   ]
 }

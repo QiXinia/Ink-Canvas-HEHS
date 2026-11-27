@@ -29,7 +29,7 @@ export class CanvasInkRenderer implements InkRenderer {
   private cacheBitmap: ImageBitmap | null = null;
   private cacheDirty: boolean = true;
   private cachedView: number[] | null = null;
-  private cachedSignatures: string[] = [];
+  private cachedCommands: DrawCommand[] = [];
 
   // 活动层脏矩形状态（世界坐标）
   private prevActiveBox: number[] | null = null;
@@ -95,16 +95,16 @@ export class CanvasInkRenderer implements InkRenderer {
     this.predictionColor = 0;
     this.predictionWidth = 0;
     // 尺寸变化必须重建离屏画布（位图尺寸不可变），离屏缓存状态作废。
+    this.cacheDirty = true;
     if (sizeChanged || this.offscreen === null) {
       this.destroyOffscreen();
-      this.cacheDirty = true;
       this.cachedView = null;
-      this.cachedSignatures = [];
+      this.cachedCommands = [];
     }
   }
 
   render(scene: InkScene, invalidation: Invalidation): void {
-    // 外部当前统一传入 Invalidation.full()；渲染器内部以视图矩阵 + 命令签名做更细的缓存决策，
+    // 外部当前统一传入 Invalidation.full()；渲染器内部以视图矩阵和提交命令引用判定缓存更新，
     // 参数保留以兼容未来调用方下发精确脏盒。
     void invalidation;
     if (this.widthVp <= 0 || this.heightVp <= 0) {
@@ -116,16 +116,12 @@ export class CanvasInkRenderer implements InkRenderer {
       return;
     }
     const v = scene.View;
-    const signatures: string[] = [];
-    for (let i = 0; i < scene.Committed.length; i++) {
-      signatures.push(CanvasInkRenderer.commandSignature(scene.Committed[i]));
-    }
     const viewChanged = this.cachedView === null || !CanvasInkRenderer.viewsEqual(this.cachedView, v);
     let mode: number; // 0=full 1=append 2=reuse
     if (viewChanged || this.cacheDirty) {
       mode = 0;
     } else {
-      mode = this.classifyCommands(signatures);
+      mode = this.classifyCommands(scene.Committed);
     }
 
     let cachePublished = false;
@@ -140,12 +136,12 @@ export class CanvasInkRenderer implements InkRenderer {
         offCtx.drawImage(this.cacheBitmap, 0, 0, this.widthVp, this.heightVp);
       }
       offCtx.setTransform(v[0], v[1], v[2], v[3], v[4], v[5]);
-      this.drawCommands(offCtx, scene.Committed.slice(this.cachedSignatures.length), false);
+      this.drawCommands(offCtx, scene.Committed.slice(this.cachedCommands.length), false);
       this.publishCache();
       cachePublished = true;
     }
     this.cachedView = v.slice();
-    this.cachedSignatures = signatures;
+    this.cachedCommands = scene.Committed;
     this.cacheDirty = false;
 
     // 下层可见 Canvas：仅在缓存发布时重贴位图；复用帧保留持久位图，不产生任何绘制调用。
@@ -159,26 +155,17 @@ export class CanvasInkRenderer implements InkRenderer {
   }
 
   // 0=full（数量减少或任一既有命令变化），1=append（前缀全匹配且仅尾部新增），2=reuse（完全一致）
-  private classifyCommands(signatures: string[]): number {
-    const oldLen = this.cachedSignatures.length;
-    const newLen = signatures.length;
-    if (newLen === oldLen) {
-      for (let i = 0; i < oldLen; i++) {
-        if (this.cachedSignatures[i] !== signatures[i]) {
-          return 0;
-        }
-      }
-      return 2;
-    }
-    if (newLen < oldLen) {
+  private classifyCommands(commands: DrawCommand[]): number {
+    const previous = this.cachedCommands;
+    if (commands.length < previous.length) {
       return 0;
     }
-    for (let i = 0; i < oldLen; i++) {
-      if (this.cachedSignatures[i] !== signatures[i]) {
+    for (let i = 0; i < previous.length; i++) {
+      if (previous[i] !== commands[i]) {
         return 0;
       }
     }
-    return 1;
+    return commands.length === previous.length ? 2 : 1;
   }
 
   private rebuildOffscreen(
@@ -496,29 +483,6 @@ export class CanvasInkRenderer implements InkRenderer {
     context.strokeRect(left, top, right - left, bottom - top);
     context.setLineDash([]);
     context.restore();
-  }
-
-  // 命令身份指纹：仅读取轮廓元数据与首末坐标，不做几何计算，用于缓存命中判定。
-  private static commandSignature(command: DrawCommand): string {
-    let totalPoints = 0;
-    let firstX = 0;
-    let firstY = 0;
-    let lastX = 0;
-    let lastY = 0;
-    for (let c = 0; c < command.Contours.length; c++) {
-      const contour = command.Contours[c];
-      totalPoints += contour.length / 2;
-      if (c === 0 && contour.length >= 2) {
-        firstX = contour[0];
-        firstY = contour[1];
-      }
-      if (contour.length >= 2) {
-        lastX = contour[contour.length - 2];
-        lastY = contour[contour.length - 1];
-      }
-    }
-    return command.Color + '#' + command.Contours.length + '#' + totalPoints + '#'
-      + firstX.toFixed(2) + ',' + firstY.toFixed(2) + '#' + lastX.toFixed(2) + ',' + lastY.toFixed(2);
   }
 
   private static viewsEqual(a: number[], b: number[]): boolean {

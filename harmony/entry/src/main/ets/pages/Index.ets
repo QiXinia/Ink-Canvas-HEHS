@@ -67,12 +67,14 @@ import {
   PointerSample,
   InkTool,
   InkEraserMode,
-  buildScene,
+  buildSceneFromCommands,
+  CommittedStrokeCommands,
+  sceneCommandForStroke,
   Invalidation
 } from '@inkcanvas/ink';
-import type { SceneStrokeInput, SceneSelectionInput, ISelectionElement } from '@inkcanvas/ink';
+import type { DrawCommand, SceneSelectionInput, ISelectionElement } from '@inkcanvas/ink';
 import type { PagePlacement } from '@inkcanvas/platform';
-import { InkStroke, InkColor, InkDocument, parseSettings, stringifySettings, createDefaultSettings, matrixToArray, transformPointByMatrix, PenNib, calibrationMultiplier, toTaperKind, toPenStyle, toEraserRadius, resetToRecommendation, TaperKind, placeToolbar, summarizeInk, recognizeFromText, buildLectureNotes, shapeSnapOptions } from '@inkcanvas/core';
+import { InkStroke, InkColor, InkDocument, parseSettings, stringifySettings, createDefaultSettings, matrixToArray, transformPointByMatrix, PenNib, calibrationMultiplier, normalizePenOffset, PEN_OFFSET_LIMIT, toTaperKind, toPenStyle, toEraserRadius, resetToRecommendation, TaperKind, placeToolbar, summarizeInk, recognizeFromText, buildLectureNotes, shapeSnapOptions } from '@inkcanvas/core';
 import {
   AssistantState,
   AssistantMode,
@@ -108,7 +110,7 @@ import type {
   LassoPoint,
   PasteInput
 } from '@inkcanvas/core';
-import type { ShapeKind, StrokePointInput, AppSettings, AdvancedTouchInput, Matrix3x2 } from '@inkcanvas/core';
+import type { ShapeKind, AppSettings, AdvancedTouchInput } from '@inkcanvas/core';
 import type { AiRegion, AiInkSummary, AiRecognizeResult, LectureNotes, LectureNoteCard, ShapeSnapOption } from '@inkcanvas/core';
 import { CoursewareSession, CountdownEngine, LotteryEngine, BoardDocument, BoardBackground, renderMatrix4Values, applyReplaceRules, lotteryDisplayName, lotteryFlicker, lotteryDrawUnique, lotterySplitGroups, appendTransform, transformedBounds, snapshotGeometry, recordTransform, BoardSelectionElement, parseRoster } from '@inkcanvas/features';
 import type { CoursewarePageFile } from '@inkcanvas/features';
@@ -134,6 +136,9 @@ interface UiPrefs {
   inkCastPort: number;
   // 透明批注模式：窗口与画布透明，配合系统悬浮窗覆盖教材批注
   transparentAnnotate: boolean;
+  inkSmoothEnabled: boolean;
+  penOffsetX: number;
+  penOffsetY: number;
 }
 
 // 端侧 OCR 结果：Text 为空时仍需区分“设备没有 OCR”与“没识别到文字”。
@@ -282,6 +287,9 @@ struct Index {
   @State inkCastHost: string = '127.0.0.1';
   @State inkCastPort: number = 9091;
   @State transparentAnnotate: boolean = false;
+  @State inkSmoothEnabled: boolean = false;
+  @State penOffsetX: number = 0;
+  @State penOffsetY: number = 0;
   private inkCast: InkCastClient | null = null;
   @State barDragX: number = 0;
   @State barDragY: number = 0;
@@ -297,6 +305,8 @@ struct Index {
   private blurEnabled: boolean = false;
   private symbolIcons: boolean = true;
   private renderer: CanvasInkRenderer | null = null;
+  private readonly committedCommands: CommittedStrokeCommands = new CommittedStrokeCommands();
+  private deferInkRefresh: boolean = false;
   private strokePredictor: StrokePredictor = new StrokePredictor();
   private controller: InkController = new InkController();
   private annotateDocument: InkDocument = new InkDocument();
@@ -450,7 +460,9 @@ struct Index {
     this.storage = new StorageService(getContext(this).filesDir);
     this.controller.Document = this.annotateDocument;
     this.controller.Invalidated = () => {
-      this.refreshScene();
+      if (!this.deferInkRefresh) {
+        this.refreshScene();
+      }
     };
     this.controller.ToolChanged = () => {
       this.refreshScene();
@@ -545,6 +557,9 @@ struct Index {
       const castPort = prefs.inkCastPort;
       this.inkCastPort = (typeof castPort === 'number' && castPort > 0 && castPort < 65536) ? castPort : 9091;
       this.transparentAnnotate = prefs.transparentAnnotate === true;
+      this.inkSmoothEnabled = prefs.inkSmoothEnabled === true;
+      this.penOffsetX = normalizePenOffset(prefs.penOffsetX);
+      this.penOffsetY = normalizePenOffset(prefs.penOffsetY);
     } catch (e) {
       void e;
     }
@@ -561,7 +576,10 @@ struct Index {
       inkCastEnabled: this.inkCastEnabled,
       inkCastHost: this.inkCastHost,
       inkCastPort: this.inkCastPort,
-      transparentAnnotate: this.transparentAnnotate
+      transparentAnnotate: this.transparentAnnotate,
+      inkSmoothEnabled: this.inkSmoothEnabled,
+      penOffsetX: this.penOffsetX,
+      penOffsetY: this.penOffsetY
     };
     this.storage.writeTextAtomic('UiPrefs.json', JSON.stringify(prefs));
   }
@@ -892,34 +910,53 @@ struct Index {
 
       if (this.calibrationOpen) {
         Stack({ alignContent: Alignment.Center }) {
-          Column({ space: 12 }) {
-            Text('触摸大小校准').fontSize(18).fontColor(this.dark ? Color.White : Color.Black)
-            Text('用手指在下方区域多次触摸，采集接触宽度后应用乘数。').fontSize(12).fontColor(this.dark ? '#A8FFFFFF' : '#9E000000')
-            Stack()
-              .width(240).height(150)
-              .backgroundColor('#220067C0')
-              .border({ width: 1, color: '#FF0067C0' })
-              .borderRadius(8)
-              .onTouch((event: TouchEvent) => {
-                if (event.type === TouchType.Down) {
-                  const t = event.changedTouches[0];
-                  const w = t.width === undefined ? 0 : t.width;
-                  if (w > 0) {
-                    this.calibrationSamples.push(w);
+          Scroll() {
+            Column({ space: 12 }) {
+              Text('触摸与笔尖校准').fontSize(18).fontColor(this.dark ? Color.White : Color.Black)
+              Text('用手指在下方区域多次触摸，采集接触宽度后应用乘数。').fontSize(12).fontColor(this.dark ? '#A8FFFFFF' : '#9E000000')
+              Stack()
+                .width(240).height(150)
+                .backgroundColor('#220067C0')
+                .border({ width: 1, color: '#FF0067C0' })
+                .borderRadius(8)
+                .onTouch((event: TouchEvent) => {
+                  if (event.type === TouchType.Down) {
+                    const t = event.changedTouches[0];
+                    const w = t.width === undefined ? 0 : t.width;
+                    if (w > 0) {
+                      this.calibrationSamples.push(w);
+                    }
                   }
-                }
+                })
+              Text('已采集 ' + this.calibrationSamples.length + ' 次').fontSize(13).fontColor(this.dark ? Color.White : Color.Black)
+              this.PenOffsetRow('横向笔尖偏移', this.penOffsetX, (value: number) => {
+                this.penOffsetX = normalizePenOffset(value);
+                this.persistUiPrefs();
               })
-            Text('已采集 ' + this.calibrationSamples.length + ' 次').fontSize(13).fontColor(this.dark ? Color.White : Color.Black)
-            Row({ space: 10 }) {
-              Text('应用校准').fontSize(14).fontColor(Color.White).padding({ left: 16, right: 16, top: 8, bottom: 8 }).backgroundColor('#FF0067C0').borderRadius(6)
-                .onClick(() => { this.applyCalibration(); })
-              Text('重置').fontSize(14).fontColor(Color.White).padding(8).backgroundColor('#FF888888').borderRadius(6)
-                .onClick(() => { this.calibrationSamples = []; })
-              Text('关闭').fontSize(14).fontColor(Color.White).padding(8).backgroundColor('#FF666666').borderRadius(6)
-                .onClick(() => { this.calibrationOpen = false; this.calibrationSamples = []; })
+              this.PenOffsetRow('纵向笔尖偏移', this.penOffsetY, (value: number) => {
+                this.penOffsetY = normalizePenOffset(value);
+                this.persistUiPrefs();
+              })
+              Button('重置笔尖偏移', { type: ButtonType.Normal })
+                .height(40)
+                .enabled(this.penOffsetX !== 0 || this.penOffsetY !== 0)
+                .onClick(() => {
+                  this.penOffsetX = 0;
+                  this.penOffsetY = 0;
+                  this.persistUiPrefs();
+                })
+              Row({ space: 10 }) {
+                Text('应用校准').fontSize(14).fontColor(Color.White).padding({ left: 16, right: 16, top: 8, bottom: 8 }).backgroundColor('#FF0067C0').borderRadius(6)
+                  .onClick(() => { this.applyCalibration(); })
+                Text('重置').fontSize(14).fontColor(Color.White).padding(8).backgroundColor('#FF888888').borderRadius(6)
+                  .onClick(() => { this.calibrationSamples = []; })
+                Text('关闭').fontSize(14).fontColor(Color.White).padding(8).backgroundColor('#FF666666').borderRadius(6)
+                  .onClick(() => { this.calibrationOpen = false; this.calibrationSamples = []; })
+              }
             }
+            .padding(24)
           }
-          .padding(24)
+          .constraintSize({ maxHeight: this.windowHeight > 0 ? Math.max(1, this.windowHeight - 24) : 440 })
           .backgroundColor(panelBackground(this.dark, this.blurEnabled))
           .backgroundBlurStyle(panelBlurStyle(this.blurEnabled))
           .borderRadius(16)
@@ -1928,6 +1965,32 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
   }
 
   @Builder
+  PenOffsetRow(label: string, value: number, onChanged: (value: number) => void) {
+    Row({ space: 6 }) {
+      Text(label)
+        .fontSize(13)
+        .fontColor(this.dark ? Color.White : Color.Black)
+        .layoutWeight(1)
+      Button('−', { type: ButtonType.Normal })
+        .width(44).height(44)
+        .accessibilityText('减小' + label)
+        .enabled(value > -PEN_OFFSET_LIMIT)
+        .onClick(() => { onChanged(value - 0.5); })
+      Text(value.toFixed(1))
+        .width(38)
+        .fontSize(13)
+        .fontColor(this.dark ? Color.White : Color.Black)
+        .textAlign(TextAlign.Center)
+      Button('+', { type: ButtonType.Normal })
+        .width(44).height(44)
+        .accessibilityText('增大' + label)
+        .enabled(value < PEN_OFFSET_LIMIT)
+        .onClick(() => { onChanged(value + 0.5); })
+    }
+    .width(240)
+  }
+
+  @Builder
   SettingSlider(label: string, value: number, min: number, max: number, step: number,
     onChanged: (value: number) => void) {
     Column({ space: 2 }) {
@@ -2056,6 +2119,11 @@ this.ToolEntry('AI 圈选识题', 'aiCapture')
     this.SettingToggle('退出画板模式后隐藏墨迹', this.settings.canvas.hideStrokeWhenSelecting, (v: boolean) => {
       this.settings.canvas.hideStrokeWhenSelecting = v;
       this.touchSettings();
+      this.refreshScene();
+    })
+    this.SettingToggle('平滑显示手绘墨迹', this.inkSmoothEnabled, (value: boolean) => {
+      this.inkSmoothEnabled = value;
+      this.persistUiPrefs();
       this.refreshScene();
     })
     this.SettingOptions('笔迹风格', ['点集笔锋', '速率笔锋', '关闭笔锋', '平滑硬笔', '柔和压感', '自然笔锋', '书法笔锋'],
@@ -3584,10 +3652,14 @@ this.rebuildAutoSave();
         }
         continue;
       }
+      // The toolbar, selection and other UI routes use the reported physical position.
+      const penInk = isStylus && (this.controller.Tool === InkTool.Pen || this.controller.Tool === InkTool.Highlighter);
+      const inkX = penInk ? this.penTipX(px) : px;
+      const inkY = penInk ? this.penTipY(py) : py;
       const sample = new PointerSample(
         touch.id,
-        px,
-        py,
+        inkX,
+        inkY,
         pressure,
         width,
         height,
@@ -3600,8 +3672,8 @@ this.rebuildAutoSave();
         hasPressure
       );
       if (this.settings.canvas.isShowCursor) {
-        this.cursorX = px;
-        this.cursorY = py;
+        this.cursorX = inkX;
+        this.cursorY = inkY;
         this.cursorVisible = event.type === TouchType.Down || event.type === TouchType.Move;
       }
       if (this.routeBoardImageDrag(event.type, touch.id, px, py)) {
@@ -3621,8 +3693,19 @@ this.rebuildAutoSave();
         }
         this.controller.onPointerDown(sample);
       } else if (event.type === TouchType.Move) {
-        this.controller.onPointerMove(sample);
-        this.updateStrokePrediction(event, isStylus);
+        if (!penInk) {
+          this.renderer?.clearPrediction();
+          this.controller.onPointerMove(sample);
+        } else {
+          this.deferInkRefresh = true;
+          try {
+            this.controller.onPointerMove(sample);
+            this.updateStrokePrediction(event);
+          } finally {
+            this.deferInkRefresh = false;
+          }
+          this.refreshScene();
+        }
       } else if (event.type === TouchType.Up) {
         if (this.renderer !== null) {
           this.renderer.clearPrediction();
@@ -3638,17 +3721,20 @@ this.rebuildAutoSave();
     }
   }
 
+  private penTipX(x: number): number {
+    return this.penOffsetX === 0 ? x : x + this.penOffsetX;
+  }
+
+  private penTipY(y: number): number {
+    return this.penOffsetY === 0 ? y : y + this.penOffsetY;
+  }
+
   // Pen Kit 报点预测：仅手写笔在铅笔/荧光笔书写时，把“最后真实点 → 预测点”的临时段
   // 交给活动层渲染，用于抵消触控采样到上屏的链路延迟。预测点永远不进入 InkDocument、
   // 活体笔画、离屏缓存与持久化；其余工具/通道一律立即清空，保证手指与鼠标路径零变化。
-  // 仅在 TouchType.Move 后调用（Down/Up/Cancel 已在派发到控制器前清空）。
-  private updateStrokePrediction(event: TouchEvent, isStylus: boolean): void {
+  // Move 在预测段更新后统一出帧。Down/Up/Cancel 在派发到控制器前清空预测。
+  private updateStrokePrediction(event: TouchEvent): void {
     if (this.renderer === null) {
-      return;
-    }
-    if (!isStylus
-      || (this.controller.Tool !== InkTool.Pen && this.controller.Tool !== InkTool.Highlighter)) {
-      this.renderer.clearPrediction();
       return;
     }
     const predicted = this.strokePredictor.predict(event);
@@ -3658,7 +3744,7 @@ this.rebuildAutoSave();
       return;
     }
     const last = active.Points[active.Count - 1];
-    const world = this.controller.toWorld(predicted.X, predicted.Y);
+    const world = this.controller.toWorld(this.penTipX(predicted.X), this.penTipY(predicted.Y));
     const width = last.Width > 0 ? last.Width : active.Attributes.BaseWidth;
     this.renderer.setPrediction(
       [last.X, last.Y, world.X, world.Y],
@@ -3666,9 +3752,6 @@ this.rebuildAutoSave();
       active.Attributes.effectiveColor().packedArgb(),
       width
     );
-    // onPointerMove 的同步出帧发生在 setPrediction 之前，这里补一帧让预测段当帧上屏，
-    // 否则预测恒滞后一个采样、且抬笔前最后一段会被 Up 分支直接清掉而永不显示。
-    this.refreshScene();
   }
 
   // 画板元素拖拽路由：Select/Pan 工具下，Down 命中图片则接管该指针；Move 平移；Up/Cancel 记撤销。
@@ -3749,33 +3832,15 @@ this.rebuildAutoSave();
     this.controller.Redo();
   }
 
-  private toSceneStroke(stroke: InkStroke, preview: Matrix3x2 | null = null): SceneStrokeInput {
-    const points: StrokePointInput[] = [];
-    for (let i = 0; i < stroke.Count; i++) {
-      const point = stroke.Points[i];
-      if (preview !== null) {
-        const transformed = transformPointByMatrix(preview, point.X, point.Y);
-        points.push({ X: transformed.X, Y: transformed.Y, Width: point.Width });
-      } else {
-        points.push({ X: point.X, Y: point.Y, Width: point.Width });
-      }
-    }
-    return {
-      BaseWidth: stroke.Attributes.BaseWidth,
-      ColorPacked: stroke.Attributes.Color.packedArgb(),
-      IsHighlighter: stroke.Attributes.IsHighlighter,
-      HighlighterAlpha: stroke.Attributes.HighlighterAlpha,
-      TaperKind: stroke.Attributes.TaperKind,
-      Points: points
-    };
-  }
-
   private refreshScene(): void {
     if (this.renderer === null) {
       return;
     }
-    const committed: SceneStrokeInput[] = [];
-    let strokes = this.controller.Document.Strokes;
+    const document = this.controller.Document;
+    this.committedCommands.updateDocument(document);
+    const committed: DrawCommand[] = [];
+    let strokes = document.Strokes;
+    const playback = this.replayOpen && this.controller.Playback !== null;
     // G9：画布内回放期间只画 Playback 可见前缀（源笔画隐藏、历史不动）。
     if (this.replayOpen && this.controller.Playback !== null) {
       strokes = this.controller.Playback.VisibleStrokes;
@@ -3803,15 +3868,16 @@ this.rebuildAutoSave();
     const previewMatrix = this.controller.SelectionPreviewTransform;
     for (let i = 0; i < strokes.length; i++) {
       const usePreview = previewActive && this.controller.IsPreviewStroke(strokes[i]);
-      committed.push(this.toSceneStroke(strokes[i], usePreview ? previewMatrix : null));
+      const transform = usePreview ? previewMatrix : null;
+      committed.push(playback
+        ? sceneCommandForStroke(strokes[i], this.inkSmoothEnabled, transform)
+        : this.committedCommands.get(strokes[i], this.inkSmoothEnabled, transform));
     }
     const activeStroke = this.controller.ActiveStroke;
-    const active = activeStroke === null ? null : this.toSceneStroke(activeStroke);
+    const active = activeStroke === null ? null : sceneCommandForStroke(activeStroke, this.inkSmoothEnabled);
     // F3：形状拖动预览（控制器每 move 已算好，此处只做场景透传，不改识别/生成算法）。
-    const previewInputs: SceneStrokeInput[] = [];
-    for (let i = 0; i < this.controller.ShapePreview.length; i++) {
-      previewInputs.push(this.toSceneStroke(this.controller.ShapePreview[i]));
-    }
+    const previews = this.controller.ShapePreview;
+    const previewCommands = previews.map((stroke: InkStroke) => sceneCommandForStroke(stroke));
     // F3：框选橡皮筋（视图 DIP 矩形；命中与选择结果仍由控制器负责）。
     const marquee = this.controller.MarqueeBounds;
     let selection: SceneSelectionInput | null = null;
@@ -3824,9 +3890,9 @@ this.rebuildAutoSave();
         RotationRadians: Math.atan2(m[1], m[0])
       };
     }
-    this.renderer.render(buildScene(
+    this.renderer.render(buildSceneFromCommands(
       committed, active, selection, matrixToArray(this.controller.ViewTransform),
-      previewInputs, marquee
+      previewCommands, marquee
     ), Invalidation.full());
     this.drawLassoOverlay();
     this.drawDotAnimations();
