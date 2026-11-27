@@ -27,6 +27,7 @@ public sealed partial class BoardService
         side.PageChanged += ObservePages;
         side.BackgroundChanged += Changed;
         side.ImagesChanged += Changed;
+        side.NativeObjectsChanged += Changed;
         side.ImagePlacementChanged += _ => Changed();
         side.MediaPlacementChanged += _ => Changed();
         ObservePages();

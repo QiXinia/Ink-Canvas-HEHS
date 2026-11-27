@@ -65,6 +65,16 @@ public sealed partial class ShellController
         public InkController ActiveController => shell.ActiveController;
         public BoardService Board => shell.Services.Board;
         public BoardService CaptureBoard => shell._sideBoardTarget ? shell.Services.Board.SideBoard : Board;
+        public string TryEditBoardSelection(string instruction)
+        {
+            if (!BoardOpen || CaptureBoard is not { } board || !board.Current.SelectedElements.Any(item => item is IBoardTextElement or IBoardFormulaElement)
+                || !BoardPlanEditPolicy.TryParseObjectEdit(instruction, out var edit, out _)) return null;
+            if (!string.IsNullOrEmpty(edit.TargetBoard))
+                return "请在目标白板打开 AI 助手并新建板书。";
+            if (board.Current.HasActiveInteraction || board.Current.Playback is not null)
+                return "请结束当前画布操作后重试。";
+            return board.EditNativeSelection(edit) ? "已修改选中的板书对象，可以撤销。" : "选中的板书对象没有变化。";
+        }
         public bool BoardOpen => shell._board is not null;
         public double DpiScale => shell.CurrentDpi();
         public ScreenRect OverlayBounds => new(shell.Overlay.Window.X, shell.Overlay.Window.Y,

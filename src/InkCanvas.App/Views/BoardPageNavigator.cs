@@ -131,6 +131,7 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
         _board.PageChanged += OnPageChanged;
         _board.BackgroundChanged += InvalidateCurrent;
         _board.ImagesChanged += InvalidateCurrent;
+        _board.NativeObjectsChanged += InvalidateCurrent;
         _board.ImagePlacementChanged += OnImagePlacement;
         _board.MediaPlacementChanged += OnMediaPlacement;
         ApplyTheme(1);
@@ -412,6 +413,7 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
                     DrawPaper(drawing, info, viewport);
                     foreach (var entry in objects)
                     {
+                        scene.DrawNativeElement(drawing, entry.Element, view);
                         if (entry.Element is IImageSelectionElement { ImageData.Length: > 0 } image) scene.Images.Draw(drawing, image, view);
                         if (entry.Stroke is not null)
                         {
@@ -517,6 +519,7 @@ internal sealed class BoardPageNavigator : UserControl, IDisposable
         foreach (var scroll in _scrollHosts) scroll.ViewChanged -= OnScrollChanged;
         _scrollHosts.Clear();
         _board.PageChanged -= OnPageChanged; _board.BackgroundChanged -= InvalidateCurrent; _board.ImagesChanged -= InvalidateCurrent;
+        _board.NativeObjectsChanged -= InvalidateCurrent;
         _board.ImagePlacementChanged -= OnImagePlacement; _board.MediaPlacementChanged -= OnMediaPlacement;
         foreach (var pair in _documentHandlers) pair.Key.Document.Changed -= pair.Value;
         _documentHandlers.Clear();

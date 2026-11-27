@@ -111,6 +111,7 @@ public static class ArchiveImageRenderer
                             }
                             else scene.Strokes.Draw(draw, inkStroke, view);
                         }
+                        scene.DrawNativeElement(draw, item.Element, view);
                         var image = item.Element as IImageSelectionElement;
                         if (posters.TryGetValue(item.Id, out var poster)) image = poster;
                         if (image is not null)

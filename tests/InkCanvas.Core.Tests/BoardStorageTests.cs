@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Numerics;
 using System.Text.Json;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Features.Board;
 using Xunit;
 
@@ -19,6 +20,45 @@ public sealed class BoardStorageTests : IDisposable
     private BoardService Board()
     {
         var board = new BoardService(); _boards.Add(board); return board;
+    }
+
+    [Fact]
+    public async Task NativeTextAndFormulaReplaceInkAtomicallyAndRoundTripOnSideBoard()
+    {
+        var board = Board();
+        var side = board.EnableSideBoard();
+        var stroke = new InkStroke(new StrokeAttributes());
+        stroke.AddPoint(20, 30); stroke.AddPoint(100, 110); stroke.Complete();
+        side.Current.Document.Add(stroke);
+        var text = new BoardTextObject { Content = "面积", GroupId = "lesson" };
+        var formula = new BoardFormulaObject { Latex = @"\frac{1}{2}bh", GroupId = "lesson" };
+
+        Assert.True(side.WriteNativeBoardObjects(new[] { text }, new[] { formula }, new[] { stroke }));
+        Assert.Equal(2, side.Current.SelectedElements.Count);
+        Assert.Empty(side.CurrentImages);
+        Assert.Empty(side.Current.Document.Strokes);
+        Assert.True(side.Current.History.Undo());
+        Assert.Same(stroke, Assert.Single(side.Current.Document.Strokes));
+        Assert.Empty(side.CurrentTextObjects);
+        Assert.Empty(side.CurrentFormulaObjects);
+        Assert.True(side.Current.History.Redo());
+
+        string path = FilePath();
+        await board.SaveRecoveryAsync(path);
+        var restored = Board();
+        await restored.LoadBoardAsync(path);
+        var savedSide = restored.SideBoard;
+        Assert.Equal(text.Id, Assert.Single(savedSide.CurrentTextObjects).Id);
+        var savedFormula = Assert.Single(savedSide.CurrentFormulaObjects);
+        Assert.Equal(formula.Id, savedFormula.Id);
+        Assert.Equal(formula.Latex, savedFormula.Latex);
+        Assert.Equal(text.GroupId, savedFormula.GroupId);
+        Assert.Empty(savedSide.CurrentImages);
+
+        Assert.True(savedSide.DuplicateCurrentPage());
+        Assert.NotEqual(text.Id, Assert.Single(savedSide.CurrentTextObjects).Id);
+        Assert.NotEqual(text.GroupId, Assert.Single(savedSide.CurrentFormulaObjects).GroupId);
+        Assert.Equal(savedSide.CurrentTextObjects[0].GroupId, savedSide.CurrentFormulaObjects[0].GroupId);
     }
 
     [Fact]

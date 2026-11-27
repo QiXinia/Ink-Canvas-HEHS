@@ -86,7 +86,7 @@ public sealed partial class InkController
                     if (ActiveInkLayer == 0 && GetSelectableElements is not null)
                         foreach (var element in GetSelectableElements())
                             if (element.IsPresent && !selectedElements.Contains(element.Id) && lasso.IntersectsFrame(element.Frame, _lassoViewAtStart))
-                                SelectedElements.Add(element);
+                                SetGroupSelected(element, true);
                 }
                 else if (_lassoBounds.Width <= 4 && _lassoBounds.Height <= 4 && Matrix3x2.Invert(_lassoViewAtStart, out var inverse))
                 {
@@ -94,8 +94,7 @@ public sealed partial class InkController
                     if (hit?.Element is { } element)
                     {
                         int index = SelectedElements.FindIndex(selected => selected.Id == element.Id);
-                        if (_lassoToggle && index >= 0) SelectedElements.RemoveAt(index);
-                        else if (index < 0) SelectedElements.Add(element);
+                        SetGroupSelected(element, !(_lassoToggle && index >= 0));
                     }
                     if (hit?.Stroke is { } stroke)
                     {

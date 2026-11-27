@@ -10,7 +10,7 @@ public sealed class CommittedInkLayer : IDisposable
     private sealed class Run
     {
         public bool Moving;
-        public IImageSelectionElement Image;
+        public ISelectionElement Element;
         public readonly List<InkStroke> Strokes = new();
         public readonly List<InkCanvas.Core.Ink.Rect> Bounds = new();
         public readonly Dictionary<(int X, int Y), List<int>> TileStrokes = new();
@@ -88,7 +88,7 @@ public sealed class CommittedInkLayer : IDisposable
         if (_dirty || changed || orderChanged)
         {
             var strokes = objects.Where(item => item.Stroke is not null).Select(item => item.Stroke).ToArray();
-            bool append = !changed && preview is null && _runs.Count == 1 && _runs[0].Image is null
+            bool append = !changed && preview is null && _runs.Count == 1 && _runs[0].Element is null
                 && objects.All(item => item.Stroke is not null) && strokes.Length > _snapshot.Count;
             for (int i = 0; append && i < _snapshot.Count; i++)
                 append = ReferenceEquals(strokes[i], _snapshot[i].Stroke) && strokes[i].GeometryVersion == _snapshot[i].Version
@@ -96,7 +96,7 @@ public sealed class CommittedInkLayer : IDisposable
             if (!append)
             {
                 bool partial = !changed && rasterOffset == _rasterOffset && preview is null && _runs.Count == 1 && !_runs[0].Moving
-                    && _runs[0].Image is null && objects.All(item => item.Stroke is not null);
+                    && _runs[0].Element is null && objects.All(item => item.Stroke is not null);
                 if (partial) RetainUnchangedTiles(strokes, pixel);
                 else ClearTiles();
                 ClearRuns(); _linear = linear; _rasterOffset = rasterOffset; RebuildCount++;
@@ -104,16 +104,16 @@ public sealed class CommittedInkLayer : IDisposable
             for (int i = append ? _snapshot.Count : 0; i < objects.Count; i++)
             {
                 var item = objects[i];
-                if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image)
+                if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } or IBoardTextElement or IBoardFormulaElement)
                 {
-                    _runs.Add(new Run { Image = image });
+                    _runs.Add(new Run { Element = item.Element });
                     continue;
                 }
                 if (item.Stroke is not { } stroke) continue;
                 if (controller.Playback?.Includes(stroke) == true || controller.IsAnimatingDot(stroke)
                     || controller.IsRecognitionPreviewSource(stroke)) continue;
                 bool moving = controller.IsPreviewStroke(stroke);
-                if (_runs.Count == 0 || _runs[^1].Image is not null || _runs[^1].Moving != moving) _runs.Add(new Run { Moving = moving });
+                if (_runs.Count == 0 || _runs[^1].Element is not null || _runs[^1].Moving != moving) _runs.Add(new Run { Moving = moving });
                 _runs[^1].Strokes.Add(stroke);
                 var bounds = TransformBounds(stroke.Bounds, _linear * Matrix3x2.CreateTranslation(_rasterOffset));
                 _runs[^1].Bounds.Add(bounds);
@@ -133,9 +133,10 @@ public sealed class CommittedInkLayer : IDisposable
         for (int runIndex = 0; runIndex < _runs.Count; runIndex++)
         {
             var run = _runs[runIndex];
-            if (run.Image is not null)
+            if (run.Element is not null)
             {
-                scene.Images.Draw(session, run.Image, view, viewport);
+                if (run.Element is IImageSelectionElement image) scene.Images.Draw(session, image, view, viewport);
+                else scene.DrawNativeElement(session, run.Element, view);
                 continue;
             }
             var runView = run.Moving ? controller.SelectionPreviewTransform * view : view;

@@ -22,6 +22,14 @@ internal sealed partial class AssistantService
             string title = turn.Question.Length > 0 ? turn.Question.Replace('\n', ' ') : turn.Attachments[0].Name;
             chat.Title = title[..Math.Min(title.Length, 32)];
         }
+        if (turn.Attachments.Count == 0 && _host.TryEditBoardSelection(turn.Question) is { } localReply)
+        {
+            turn.Answer = localReply;
+            turn.State = "done";
+            _window.RefreshChat(chat);
+            MarkDirty(); Flush();
+            return;
+        }
         _window.RefreshChat(chat); _window.SetBusy(true); _activeTurn = turn; _activeTarget = _canvasHost.CaptureTarget();
         var activeSource = _host.Source;
         _lastSlide = (activeSource.SlideId, activeSource.SlideIndex, activeSource.AnimationStep);

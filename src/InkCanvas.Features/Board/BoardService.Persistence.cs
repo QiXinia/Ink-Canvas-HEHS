@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using InkCanvas.Core.Ink;
+using InkCanvas.Features.Board.AiObjects;
 using InkCanvas.Features.Persistence;
 
 namespace InkCanvas.Features.Board;
@@ -82,6 +83,7 @@ public sealed partial class BoardService
             {
                 Viewport = new[] { _pages[index].ViewCenter.X * 2, _pages[index].ViewCenter.Y * 2 },
                 InkLayerCount = _pages[index].Document.InkLayerCount,
+                Native = NativePage(_pages[index]).Copy(preserveId: true),
             }).ToList();
 
     private static List<BoardPageFile> SerializePages(List<PreparedPage> pages) => pages.Select(page => new BoardPageFile
@@ -92,6 +94,8 @@ public sealed partial class BoardService
         Viewport = page.Viewport,
         InkLayerCount = page.InkLayerCount > 1 ? page.InkLayerCount : 0,
         Strokes = page.Strokes.Select(ToStrokeFile).ToList(), Images = page.Images, Media = page.Media,
+        TextObjects = page.Native?.Texts is { Count: > 0 } texts ? texts.Select(BoardAiObjectSerialization.ToFile).ToList() : null,
+        FormulaObjects = page.Native?.Formulas is { Count: > 0 } formulas ? formulas.Select(BoardAiObjectSerialization.ToFile).ToList() : null,
     }).ToList();
 
     private static Task SaveSnapshotAsync(string path, BoardSnapshot snapshot, bool overwrite, CancellationToken cancellationToken, bool includePreview = true) => Task.Run(async () =>
@@ -104,7 +108,7 @@ public sealed partial class BoardService
         {
             var model = new BoardFile
             {
-                Format = BoardFormat, Version = snapshot.SideBoard is null ? 3 : BoardFormatVersion,
+                Format = BoardFormat, Version = snapshot.SideBoard is null && !snapshot.Pages.Any(page => page.Native?.Elements.Any() == true) ? 3 : BoardFormatVersion,
                 Pages = SerializePages(snapshot.Pages),
                 SideBoard = snapshot.SideBoard is null ? null : new SideBoardFile
                 {

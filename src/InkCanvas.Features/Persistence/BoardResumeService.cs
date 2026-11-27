@@ -24,6 +24,7 @@ public sealed class BoardResumeService : IDisposable
         board.PageChanged += PagesChanged; board.BackgroundChanged += Changed; board.ImagesChanged += Changed;
         board.ExtensionsChanged += Changed; board.ImagePlacementChanged += ImageChanged; board.MediaPlacementChanged += MediaChanged;
         _board.SideBoardChanged += Changed;
+        _board.NativeObjectsChanged += Changed;
         PagesChanged();
     }
 
@@ -83,6 +84,7 @@ public sealed class BoardResumeService : IDisposable
     {
         _disposed = true;
         _board.SideBoardChanged -= Changed;
+        _board.NativeObjectsChanged -= Changed;
         _board.PageChanged -= PagesChanged; _board.BackgroundChanged -= Changed; _board.ImagesChanged -= Changed;
         _board.ExtensionsChanged -= Changed; _board.ImagePlacementChanged -= ImageChanged; _board.MediaPlacementChanged -= MediaChanged;
         foreach (var page in _observed) Observe(page, false);

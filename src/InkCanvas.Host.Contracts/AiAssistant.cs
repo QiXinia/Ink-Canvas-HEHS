@@ -16,6 +16,7 @@ public interface IAiAssistantHost
     InkController ActiveController { get; }
     BoardService Board { get; }
     BoardService CaptureBoard => Board;
+    string TryEditBoardSelection(string instruction) => null;
     bool BoardOpen { get; }
     double DpiScale { get; }
     ScreenRect OverlayBounds { get; }

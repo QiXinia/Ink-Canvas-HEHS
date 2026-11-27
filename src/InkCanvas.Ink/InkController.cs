@@ -296,9 +296,32 @@ public sealed partial class InkController : IDisposable
         Tool = InkTool.Select;
         if (ActiveInkLayer == 0) ClearSelection();
         else if (!TrySetActiveInkLayer(0)) return;
-        SelectedElements.Add(element);
+        SetGroupSelected(element, true);
         SelectionChanged?.Invoke();
         Invalidated?.Invoke();
+    }
+
+    private void SetGroupSelected(ISelectionElement element, bool selected)
+    {
+        var members = element is IGroupedSelectionElement { SelectionGroupId.Length: > 0 } grouped
+            ? GetSelectableElements().OfType<IGroupedSelectionElement>().Where(candidate =>
+                candidate.IsPresent && candidate.SelectionGroupId == grouped.SelectionGroupId).Cast<ISelectionElement>()
+            : new[] { element };
+        foreach (var member in members)
+        {
+            if (!selected) SelectedElements.Remove(member);
+            else if (!SelectedElements.Contains(member)) SelectedElements.Add(member);
+        }
+    }
+
+    public static void RemapSelectionGroups(IEnumerable<ISelectionElement> elements)
+    {
+        foreach (var group in elements.OfType<IGroupedSelectionElement>()
+            .Where(item => !string.IsNullOrEmpty(item.SelectionGroupId)).GroupBy(item => item.SelectionGroupId))
+        {
+            string newId = Guid.NewGuid().ToString("N");
+            foreach (var item in group) item.SelectionGroupId = newId;
+        }
     }
 
     public void SetSelectionImageOpacity(float opacity)
@@ -1664,8 +1687,7 @@ public sealed partial class InkController : IDisposable
             if (!additive) { Selection.Clear(); SelectedElements.Clear(); }
             if (hitElement is not null)
             {
-                if (p.Control && SelectedElements.Contains(hitElement)) SelectedElements.Remove(hitElement);
-                else if (!SelectedElements.Contains(hitElement)) SelectedElements.Add(hitElement);
+                SetGroupSelected(hitElement, !(p.Control && SelectedElements.Contains(hitElement)));
             }
             if (hitStroke is not null)
             {
@@ -1707,6 +1729,7 @@ public sealed partial class InkController : IDisposable
             _controlCloneDrag |= control;
             _dragTargets = InkStroke.CloneObjects(Selection);
             _dragElements = SelectedElements.Select(e => e.Duplicate()).ToList();
+            RemapSelectionGroups(_dragElements);
             SetCloneLayerOrder();
             _cloneDrag = true;
             _previewSet.Clear();
@@ -1754,7 +1777,7 @@ public sealed partial class InkController : IDisposable
         if (!moved && controlClone)
         {
             if (_controlClickStroke is not null) { var members = ShapeMembers(_controlClickStroke).ToHashSet(); Selection.RemoveAll(members.Contains); }
-            if (_controlClickElement is not null) SelectedElements.Remove(_controlClickElement);
+            if (_controlClickElement is not null) SetGroupSelected(_controlClickElement, false);
         }
         _controlClickStroke = null; _controlClickElement = null;
         if (moved)
@@ -1828,7 +1851,7 @@ public sealed partial class InkController : IDisposable
             SelectedElements.Clear(); SelectedElements.AddRange(_marqueeInitialElements);
             if (ActiveInkLayer == 0 && GetSelectableElements is not null)
                 foreach (var element in GetSelectableElements())
-                    if (element.IsPresent && element.Frame.Intersects(MarqueeBounds, ViewTransform) && !SelectedElements.Contains(element)) SelectedElements.Add(element);
+                    if (element.IsPresent && element.Frame.Intersects(MarqueeBounds, ViewTransform) && !SelectedElements.Contains(element)) SetGroupSelected(element, true);
             SelectionChanged?.Invoke();
         }
         Invalidated?.Invoke();
@@ -1886,6 +1909,7 @@ public sealed partial class InkController : IDisposable
         {
             _dragTargets = InkStroke.CloneObjects(Selection);
             _dragElements = SelectedElements.Select(e => e.Duplicate()).ToList();
+            RemapSelectionGroups(_dragElements);
             SetCloneLayerOrder();
             _cloneDrag = true;
             _previewSet.Clear();

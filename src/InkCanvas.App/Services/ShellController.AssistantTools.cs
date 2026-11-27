@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Text.Json;
 using InkCanvas.Core.Ink;
+using InkCanvas.Core.AiAssistant;
 using InkCanvas.Ink;
 using InkCanvas.Features.Board;
 using InkCanvas.Host.Contracts;
@@ -128,6 +129,33 @@ public sealed partial class ShellController
                 return host.IsCurrent(target) ? new("当前白板页面截图。", png)
                     : new("画布或页面已切换，请重新截图。") { IsError = true };
             });
+        registry.Register(new("present_board_plan", "生成、写入或整理白板板书。整理前调用 capture_canvas 识别现有板书，再提供 originals 和 warnings。文字及 LaTeX 公式将以可编辑对象呈现，经教师确认后写入。", """
+            {"type":"object","properties":{
+                "instruction":{"type":"string"},
+                "originals":{"type":"array","items":{"type":"string"}},
+                "warnings":{"type":"array","items":{"type":"string"}},
+                "confidence":{"type":"number","minimum":0,"maximum":1},
+                "blocks":{"type":"array","minItems":1,"maxItems":64,"items":{
+                    "type":"object","properties":{
+                        "kind":{"type":"string","enum":["text","wordList","poem","summary","formula"]},
+                        "title":{"type":"string"},"text":{"type":"string"},"latex":{"type":"string"},
+                        "lines":{"type":"array","items":{"type":"string"}},
+                        "confidence":{"type":"number","minimum":0,"maximum":1}
+                    },"required":["kind"],"additionalProperties":false
+                }}
+            },"required":["blocks"],"additionalProperties":false}
+            """) { ChangesTarget = true }, async (args, token) =>
+        {
+            if (!AssistantBoardPlan.TryParse(args.GetRawText(), out var plan, out var error))
+                return new(error) { IsError = true };
+            var window = ActiveBoardWindow;
+            if (window is null)
+                return new("请先打开要写入的白板或板中板。") { IsError = true };
+            var host = new CanvasToolsHost(this);
+            var target = host.CaptureTarget();
+            string instruction = args.TryGetProperty("instruction", out var text) && text.ValueKind == JsonValueKind.String ? text.GetString() : "";
+            return new(await window.PreviewBoardPlanAsync(plan, instruction, () => host.IsCurrent(target), token));
+        });
         registry.Register(new("invoke_plugin_command", "调用 read_workspace 返回的可用插件命令。需使用实际的 plugin 和 command 标识。可打开文稿库、PDF、解析几何及其他已安装插件。", """
             {"type":"object","properties":{"plugin":{"type":"string"},"command":{"type":"string"}},"required":["plugin","command"],"additionalProperties":false}
             """) { ChangesTarget = true }, async (args, token) =>

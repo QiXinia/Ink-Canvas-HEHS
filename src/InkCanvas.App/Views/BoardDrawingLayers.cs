@@ -135,6 +135,7 @@ internal sealed class BoardDrawingLayers : Canvas, IDisposable
         }
         _scene.Strokes.Retain(controller.Document.Strokes);
         _scene.Images.Retain(controller);
+        _scene.RetainNativeElements(controller.DrawingObjects);
         UpdateLiveCanvas(firstUpper);
     }
 

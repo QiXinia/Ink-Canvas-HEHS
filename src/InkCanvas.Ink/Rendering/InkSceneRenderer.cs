@@ -22,6 +22,20 @@ public sealed class InkSceneRenderer : IDisposable
     public StrokeRenderer Strokes { get; } = new();
     private readonly StrokeRenderer _extensionStrokes = new();
     public ImageSceneRenderer Images { get; }
+    private readonly AiTextSceneRenderer _text = new();
+    private readonly FormulaSceneRenderer _formulas = new();
+
+    public void RetainNativeElements(IEnumerable<DrawingObject> items)
+    {
+        _text.Retain(items.Select(item => item.Element).OfType<IBoardTextElement>());
+        _formulas.Retain(items.Select(item => item.Element).OfType<IBoardFormulaElement>());
+    }
+
+    public void DrawNativeElement(CanvasDrawingSession session, ISelectionElement element, Matrix3x2 view)
+    {
+        if (element is IBoardTextElement text) _text.Draw(session, text, view);
+        else if (element is IBoardFormulaElement formula) _formulas.Draw(session, formula, view);
+    }
 
     public InkSceneRenderer() : this(0) { }
     public InkSceneRenderer(uint maximumImageDimension) => Images = new() { MaximumDecodeDimension = maximumImageDimension };
@@ -38,12 +52,14 @@ public sealed class InkSceneRenderer : IDisposable
         if (controller is null) return;
         var view = transformOverride ?? controller.ViewTransform;
         Images.Retain(controller);
+        RetainNativeElements(controller.DrawingObjects);
         foreach (var item in controller.DrawingObjects) DrawObject(session, controller, item, view);
 
     }
 
     public void DrawObject(CanvasDrawingSession session, InkController controller, DrawingObject item, Matrix3x2 view)
     {
+        DrawNativeElement(session, item.Element, view);
         if (item.Element is IImageSelectionElement { ImageData.Length: > 0 } image) Images.Draw(session, image, view);
         if (item.Stroke is { } stroke && controller.Playback?.Includes(stroke) != true && !controller.IsAnimatingDot(stroke)
             && !controller.IsRecognitionPreviewSource(stroke))
@@ -351,6 +367,6 @@ public sealed class InkSceneRenderer : IDisposable
         foreach (var s in strokes) Strokes.Invalidate(s);
     }
 
-    public void ReleaseResources() { Images.Clear(); Strokes.InvalidateAll(); _extensionStrokes.InvalidateAll(); }
-    public void Dispose() { Images.Dispose(); Strokes.Dispose(); _extensionStrokes.Dispose(); }
+    public void ReleaseResources() { Images.Clear(); _text.Clear(); _formulas.Clear(); Strokes.InvalidateAll(); _extensionStrokes.InvalidateAll(); }
+    public void Dispose() { Images.Dispose(); _text.Dispose(); _formulas.Dispose(); Strokes.Dispose(); _extensionStrokes.Dispose(); }
 }

@@ -45,6 +45,7 @@ public sealed class BoardArchiveService : IDisposable
         _board.ImagePlacementChanged += OnImagePlacement;
         _board.MediaPlacementChanged += OnMediaPlacement;
         _board.SideBoardChanged += MarkChanged;
+        _board.NativeObjectsChanged += MarkChanged;
         OnPagesChanged();
         Configure();
         try
@@ -250,6 +251,7 @@ public sealed class BoardArchiveService : IDisposable
         if (_disposed) return;
         _disposed = true;
         _board.SideBoardChanged -= MarkChanged;
+        _board.NativeObjectsChanged -= MarkChanged;
         _board.PageChanged -= OnPagesChanged;
         _board.ImagesChanged -= MarkChanged;
         _board.ExtensionsChanged -= MarkChanged;

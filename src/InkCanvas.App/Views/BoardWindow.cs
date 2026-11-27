@@ -279,6 +279,7 @@ public sealed partial class BoardWindow : Window
         _board.PageChanged += OnPageChanged;
         _board.BackgroundChanged += RefreshBackground;
         _board.ImagesChanged += OnImagesChanged;
+        _board.NativeObjectsChanged += OnDrawingOrderChanged;
         _board.ImagePlacementChanged += _images.UpdateElement;
         _board.MediaPlacementChanged += _media.UpdateElement;
         Closed += OnClosed;
@@ -1247,7 +1248,7 @@ public sealed partial class BoardWindow : Window
         if (_selectionToolbar is null)
         {
             _selectionToolbar = new SelectionToolbar(() => CurrentController,
-                async () => await SaveSelectionAsImageAsync(), CloneSelectionToNewPage, "衍至新页");
+                async () => await SaveSelectionAsImageAsync(), CloneSelectionToNewPage, "衍至新页", () => { _board.UngroupNativeSelection(); _selectionToolbar.ClosePanels(); });
             _selectionToolbar.LayoutChanged += () => { _selectionMeasureDirty = true; PlaceSelectionPanel(); };
             _selectionPanel.SizeChanged += (_, _) => PlaceSelectionPanel();
         }
@@ -1338,7 +1339,7 @@ public sealed partial class BoardWindow : Window
         var ids = controller.SelectedElements.Select(e => e.Id).ToHashSet();
         var images = _board.CurrentImages.Where(image => ids.Contains(image.Id)).ToList();
         var mediaObjects = _board.CurrentMedia.Where(media => ids.Contains(media.Id)).ToList();
-        if (strokes.Count + images.Count + mediaObjects.Count == 0) return;
+        if (strokes.Count == 0 && ids.Count == 0) return;
         var bounds = CombinedSelectionBounds();
         if (bounds.IsEmpty) return;
 
@@ -2011,10 +2012,16 @@ public sealed partial class BoardWindow : Window
         var tap = e.GetPosition(_surfaceHost);
         var point = new Vector2((float)tap.X, (float)tap.Y);
         var hit = _board.Current.DrawingObjects.Reverse().Select(item => item.Element)
-            .OfType<BoardSelectionElement>().FirstOrDefault(element => element.Image is not null
+            .FirstOrDefault(element => element is not null
                 && Matrix3x2.Invert(element.Frame.Transform * _board.Current.ViewTransform, out var inverse)
                 && element.Frame.Bounds.Contains(Vector2.Transform(point, inverse)));
-        if (hit?.Image is not { } asset || AiPasteMetadata.TryParse(asset.Metadata) is not { } metadata) return;
+        if (hit is IBoardTextElement or IBoardFormulaElement)
+        {
+            e.Handled = true;
+            _ = EditNativeObjectAsync(hit);
+            return;
+        }
+        if (hit is not BoardSelectionElement { Image: { } asset } || AiPasteMetadata.TryParse(asset.Metadata) is not { } metadata) return;
         e.Handled = true;
         _ = EditAiCardAsync(asset, metadata);
     }
@@ -2024,7 +2031,7 @@ public sealed partial class BoardWindow : Window
         InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
             $"AI 卡片编辑：进入 EditAiCardAsync，资产 {asset.Name}，Kind={metadata.Kind}，已在编辑={_editingAiCard}",
             InkCanvas.Core.Diagnostics.LogType.Event);
-        if (_editingAiCard)
+        if (_editingAiCard || _boardPlanOpen)
         {
             InkCanvas.Core.Diagnostics.FileLog.WriteLogToFile(
                 "AI 卡片编辑：已有编辑对话框，忽略重复请求",
@@ -2253,6 +2260,7 @@ public sealed partial class BoardWindow : Window
         _board.PageChanged -= OnPageChanged;
         _board.BackgroundChanged -= RefreshBackground;
         _board.ImagesChanged -= OnImagesChanged;
+        _board.NativeObjectsChanged -= OnDrawingOrderChanged;
         _board.ImagePlacementChanged -= _images.UpdateElement;
         _board.MediaPlacementChanged -= _media.UpdateElement;
         _images.SelectionChanged -= OnImageSelectionChanged;
@@ -2396,7 +2404,7 @@ public sealed partial class BoardWindow : Window
             var apply = await _services.PrepareInkOpenAsync(file.Path, _board, entireBoard);
             if (_closed || page != CurrentController) return;
             bool hasContent = entireBoard ? _board.HasContent
-                : page.Document.Count > 0 || _board.CurrentImages.Count > 0 || _board.CurrentMedia.Count > 0;
+                : page.Document.Count > 0 || _board.GetSelectionElements().Any();
             if (hasContent && !await ConfirmAsync(entireBoard ? "替换整个画板" : "替换当前页",
                 entireBoard ? "打开文件会替换所有画板页面。继续吗？" : "打开文件会替换当前页上的墨迹、图片和视频。继续吗？")) return;
             if (!_closed && page == CurrentController) apply();

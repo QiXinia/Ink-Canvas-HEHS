@@ -2,6 +2,7 @@ using InkCanvas.Core.History;
 using InkCanvas.Core.Ink;
 using InkCanvas.Ink;
 using System.Numerics;
+using InkCanvas.Features.Board.AiObjects;
 using System.Text.Json;
 
 namespace InkCanvas.Features.Board;
@@ -208,6 +209,7 @@ public sealed partial class BoardService
                 _selectionElements[media.Id] = element = new BoardSelectionElement(this, media, page);
             yield return element;
         }
+        foreach (var element in NativePage(page).Elements) yield return element;
     }
 
     /// <summary>The current page's paper. Changing it does not modify other pages.</summary>
@@ -253,7 +255,8 @@ public sealed partial class BoardService
 
     public bool HasContent => SideBoard?.HasContent == true || _extensions.Count > 0 || _pages.Any(page => page.Document.Count > 0)
         || _images.Any(images => images.Count > 0)
-        || _media.Any(media => media.Count > 0);
+        || _media.Any(media => media.Count > 0)
+        || _pages.Any(page => NativePage(page).Elements.Any());
 
     public InkController Current => _pages[CurrentIndex];
 
@@ -419,7 +422,11 @@ public sealed partial class BoardService
         var ids = Current.SelectedElements.Select(e => e.Id).ToHashSet();
         var images = CurrentImages.Where(image => ids.Contains(image.Id)).Select(image => image.Copy(preserveId: false, copyData: false)).ToList();
         var media = CurrentMedia.Where(item => ids.Contains(item.Id)).Select(item => item.Copy(preserveId: false, copyData: false)).ToList();
-        if (strokes.Count + images.Count + media.Count == 0) return false;
+        var selected = new NativeObjects();
+        selected.Texts.AddRange(CurrentTextObjects.Where(text => ids.Contains(text.Id)));
+        selected.Formulas.AddRange(CurrentFormulaObjects.Where(formula => ids.Contains(formula.Id)));
+        var native = selected.Copy(preserveId: false);
+        if (strokes.Count + images.Count + media.Count + native.Texts.Count + native.Formulas.Count == 0) return false;
         if (!InsertPageAfterCurrent()) return false;
         var page = Current;
         var pageImages = _images[CurrentIndex]; var pageMedia = _media[CurrentIndex];
@@ -429,11 +436,13 @@ public sealed partial class BoardService
 
         void Apply()
         {
+            SetNativeObjects(page, native);
             page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media);
             ImagesChanged?.Invoke();
         }
         void Revert()
         {
+            SetNativeObjects(page, null);
             page.Document.RemoveAll(strokes); pageImages.RemoveAll(images.Contains); pageMedia.RemoveAll(media.Contains);
             ImagesChanged?.Invoke();
         }
@@ -446,11 +455,12 @@ public sealed partial class BoardService
         page.CancelLassoErase(); page.ClearSelection();
         var pageImages = _images[CurrentIndex]; var pageMedia = _media[CurrentIndex];
         var strokes = page.Document.Strokes.ToList(); var images = pageImages.ToList(); var media = pageMedia.ToList();
-        if (strokes.Count + images.Count + media.Count == 0) return;
+        var native = NativePage(page);
+        if (strokes.Count + images.Count + media.Count + native.Texts.Count + native.Formulas.Count == 0) return;
         Apply();
         page.History.Push(new DelegateAction("clear board page", Apply, Revert));
-        void Apply() { page.Document.Clear(); pageImages.Clear(); pageMedia.Clear(); ImagesChanged?.Invoke(); }
-        void Revert() { page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media); ImagesChanged?.Invoke(); }
+        void Apply() { SetNativeObjects(page, null); page.Document.Clear(); pageImages.Clear(); pageMedia.Clear(); ImagesChanged?.Invoke(); }
+        void Revert() { SetNativeObjects(page, native); page.Document.AddRange(strokes); pageImages.AddRange(images); pageMedia.AddRange(media); ImagesChanged?.Invoke(); }
     }
 
     public bool CanUndoPage => _pageHistory.CanUndo;
@@ -525,6 +535,7 @@ public sealed partial class BoardService
         AddPageAt(CurrentIndex + 1);
         CurrentIndex++;
         _images[CurrentIndex].AddRange(images); _media[CurrentIndex].AddRange(media);
+        SetNativeObjects(Current, NativePage(source).Copy(preserveId: false));
         Current.Document.AddRange(strokes);
         Current.Document.RestoreInkLayers(source.Document.InkLayerCount);
         CarryDrawingState(source, Current);
@@ -554,6 +565,7 @@ public sealed partial class BoardService
             Current.History.Clear();
             _images[0].Clear();
             _media[0].Clear();
+            SetNativeObjects(Current, null);
             ImagesChanged?.Invoke();
             PageChanged?.Invoke();
             return true;
@@ -772,6 +784,7 @@ public sealed partial class BoardService
         _images.Clear();
         _media.Clear();
         _selectionElements.Clear();
+        _nativePages.Clear();
         foreach (var page in loadedPages)
         {
             var controller = new InkController();
@@ -786,6 +799,7 @@ public sealed partial class BoardService
                 controller.ViewCenter = new(page.Viewport[0] / 2, page.Viewport[1] / 2);
             _images.Add(page.Images);
             _media.Add(page.Media);
+            SetNativeObjects(controller, page.Native);
         }
         CurrentIndex = Math.Clamp(pageIndex, 0, loadedPages.Count - 1);
         PageStructureVersion++;
@@ -797,17 +811,25 @@ public sealed partial class BoardService
     {
         public float[] Viewport { get; init; }
         public int InkLayerCount { get; init; }
+        public NativeObjects Native { get; init; }
     }
 
     private static PreparedPage PreparePage(BoardPageFile page, BoardPaper fallback)
     {
         var strokes = (page.Strokes ?? new()).Select(FromStrokeFile).ToList();
         ShapeSource.ShareDefinitions(strokes);
+        var native = new NativeObjects();
+        var ids = strokes.Select(stroke => stroke.Id).Concat((page.Images ?? new()).Where(IsValidImage).Select(image => image.Id))
+            .Concat((page.Media ?? new()).Where(IsValidMedia).Select(media => media.Id)).ToHashSet();
+        native.Texts.AddRange((page.TextObjects ?? new()).Select(BoardAiObjectSerialization.FromFile)
+            .Where(text => BoardAiObjectSerialization.IsValid(text) && ids.Add(text.Id)));
+        native.Formulas.AddRange((page.FormulaObjects ?? new()).Select(BoardAiObjectSerialization.FromFile)
+            .Where(formula => BoardAiObjectSerialization.IsValid(formula) && ids.Add(formula.Id)));
         return new(strokes, (page.Images ?? new()).Where(IsValidImage).ToList(),
             (page.Media ?? new()).Where(IsValidMedia).ToList(),
             ReadPaper(page.Background, page.GridSpacing, fallback) with
             { Name = string.IsNullOrWhiteSpace(page.Name) ? null : page.Name.Trim() },
-            ReadViewTransform(page.ViewTransform)) { Viewport = page.Viewport, InkLayerCount = page.InkLayerCount };
+            ReadViewTransform(page.ViewTransform)) { Viewport = page.Viewport, InkLayerCount = page.InkLayerCount, Native = native };
     }
 
     private static BoardPaper ReadPaper(string background, float? spacing, BoardPaper fallback) => new(
@@ -833,6 +855,7 @@ public sealed partial class BoardService
         controller.TrySetActiveInkLayer(0);
         _images[index] = page.Images;
         _media[index] = page.Media;
+        SetNativeObjects(controller, page.Native);
         _papers[controller] = page.Paper with { Name = page.Paper.Name ?? PageName(index) };
         _pageHistory.Clear();
     }
@@ -957,6 +980,10 @@ public sealed partial class BoardService
         public List<StrokeFile> Strokes { get; set; } = new();
         public List<BoardImageAsset> Images { get; set; } = new();
         public List<BoardMediaAsset> Media { get; set; } = new();
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public List<BoardTextObjectFile> TextObjects { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public List<BoardFormulaObjectFile> FormulaObjects { get; set; }
     }
 
     private sealed class StrokeFile

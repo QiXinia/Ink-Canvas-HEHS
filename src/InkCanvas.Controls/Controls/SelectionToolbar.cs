@@ -27,7 +27,7 @@ public sealed class SelectionToolbar : UserControl
     private Action _refreshLayers;
     private Action _refreshAdvanced;
 
-    public SelectionToolbar(Func<InkController> controller, Action export, Action sendToBoard, string sendLabel)
+    public SelectionToolbar(Func<InkController> controller, Action export, Action sendToBoard, string sendLabel, Action ungroup = null)
     {
         _controller = controller;
         _fold = Button("收起", "\uF2AB", ToggleCollapsed);
@@ -39,15 +39,21 @@ public sealed class SelectionToolbar : UserControl
         _actions.Children.Add(_geometry);
         _actions.Children.Add(Button("变换", "\uF13E", () => ToggleSection("变换", BuildTransform)));
         _actions.Children.Add(Button("层级", "\uF7BE", () => ToggleSection("层级", BuildLayers)));
-        _actions.Children.Add(Button("更多", "\uE833", () => ToggleSection("更多", () => new StackPanel
+        _actions.Children.Add(Button("更多", "\uE833", () => ToggleSection("更多", () =>
         {
-            Orientation = Orientation.Horizontal,
-            Children =
+            var panel = new StackPanel
             {
-                Button("存为图片", "\uE91B", () => { ClosePanels(); export(); }),
-                Button(sendLabel, "\uF379", () => { ClosePanels(); sendToBoard(); }),
-                Button("取消选择", "\uF36A", () => Controller.ClearSelection()),
-            },
+                Orientation = Orientation.Horizontal,
+                Children =
+                {
+                    Button("存为图片", "\uE91B", () => { ClosePanels(); export(); }),
+                    Button(sendLabel, "\uF379", () => { ClosePanels(); sendToBoard(); }),
+                    Button("取消选择", "\uF36A", () => Controller.ClearSelection()),
+                },
+            };
+            if (ungroup is not null && Controller.SelectedElements.OfType<IGroupedSelectionElement>().Any(item => item.SelectionGroupId.Length > 0))
+                panel.Children.Add(Button("取消分组", Glyphs.Select, ungroup));
+            return panel;
         })));
         _actions.Children.Add(Button("删除", "\uF34D", () => Controller.DeleteSelection()));
         _primary.Children.Add(_fold);
